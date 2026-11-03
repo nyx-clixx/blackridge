@@ -2,6 +2,7 @@ const app = document.querySelector('#app')
 const account = document.querySelector('#account')
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char])
 const iconPaths = {
+  premium:'<path d="m3 6 4 4 5-6 5 6 4-4-2 12H5L3 6Zm3 15h12"/>',
   checkpoint:'<path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/><circle cx="12" cy="10" r="2.5"/><path d="M8 17a4 4 0 0 1 8 0"/>',
   automod:'<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2" fill="var(--panel)"/><circle cx="15" cy="12" r="2" fill="var(--panel)"/><circle cx="10" cy="18" r="2" fill="var(--panel)"/>',
   moderation:'<path d="m11 5 4-4 6 6-4 4zM8 8l3-3 6 6-3 3zM10 10l-7 7a2 2 0 0 0 3 3l7-7M13 21h8"/>',
@@ -15,7 +16,7 @@ const iconPaths = {
 }
 const icon = key => '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (iconPaths[key] ?? iconPaths.nuke) + '</svg>'
 for (const tile of document.querySelectorAll('[data-icon]')) tile.innerHTML = icon(tile.dataset.icon)
-const sections = { overview:'Overview', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits' }
+const sections = { overview:'Overview', premium:'Premium', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits' }
 const request = async (url, options) => {
   const res = await fetch(url, options)
   const data = await res.json()
@@ -112,7 +113,10 @@ async function accountMenu(me) {
   }
 }
 function premium() {
-  shell('<h2>Blackridge Premium</h2><p>Premium plans for Discord communities.</p><div class="grid pricing"><article class="card"><h3>Blackridge Premium</h3><strong>$2.99</strong><p>Coming soon</p></article><article class="card"><h3>Blackridge White Label</h3><strong>$4.99</strong><p>Coming soon</p></article></div>')
+  shell('<h2>Blackridge Premium</h2>' + premiumPlans())
+}
+function premiumPlans() {
+  return '<p>Premium plans for Discord communities.</p><div class="grid pricing"><article class="card"><h3>Blackridge Premium</h3><strong>$2.99</strong><p>Coming soon</p></article><article class="card"><h3>Blackridge White Label</h3><strong>$4.99</strong><p>Coming soon</p></article></div>'
 }
 function form(kind, config, owner) {
   const disabled = owner ? '' : ' disabled'
@@ -143,6 +147,7 @@ async function dashboard() {
     const data = await request(path)
     if (section === 'permits' && !data.owner) throw new Error('Only the server owner can view permits.')
     const descriptions = {
+      premium:'Explore Blackridge plans for your server.',
       checkpoint:'Score new accounts by age and avatar to flag risky joins.',
       automod:'Detect repeated messages by rate without inspecting message content.',
       moderation:'Review recorded moderation actions and available slash commands.',
@@ -160,7 +165,7 @@ async function dashboard() {
     const modules = ['nuke','raid','checkpoint','automod'].map(key => '<article class="card"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><h3>' + sections[key] + '</h3><span class="badge">' + (data.config[key].enabled ? '<i class="dot"></i> Enabled' : 'Disabled') + '</span></div><p>' + descriptions[key] + '</p><a class="module-link" href="' + serverPath + '/' + key + '">Configure ' + sections[key] + icon('arrow') + '</a></article>').join('')
     const overview = '<div id="stats" class="stats">' + summary(data.stats) + '</div><section class="stack"><div class="grid">' + modules + '</div></section>' + activity
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + icon('server') + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('automod') + '<span class="nav-label">Administration</span>' + navigation('moderation') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : section === 'moderation' ? '<section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(data.events.filter(event => event.kind === 'moderation')) + '</section>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + icon('server') + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('automod') + '<span class="nav-label">Administration</span>' + navigation('moderation') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : section === 'moderation' ? '<section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(data.events.filter(event => event.kind === 'moderation')) + '</section>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div>')
     const settings = document.querySelector('#settings')
     if (settings && settingFields[section]) protectionControls(settings,section,data.config[section])
     if (settings) settings.onsubmit = async event => {
