@@ -18,6 +18,7 @@ const db = createStore(process.env.DB_PATH || './data/blackridge.sqlite')
 const bot = botToken && startBot(botToken,db)
 const recovery = recoveryTools(db,bot)
 const states = new Map()
+const guildLists = new Map()
 const sessionKey = configured ? scryptSync(clientSecret,'blackridge web session v1',32) : null
 const sessionId = token => createHash('sha256').update(token ?? '').digest('hex')
 function sealSession(data) {
@@ -43,6 +44,7 @@ const cookieOptions = {httpOnly:true,secure:base.startsWith('https:'),sameSite:'
 const cookie = (req,key) => req.headers.cookie?.split(';').map(s => s.trim()).find(s => s.startsWith(key + '='))?.slice(key.length+1)
 const prune = () => {
   for (const [key,value] of states) if (value.until <= Date.now()) states.delete(key)
+  for (const [key,value] of guildLists) if (value.until <= Date.now()) guildLists.delete(key)
   db.prune()
 }
 setInterval(prune,60000).unref()
@@ -63,6 +65,7 @@ app.use(express.json({limit:'8kb'}))
 async function discord(path,options = {}) {
   const response = await fetch('https://discord.com/api/v10' + path,{...options,signal:AbortSignal.timeout(8000)})
   if (response.status === 401) throw Object.assign(new Error('Discord session expired. Sign in again.'),{status:401})
+  if (response.status === 429) throw Object.assign(new Error('Discord is limiting server-list requests. Try again shortly.'),{status:503})
   if (!response.ok) throw Object.assign(new Error('Discord is temporarily unavailable.'),{status:503})
   return response.json()
 }
@@ -99,7 +102,9 @@ app.get('/auth/callback',async (req,res) => {
   } catch { res.redirect('/dashboard?auth=failed') }
 })
 app.post('/auth/logout',(req,res) => {
-  db.deleteSession(sessionId(cookie(req,'br_session')))
+  const key = sessionId(cookie(req,'br_session'))
+  db.deleteSession(key)
+  guildLists.delete(key)
   res.clearCookie('br_session',cookieOptions).json({ok:true})
 })
 app.get('/invite',(req,res) => {
@@ -122,9 +127,11 @@ app.get('/api/me',(req,res) => res.json({configured,supportInvite,user:req.sessi
 async function visibleGuilds(req) {
   if (!req.session) throw Object.assign(new Error('Sign in with Discord.'),{status:401})
   const session = req.session
-  if (req.method === 'GET' && session.guilds?.until > Date.now()) return session.guilds.list
-  if (session.guildRequest) return session.guildRequest
-  session.guildRequest = (async () => {
+  const key = sessionId(cookie(req,'br_session'))
+  const cached = guildLists.get(key)
+  if (cached?.until > Date.now()) return cached.request
+  const entry = {until:Date.now()+30000}
+  entry.request = (async () => {
     const list = []
     let after = '0'
     for (;;) {
@@ -135,10 +142,14 @@ async function visibleGuilds(req) {
       if (next === after) throw new Error('Discord guild pagination stalled.')
       after = next
     }
-    session.guilds = {list,until:Date.now()+12000}
     return list
   })()
-  try { return await session.guildRequest } finally { delete session.guildRequest }
+  guildLists.set(key,entry)
+  try { return await entry.request }
+  catch (error) {
+    if (guildLists.get(key) === entry) guildLists.delete(key)
+    throw error
+  }
 }
 app.get('/api/guilds',async (req,res) => {
   const guilds = await visibleGuilds(req)
@@ -146,11 +157,15 @@ app.get('/api/guilds',async (req,res) => {
 })
 app.use('/api/guilds/:id',async (req,res,next) => {
   if (!idPattern.test(req.params.id)) return res.status(404).json({error:'Server not found.'})
-  const guilds = await visibleGuilds(req)
-  const listed = guilds.find(guild => guild.id === req.params.id)
-  const guild = listed && bot?.guilds.cache.get(listed.id)
+  if (!req.session) return res.status(401).json({error:'Sign in with Discord.'})
+  if (!bot?.isReady()) return res.status(503).json({error:'Blackridge is reconnecting to Discord. Try again shortly.'})
+  const guild = bot.guilds.cache.get(req.params.id)
   if (!guild?.available) return res.status(404).json({error:'Blackridge is unavailable for this server.'})
-  const member = await guild.members.fetch({user:req.session.user.id,force:true}).catch(() => null)
+  let member
+  try { member = await guild.members.fetch({user:req.session.user.id,force:true}) }
+  catch (error) {
+    if (error.code !== 10007) throw Object.assign(new Error('Could not verify server access with Discord. Try again shortly.'),{status:503})
+  }
   if (!member || (guild.ownerId !== member.id && !member.permissions.has(P.ManageGuild))) {
     return res.status(404).json({error:'Blackridge is unavailable for this server.'})
   }

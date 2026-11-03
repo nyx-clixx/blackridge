@@ -2,6 +2,7 @@ const app = document.querySelector('#app')
 const account = document.querySelector('#account')
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char])
 const iconPaths = {
+  configure:'<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.5" fill="var(--panel)"/><circle cx="15" cy="17" r="2.5" fill="var(--panel)"/>',
   lockdown:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/>',
   backup:'<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/>',
   premium:'<path d="m3 6 4 4 5-6 5 6 4-4-2 12H5L3 6Zm3 15h12"/>',
@@ -122,7 +123,7 @@ function premiumPlans() {
   return '<div class="grid pricing">' + [
     ['blue','Blackridge Premium','$2.99',features],
     ['purple','Blackridge White Label','$4.99',[...features,'Custom branding']]
-  ].map(([theme,name,price,items]) => '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + icon('premium') + '</span><h3>' + name + '</h3><strong>' + price + '</strong><ul>' + items.map(item => '<li>' + item + '</li>').join('') + '</ul><span class="badge">Coming soon</span></article>').join('') + '</div>'
+  ].map(([theme,name,price,items]) => '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + icon('premium') + '</span><h3>' + name + '</h3><strong>' + price + '</strong><ul>' + items.map(item => '<li>' + item + '</li>').join('') + '</ul><button class="button plan-purchase" type="button" disabled>Purchase</button><span class="badge">Coming soon</span></article>').join('') + '</div>'
 }
 function form(kind, config, owner) {
   const disabled = owner ? '' : ' disabled'
@@ -229,10 +230,14 @@ async function dashboard() {
     const summary = value => '<div class="card"><span class="muted">Events · 24 hours</span><strong class="stat">' + value.total + '</strong></div><div class="card"><span class="muted">Anti-Nuke</span><strong class="stat">' + value.nuke + '</strong></div><div class="card"><span class="muted">Anti-Raid</span><strong class="stat">' + value.raid + '</strong></div>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
-    const modules = ['nuke','raid','checkpoint','automod'].map(key => '<article class="card"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><h3>' + sections[key] + '</h3><span class="badge">' + (data.config[key].enabled ? '<i class="dot"></i> Enabled' : 'Disabled') + '</span></div><p>' + descriptions[key] + '</p><a class="module-link" href="' + serverPath + '/' + key + '">Configure ' + sections[key] + icon('arrow') + '</a></article>').join('')
+    const modules = ['nuke','raid','checkpoint','automod'].map(key => {
+      const enabled = data.config[key].enabled
+      const state = enabled ? '<i class="dot"></i> Enabled' : 'Disabled'
+      return '<article class="card compact-module"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + '</h3><span class="badge">' + state + '</span></div></div><a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a></article>'
+    }).join('')
     const enabled = ['nuke','raid','checkpoint','automod'].filter(key => data.config[key].enabled).length
     const score = '<section class="card score-card"><div><h3>Security score</h3><p>' + enabled + ' of 4 protection modules enabled</p></div><meter min="0" max="4" value="' + enabled + '" aria-label="Enabled protection modules"></meter><strong>' + enabled * 25 + '%</strong></section>'
-    const overview = score + '<div id="stats" class="stats">' + summary(data.stats) + '</div><section class="stack module-section"><h3>Protection modules</h3><div class="grid">' + modules + '</div></section>' + activity
+    const overview = '<section class="module-section"><h3>Protection modules</h3><div class="module-grid">' + modules + '</div></section><div class="overview-metrics">' + score + '<div id="stats" class="stats">' + summary(data.stats) + '</div></div>' + activity
     document.body.classList.add('has-workspace')
     shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<div id="recovery"></div><section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(data.events.filter(event => event.kind === 'moderation')) + '</section>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div>')
     if (['lockdown','backup','moderation'].includes(section)) await recoveryPanel(section,path,data)
