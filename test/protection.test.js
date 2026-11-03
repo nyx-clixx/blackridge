@@ -4,6 +4,16 @@ import { EventEmitter, once } from 'node:events'
 import { AuditLogEvent as A, Events, PermissionFlagsBits as P } from 'discord.js'
 import { attachProtection, isDestructive, recordHit } from '../bot.js'
 import { createStore, policies } from '../store.js'
+import { canModerate } from '../moderation.js'
+
+test('command permits fail closed and require both delegation and Discord permissions', () => {
+  const actor = {id:'member',guild:{id:'guild'},roles:{cache:[{id:'guild'},{id:'mod'}]},permissions:{has:() => true}}
+  const channel = {has:() => true}
+  assert.equal(canModerate(actor,'owner','ban',{users:[],roles:['guild']},channel),false)
+  assert.equal(canModerate(actor,'owner','ban',{users:[],roles:[]},channel),false)
+  assert.equal(canModerate(actor,'owner','ban',{users:[],roles:['mod']},null),false)
+  assert.equal(canModerate(actor,'owner','ban',{users:[],roles:['mod']},channel),true)
+})
 
 test('sliding windows are isolated per key and expire at the boundary', () => {
   const history = new Map()
@@ -49,7 +59,7 @@ test('Anti-Raid times out young accounts only after the join threshold', async t
   const calls = new EventEmitter()
   const join = (id,age) => client.emit(Events.GuildMemberAdd,{
     guild,id,moderatable:true,user:{createdTimestamp:Date.now()-age*86400000},
-    timeout:async ms => calls.emit('timeout',id,ms)
+    disableCommunicationUntil:async until => calls.emit('timeout',id,Math.round((until-Date.now())/1000)*1000)
   })
   const timeout = once(calls,'timeout',{signal:AbortSignal.timeout(1000)})
   join('a',0)
@@ -65,7 +75,7 @@ test('policies reject extra fields and invalid actions', () => {
   const config = db.config('guild','nuke')
   assert.equal(policies.nuke.safeParse(config).success,true)
   assert.equal(policies.nuke.safeParse({...config,admin:true}).success,false)
-  assert.equal(policies.nuke.safeParse({...config,action:'ban'}).success,false)
+  assert.equal(policies.nuke.safeParse({...config,action:'unknown'}).success,false)
   db.close()
 })
 

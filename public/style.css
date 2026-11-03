@@ -95,6 +95,22 @@ fieldset{border:0;padding:0;margin:14px 0 0;min-width:0}
 .rate-row .fields{margin:0}
 #notice:empty,#refresh:empty{display:none}
 .error{color:#ffb1b8}
+.page-heading{display:flex;align-items:center;gap:13px;margin-bottom:22px;padding-bottom:16px;border-bottom:1px solid var(--line)}
+.page-heading .icon-tile{width:42px;height:42px}
+.policy-group{border-top:1px solid var(--line);padding-top:13px;margin-top:16px}
+.policy-group:last-of-type{margin-bottom:14px}
+.account-menu{position:relative;z-index:5}
+.account-menu summary{list-style:none}
+.account-menu summary::-webkit-details-marker{display:none}
+.account-menu summary>span:nth-child(2){max-width:145px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-menu img,.initial{width:24px;height:24px;border-radius:50%}
+.initial{display:grid;place-items:center;background:#302842}
+.account-links{position:absolute;right:0;top:calc(100% + 8px);width:176px;padding:5px;border:1px solid var(--line);border-radius:9px;background:#1b1b1e;box-shadow:0 10px 28px #0005}
+.account-links>*{display:block;width:100%;padding:7px 9px;text-align:left;border:0;border-radius:5px;background:transparent;color:inherit;font:inherit}
+.account-links a:hover,.account-links button:hover{background:#292633;cursor:pointer}
+.pricing{max-width:700px;margin-top:20px}
+.pricing .card{padding:22px;border-top:2px solid #8b79bc}
+.pricing strong{display:block;font-size:34px;margin-top:10px;letter-spacing:-.04em}
 @media(max-width:760px){
   .wrap{width:calc(100% - 32px)}
   .hero{grid-template-columns:1fr;padding-block:44px;gap:24px}

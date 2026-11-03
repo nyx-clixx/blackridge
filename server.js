@@ -38,7 +38,7 @@ app.use(['/api','/auth'], (req,res,next) => {
   if (['PUT','POST'].includes(req.method) && req.get('origin') !== base) return res.status(403).json({error:'Invalid request origin.'})
   next()
 })
-app.use(express.json({limit:'4kb'}))
+app.use(express.json({limit:'8kb'}))
 async function discord(path,options = {}) {
   const response = await fetch('https://discord.com/api/v10' + path,{...options,signal:AbortSignal.timeout(8000)})
   if (response.status === 401) throw Object.assign(new Error('Discord session expired. Sign in again.'),{status:401})
@@ -71,7 +71,7 @@ app.get('/auth/callback',async (req,res) => {
     const maxAge = Math.min(token.expires_in*1000,8*3600000)
     if (sessions.size >= 10000) return res.status(503).send('Session capacity reached.')
     sessions.delete(cookie(req,'br_session'))
-    sessions.set(key,{headers,user:{id:user.id,username:user.global_name || user.username},until:Date.now()+maxAge})
+    sessions.set(key,{headers,user:{id:user.id,username:user.global_name || user.username,avatar:user.avatar},until:Date.now()+maxAge})
     res.cookie('br_session',key,{...cookieOptions,maxAge})
     res.redirect('/dashboard')
   } catch { res.redirect('/dashboard?auth=failed') }
@@ -94,7 +94,8 @@ app.use('/api',(req,res,next) => {
   if (session?.until > Date.now()) req.session = session
   next()
 })
-app.get('/api/me',(req,res) => res.json({configured,user:req.session?.user ?? null}))
+const supportInvite = /^https:\/\/(?:discord\.gg\/|discord\.com\/invite\/)[\w-]+$/.test(process.env.SUPPORT_INVITE_URL ?? '') ? process.env.SUPPORT_INVITE_URL : null
+app.get('/api/me',(req,res) => res.json({configured,supportInvite,user:req.session?.user ?? null}))
 
 async function visibleGuilds(req) {
   if (!req.session) throw Object.assign(new Error('Sign in with Discord.'),{status:401})
@@ -124,13 +125,19 @@ app.get('/api/guilds',async (req,res) => {
 app.use('/api/guilds/:id',async (req,res,next) => {
   if (!idPattern.test(req.params.id)) return res.status(404).json({error:'Server not found.'})
   const guilds = await visibleGuilds(req)
-  req.guild = guilds.find(guild => guild.id === req.params.id)
-  if (!req.guild || !bot || !bot.guilds.cache.has(req.guild.id)) return res.status(404).json({error:'Blackridge is unavailable for this server.'})
+  const listed = guilds.find(guild => guild.id === req.params.id)
+  const guild = listed && bot?.guilds.cache.get(listed.id)
+  if (!guild?.available) return res.status(404).json({error:'Blackridge is unavailable for this server.'})
+  const member = await guild.members.fetch({user:req.session.user.id,force:true}).catch(() => null)
+  if (!member || (guild.ownerId !== member.id && !member.permissions.has(P.ManageGuild))) {
+    return res.status(404).json({error:'Blackridge is unavailable for this server.'})
+  }
+  req.guild = {id:guild.id,name:guild.name,owner:guild.ownerId === member.id}
   next()
 })
 app.get('/api/guilds/:id',(req,res) => {
   const {id,name,owner} = req.guild
-  res.json({name,owner,online:bot.isReady() && bot.guilds.cache.get(id).available,config:{nuke:db.config(id,'nuke'),raid:db.config(id,'raid')},events:db.recent(id),stats:db.stats(id)})
+  res.json({name,owner,config:Object.fromEntries(Object.keys(policies).filter(kind => kind !== 'permits' || owner).map(kind => [kind,db.config(id,kind)])),events:db.recent(id),stats:db.stats(id)})
 })
 app.put('/api/guilds/:id/:kind',(req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can change policies.'})
@@ -144,7 +151,7 @@ app.put('/api/guilds/:id/:kind',(req,res) => {
 app.use('/api',(req,res) => res.status(404).json({error:'Route not found.'}))
 const publicDir = fileURLToPath(new URL('./public/',import.meta.url))
 app.use(express.static(publicDir))
-app.get(['/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => res.sendFile('index.html',{root:publicDir}))
+app.get(['/premium','/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => res.sendFile('index.html',{root:publicDir}))
 app.use((error,req,res,next) => {
   if (res.headersSent) return next(error)
   const status = error.status || 500
