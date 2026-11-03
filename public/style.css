@@ -111,6 +111,24 @@ fieldset{border:0;padding:0;margin:14px 0 0;min-width:0}
 .pricing{max-width:700px;margin-top:20px}
 .pricing .card{padding:22px;border-top:2px solid #8b79bc}
 .pricing strong{display:block;font-size:34px;margin-top:10px;letter-spacing:-.04em}
+.page-heading .dash-title{margin:0}
+.signin-card{max-width:480px;margin:28px auto;padding:28px;position:relative}
+.signin-card h2{margin:0 34px 8px 0}
+.signin-card .primary{margin-top:18px}
+.close-signin{position:absolute;right:16px;top:16px;line-height:1.1;font-size:18px}
+.pricing{max-width:880px;gap:18px}
+.pricing .plan{--plan-rgb:97,153,255;border:1px solid rgba(var(--plan-rgb),.43);padding:25px;background:linear-gradient(155deg,rgba(var(--plan-rgb),.16),#17171c 64%);box-shadow:0 0 24px rgba(var(--plan-rgb),.1)}
+.pricing .plan-purple{--plan-rgb:176,112,255}
+.plan h3{margin-top:12px;font-size:19px}
+.plan ul{padding-left:18px;margin:15px 0 20px}
+.plan li+li{margin-top:7px}
+.plan li::marker{color:rgb(var(--plan-rgb))}
+.plan .badge{border:1px solid rgba(var(--plan-rgb),.35);padding:4px 9px;border-radius:99px}
+@media(prefers-reduced-motion:no-preference){
+  .pricing .plan{animation:plan-aura 5s ease-in-out infinite alternate}
+  .pricing .plan-purple{animation-delay:-2.5s}
+  @keyframes plan-aura{to{box-shadow:0 0 30px rgba(var(--plan-rgb),.23)}}
+}
 .filter-grid{margin-top:14px}
 .filter-card{padding:12px;border:1px solid var(--line);border-radius:8px;background:#131315}
 .filter-card .fields{margin-bottom:0}

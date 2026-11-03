@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { ChannelType, Events, MessageFlags, PermissionFlagsBits as P, SlashCommandBuilder } from 'discord.js'
 import { commandNames } from './store.js'
+import { sendModuleLog } from './recovery.js'
 
 const channelCommands = new Set(['lock','unlock'])
 const timedCommands = new Set(['timeout','tempban'])
@@ -110,6 +111,7 @@ export function attachModeration(client,db) {
         db.event(guild.id,'moderation',name + ' · member ' + target.id + ' · moderator ' + actor.id + ' · ' + reason)
       }
       if (channelCommands.has(name)) db.event(guild.id,'moderation',name + ' · channel ' + interaction.channelId + ' · moderator ' + actor.id)
+      void sendModuleLog(guild,db,'moderation','/' + name + ' completed · moderator ' + actor.id + ' · channel ' + interaction.channelId)
       await interaction.editReply({content:'Recorded /' + name + '.',allowedMentions:{parse:[]}})
     } catch (error) {
       console.error('Moderation command failed:',error.code ?? error.name)

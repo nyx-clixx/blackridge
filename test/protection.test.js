@@ -5,6 +5,31 @@ import { AuditLogEvent as A, Events, PermissionFlagsBits as P } from 'discord.js
 import { attachProtection, isDestructive, recordHit } from '../bot.js'
 import { createStore, policies } from '../store.js'
 import { canModerate } from '../moderation.js'
+import { recoveryTools } from '../recovery.js'
+
+test('lockdown records recovery before mutation and preserves a changed verification level', async t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  let verification = 1
+  const guild = {
+    id:'guild',
+    channels:{fetch:async () => new Map()},
+    roles:{fetch:async () => new Map()},
+    client:{rest:{get:async () => ({verification_level:verification})}},
+    async setVerificationLevel(level) {
+      assert.ok(db.recovery(this.id,'lockdown').steps.length)
+      verification = level
+    }
+  }
+  const tools = recoveryTools(db)
+  const input = {confirm:'ENABLE LOCKDOWN',all:false,channels:[],collection:'',verification:true,invites:false,dms:false}
+  assert.deepEqual(await tools.enable(guild,'owner',input),[])
+  assert.equal(verification,4)
+  verification = 3
+  assert.deepEqual(await tools.lift(guild,'owner'),[])
+  assert.equal(verification,3)
+  assert.equal(db.recovery(guild.id,'lockdown'),null)
+})
 
 test('command permits fail closed and require both delegation and Discord permissions', () => {
   const actor = {id:'member',guild:{id:'guild'},roles:{cache:[{id:'guild'},{id:'mod'}]},permissions:{has:() => true}}

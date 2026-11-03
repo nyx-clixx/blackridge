@@ -1,8 +1,9 @@
 import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, PermissionFlagsBits as P } from 'discord.js'
 import { attachModeration, temporaryBan } from './moderation.js'
 import { createHash } from 'node:crypto'
+import { sendModuleLog } from './recovery.js'
 
-export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages
+export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages | P.ManageGuild
 const dangerous = P.Administrator | P.ManageGuild | P.ManageRoles | P.ManageChannels | P.BanMembers | P.KickMembers | P.ManageWebhooks | P.ModerateMembers
 const tracked = new Set([A.ChannelDelete,A.RoleDelete,A.MemberBanAdd,A.MemberKick,A.BotAdd])
 const rateByAction = new Map([
@@ -91,7 +92,13 @@ export function attachProtection(client, db) {
     for (const [key,hits] of recentAccounts) if (hits.at(-1).at <= now-60000) recentAccounts.delete(key)
   },60000)
   cleanup.unref()
-  const log = (guild,kind,text) => db.event(guild.id,kind,text)
+  const log = (guild,kind,text) => {
+    db.event(guild.id,kind,text)
+    if (kind === 'automod' || (['nuke','raid','checkpoint'].includes(kind) &&
+        /^(?:Protection error|Response |Timed out|Removed role|Some or all|(?:kick|ban|tempban) completed)/.test(text))) {
+      void sendModuleLog(guild,db,kind,text)
+    }
+  }
   const run = async (guild,kind,handler) => {
     try { await handler() } catch (error) {
       try { log(guild,kind,'Protection error (' + (error.code || error.name) + ')') }

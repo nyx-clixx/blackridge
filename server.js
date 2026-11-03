@@ -1,11 +1,12 @@
 import express from 'express'
 import helmet from 'helmet'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, createHash, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { readFileSync } from 'node:fs'
-import { PermissionFlagsBits as P } from 'discord.js'
+import { ChannelType, PermissionFlagsBits as P } from 'discord.js'
 import { createStore, policies } from './store.js'
 import { startBot, requiredPermissions } from './bot.js'
+import { recoveryTools } from './recovery.js'
 
 const {DISCORD_CLIENT_ID: clientId, DISCORD_CLIENT_SECRET: clientSecret, DISCORD_BOT_TOKEN: botToken} = process.env
 const port = Number(process.env.PORT || 3000)
@@ -15,14 +16,33 @@ const configured = Boolean(clientId && clientSecret)
 const app = express()
 const db = createStore(process.env.DB_PATH || './data/blackridge.sqlite')
 const bot = botToken && startBot(botToken,db)
-const sessions = new Map()
+const recovery = recoveryTools(db,bot)
 const states = new Map()
+const sessionKey = configured ? scryptSync(clientSecret,'blackridge web session v1',32) : null
+const sessionId = token => createHash('sha256').update(token ?? '').digest('hex')
+function sealSession(data) {
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm',sessionKey,iv)
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify(data),'utf8'),cipher.final()])
+  return Buffer.concat([iv,cipher.getAuthTag(),encrypted]).toString('base64url')
+}
+function openSession(token) {
+  if (!token || !sessionKey) return null
+  const stored = db.session(sessionId(token))
+  if (!stored) return null
+  try {
+    const bytes = Buffer.from(stored,'base64url')
+    const cipher = createDecipheriv('aes-256-gcm',sessionKey,bytes.subarray(0,12))
+    cipher.setAuthTag(bytes.subarray(12,28))
+    return JSON.parse(Buffer.concat([cipher.update(bytes.subarray(28)),cipher.final()]).toString('utf8'))
+  } catch { return null }
+}
 const idPattern = /^\d{17,20}$/
 const nonce = () => randomBytes(32).toString('base64url')
 const cookieOptions = {httpOnly:true,secure:base.startsWith('https:'),sameSite:'lax',path:'/'}
 const cookie = (req,key) => req.headers.cookie?.split(';').map(s => s.trim()).find(s => s.startsWith(key + '='))?.slice(key.length+1)
 const prune = () => {
-  for (const map of [sessions,states]) for (const [key,value] of map) if (value.until <= Date.now()) map.delete(key)
+  for (const [key,value] of states) if (value.until <= Date.now()) states.delete(key)
   db.prune()
 }
 setInterval(prune,60000).unref()
@@ -70,15 +90,16 @@ app.get('/auth/callback',async (req,res) => {
     const user = await discord('/users/@me',{headers})
     const key = nonce()
     const maxAge = Math.min(token.expires_in*1000,8*3600000)
-    if (sessions.size >= 10000) return res.status(503).send('Session capacity reached.')
-    sessions.delete(cookie(req,'br_session'))
-    sessions.set(key,{headers,user:{id:user.id,username:user.global_name || user.username,avatar:user.avatar},until:Date.now()+maxAge})
+    if (db.sessionCount() >= 10000) return res.status(503).send('Session capacity reached.')
+    db.deleteSession(sessionId(cookie(req,'br_session')))
+    const until = Date.now()+maxAge
+    db.saveSession(sessionId(key),sealSession({headers,user:{id:user.id,username:user.global_name || user.username,avatar:user.avatar},until}),until)
     res.cookie('br_session',key,{...cookieOptions,maxAge})
     res.redirect('/dashboard')
   } catch { res.redirect('/dashboard?auth=failed') }
 })
 app.post('/auth/logout',(req,res) => {
-  sessions.delete(cookie(req,'br_session'))
+  db.deleteSession(sessionId(cookie(req,'br_session')))
   res.clearCookie('br_session',cookieOptions).json({ok:true})
 })
 app.get('/invite',(req,res) => {
@@ -91,7 +112,7 @@ app.get('/invite',(req,res) => {
   res.redirect('https://discord.com/oauth2/authorize?' + query)
 })
 app.use('/api',(req,res,next) => {
-  const session = sessions.get(cookie(req,'br_session'))
+  const session = openSession(cookie(req,'br_session'))
   if (session?.until > Date.now()) req.session = session
   next()
 })
@@ -140,6 +161,39 @@ app.get('/api/guilds/:id',(req,res) => {
   const {id,name,owner} = req.guild
   res.json({name,owner,icon:bot.guilds.cache.get(id)?.icon ?? null,config:Object.fromEntries(Object.keys(policies).filter(kind => kind !== 'permits' || owner).map(kind => [kind,db.config(id,kind)])),events:db.recent(id),stats:db.stats(id)})
 })
+app.get('/api/guilds/:id/options',async (req,res) => {
+  const guild = bot.guilds.cache.get(req.guild.id)
+  const {channels,roles} = await recovery.scope(guild)
+  res.json({
+    channels:channels.filter(channel => channel?.permissionOverwrites && channel.type !== ChannelType.GuildCategory && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name,sendable:channel.isSendable()})),
+    roles:roles.filter(role => role.id !== guild.id).map(role => ({id:role.id,name:role.name}))
+  })
+})
+app.get('/api/guilds/:id/recovery',(req,res) => {
+  if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can access recovery.'})
+  const id = req.guild.id
+  res.json({lockdown:db.recovery(id,'lockdown')?.at ?? null,backups:db.backups(id),schedule:db.recovery(id,'backupSchedule')})
+})
+app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
+  if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can run recovery operations.'})
+  const guild = bot.guilds.cache.get(req.guild.id)
+  const actor = req.session.user.id
+  const input = req.body ?? {}
+  const result = await recovery.run(guild,async () => {
+    if (req.params.operation === 'enable') return recovery.enable(guild,actor,input)
+    if (req.params.operation === 'lift' && input.confirm === 'LIFT LOCKDOWN') return recovery.lift(guild,actor)
+    if (req.params.operation === 'backup') return recovery.backup(guild,actor)
+    if (req.params.operation === 'restore' && input.confirm === 'RESTORE BACKUP' && Number.isSafeInteger(input.id)) return recovery.restore(guild,actor,input.id)
+    if (req.params.operation === 'schedule' && [0,6,12,24,168].includes(input.hours)) {
+      if (input.hours) db.saveRecovery(guild.id,'backupSchedule',{hours:input.hours,next:Date.now()+input.hours*3600000})
+      else db.clearRecovery(guild.id,'backupSchedule')
+      db.event(guild.id,'backup','Automatic backup schedule changed by ' + actor)
+      return []
+    }
+    throw Object.assign(new Error('Confirm the action and check the selected options.'),{status:400})
+  })
+  res.json({ok:true,notices:result ?? []})
+})
 app.put('/api/guilds/:id/:kind',(req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can change policies.'})
   const {kind} = req.params
@@ -160,7 +214,7 @@ app.use((error,req,res,next) => {
   if (res.headersSent) return next(error)
   const status = error.status || 500
   if (status === 500) console.error('Request failed:',error.name)
-  res.status(status).json({error:[401,503].includes(status) ? error.message : 'Could not complete the request.'})
+  res.status(status).json({error:[400,401,503].includes(status) ? error.message : 'Could not complete the request.'})
 })
 const server = app.listen(port,'0.0.0.0',() => console.log('Blackridge listening on port ' + port))
 function stop() {
