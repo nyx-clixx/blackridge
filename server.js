@@ -138,7 +138,7 @@ app.use('/api/guilds/:id',async (req,res,next) => {
 })
 app.get('/api/guilds/:id',(req,res) => {
   const {id,name,owner} = req.guild
-  res.json({name,owner,config:Object.fromEntries(Object.keys(policies).filter(kind => kind !== 'permits' || owner).map(kind => [kind,db.config(id,kind)])),events:db.recent(id),stats:db.stats(id)})
+  res.json({name,owner,icon:bot.guilds.cache.get(id)?.icon ?? null,config:Object.fromEntries(Object.keys(policies).filter(kind => kind !== 'permits' || owner).map(kind => [kind,db.config(id,kind)])),events:db.recent(id),stats:db.stats(id)})
 })
 app.put('/api/guilds/:id/:kind',(req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can change policies.'})
@@ -154,6 +154,7 @@ const publicDir = fileURLToPath(new URL('./public/',import.meta.url))
 app.use(express.static(publicDir))
 const appShell = readFileSync(new URL('./public/index.html',import.meta.url),'utf8')
   .replace(/<main id="app">[\s\S]*?<\/main>/,'<main id="app"><div class="wrap dashboard"><p role="status">Loading…</p></div></main>')
+app.get('/support',(req,res) => supportInvite ? res.redirect(supportInvite) : res.type('html').send(appShell))
 app.get(['/premium','/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => res.type('html').send(appShell))
 app.use((error,req,res,next) => {
   if (res.headersSent) return next(error)

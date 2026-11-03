@@ -5,8 +5,8 @@ const iconPaths = {
   premium:'<path d="m3 6 4 4 5-6 5 6 4-4-2 12H5L3 6Zm3 15h12"/>',
   checkpoint:'<path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/><circle cx="12" cy="10" r="2.5"/><path d="M8 17a4 4 0 0 1 8 0"/>',
   automod:'<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2" fill="var(--panel)"/><circle cx="15" cy="12" r="2" fill="var(--panel)"/><circle cx="10" cy="18" r="2" fill="var(--panel)"/>',
-  moderation:'<path d="m11 5 4-4 6 6-4 4zM8 8l3-3 6 6-3 3zM10 10l-7 7a2 2 0 0 0 3 3l7-7M13 21h8"/>',
-  permits:'<circle cx="8" cy="9" r="4"/><path d="m11 12 8 8 2-2-2-2 1-1-2-2-1 1-3-3M7 8h.01"/>',
+  moderation:'<path d="M5 4h14v16H5zM8 8h8M8 12h8m-8 4h4"/>',
+  permits:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"/>',
   overview:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   nuke:'<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/>',
   raid:'<path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2m19 0v-2a4 4 0 0 0-3-4m-2-12a4 4 0 0 1 0 8"/><circle cx="9.5" cy="7" r="4"/>',
@@ -106,7 +106,7 @@ function permitsForm(config) {
 async function accountMenu(me) {
   if (!me.user) return
   const avatar = me.user.avatar ? '<img alt="" src="https://cdn.discordapp.com/avatars/' + esc(me.user.id) + '/' + esc(me.user.avatar) + '.png?size=64">' : '<span class="initial">' + esc(me.user.username.slice(0,1)) + '</span>'
-  account.outerHTML = '<details class="account-menu"><summary class="button small">' + avatar + '<span>' + esc(me.user.username) + '</span></summary><div class="account-links">' + (me.supportInvite ? '<a href="' + esc(me.supportInvite) + '">Support server ↗</a>' : '<span class="muted">Support invite pending</span>') + '<a href="/premium">Premium</a><button type="button" id="sign-out">Log out</button></div></details>'
+  account.outerHTML = '<details class="account-menu"><summary class="button small">' + avatar + '<span>' + esc(me.user.username) + '</span></summary><div class="account-links">' + '<a href="/support">Support Server</a>' + '<a href="/premium">Premium</a><button type="button" id="sign-out">Log out</button></div></details>'
   document.querySelector('#sign-out').onclick = async () => {
     try { await request('/auth/logout',{method:'POST'}); location.assign(base) }
     catch (error) { alert(error.message) }
@@ -140,7 +140,7 @@ async function dashboard() {
     await accountMenu(me)
     if (!id) {
       const { guilds } = await request('/api/guilds')
-      shell('<div class="eyebrow">SIGNED IN AS ' + esc(me.user.username) + '</div><h2>Select a server</h2><p>Choose a Discord server to configure its security policy.</p><div class="servers">' + guilds.map(guild => '<article class="card server-card"><div class="server-avatar">' + (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + esc(guild.id) + '/' + esc(guild.icon) + '.png">' : esc(guild.name.slice(0,2).toUpperCase())) + '</div><h3>' + esc(guild.name) + '</h3><div class="muted">' + (guild.owner ? 'Owner' : 'Manager') + '</div><a class="button small" href="' + (guild.installed ? base + '/' + guild.id : '/invite?guild=' + guild.id) + '">' + (guild.installed ? 'Manage →' : 'Set up ↗') + '</a></article>').join('') + '</div>' + (guilds.length ? '' : '<div class="card">No servers with management access were found.</div>'))
+      shell('<h2>Select a server</h2><div class="servers">' + guilds.map(guild => '<article class="card server-card"><div class="server-avatar">' + (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + esc(guild.id) + '/' + esc(guild.icon) + '.png">' : esc(guild.name.slice(0,2).toUpperCase())) + '</div><h3>' + esc(guild.name) + '</h3><div class="muted">' + (guild.owner ? 'Owner' : 'Manager') + '</div><a class="button small" href="' + (guild.installed ? base + '/' + guild.id : '/invite?guild=' + guild.id) + '">' + (guild.installed ? 'Manage' : 'Set up') + '</a></article>').join('') + '</div>' + (guilds.length ? '' : '<div class="card">No servers with management access were found.</div>'))
       return
     }
     const path = '/api/guilds/' + encodeURIComponent(id)
@@ -163,9 +163,11 @@ async function dashboard() {
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
     const modules = ['nuke','raid','checkpoint','automod'].map(key => '<article class="card"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><h3>' + sections[key] + '</h3><span class="badge">' + (data.config[key].enabled ? '<i class="dot"></i> Enabled' : 'Disabled') + '</span></div><p>' + descriptions[key] + '</p><a class="module-link" href="' + serverPath + '/' + key + '">Configure ' + sections[key] + icon('arrow') + '</a></article>').join('')
-    const overview = '<div id="stats" class="stats">' + summary(data.stats) + '</div><section class="stack"><div class="grid">' + modules + '</div></section>' + activity
+    const enabled = ['nuke','raid','checkpoint','automod'].filter(key => data.config[key].enabled).length
+    const score = '<section class="card score-card"><div><h3>Security score</h3><p>' + enabled + ' of 4 protection modules enabled</p></div><meter min="0" max="4" value="' + enabled + '" aria-label="Enabled protection modules"></meter><strong>' + enabled * 25 + '%</strong></section>'
+    const overview = score + '<div id="stats" class="stats">' + summary(data.stats) + '</div><section class="stack module-section"><h3>Protection modules</h3><div class="grid">' + modules + '</div></section>' + activity
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + icon('server') + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('automod') + '<span class="nav-label">Administration</span>' + navigation('moderation') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : section === 'moderation' ? '<section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(data.events.filter(event => event.kind === 'moderation')) + '</section>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : section === 'moderation' ? '<section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(data.events.filter(event => event.kind === 'moderation')) + '</section>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div>')
     const settings = document.querySelector('#settings')
     if (settings && settingFields[section]) protectionControls(settings,section,data.config[section])
     if (settings) settings.onsubmit = async event => {
@@ -217,6 +219,7 @@ async function dashboard() {
 if (location.pathname.startsWith(base)) dashboard()
 else {
   if (location.pathname === '/premium') premium()
+  if (location.pathname === '/support') shell('<h2>Support Server</h2><p>The Discord support invite is currently unavailable.</p>')
   request('/api/me').then(accountMenu).catch(() => {})
 }
 
