@@ -2,6 +2,7 @@ import express from 'express'
 import helmet from 'helmet'
 import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
 import { PermissionFlagsBits as P } from 'discord.js'
 import { createStore, policies } from './store.js'
 import { startBot, requiredPermissions } from './bot.js'
@@ -151,7 +152,9 @@ app.put('/api/guilds/:id/:kind',(req,res) => {
 app.use('/api',(req,res) => res.status(404).json({error:'Route not found.'}))
 const publicDir = fileURLToPath(new URL('./public/',import.meta.url))
 app.use(express.static(publicDir))
-app.get(['/premium','/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => res.sendFile('index.html',{root:publicDir}))
+const appShell = readFileSync(new URL('./public/index.html',import.meta.url),'utf8')
+  .replace(/<main id="app">[\s\S]*?<\/main>/,'<main id="app"><div class="wrap dashboard"><p role="status">Loading…</p></div></main>')
+app.get(['/premium','/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => res.type('html').send(appShell))
 app.use((error,req,res,next) => {
   if (res.headersSent) return next(error)
   const status = error.status || 500

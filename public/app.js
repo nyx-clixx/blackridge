@@ -26,14 +26,43 @@ const rateLabels = {
   channelCreate:'Channel creations', channelDelete:'Channel deletions', webhookCreate:'Webhook creations'
 }
 const sensitivity = [['Low',20],['Medium',10],['High',5],['Custom',0]]
+const filters = {
+  multiUser:['Multi-user spam',4],scam:['Common scam patterns',1],badWords:['Blocked words and phrases',1],
+  images:['Image attachments',3],stickers:['Stickers',1],invites:['Discord invites',1],caps:['Excessive caps (%)',80],
+  duplicate:['Duplicate text',3],emoji:['Emoji spam',10],mentions:['Mass mentions',5],links:['Links',3],
+  files:['Attachments',3],newlines:['Newlines',12],headers:['Markdown headings',1],length:['Message length',1500],
+  ghost:['Ghost mentions (cached deletions)',1],nsfw:['Blocked NSFW domains',1]
+}
+function options(labels, selected) {
+  return Object.entries(labels).map(([value,label]) => '<option value="' + value + '"' + (selected === value ? ' selected' : '') + '>' + label + '</option>').join('')
+}
+function extraControls(section,config) {
+  if (section === 'automod') {
+    const cards = Object.entries(filters).map(([key,[label,limit]]) => {
+      const rule = config.filters?.[key]
+      const actions = {off:'Disabled',log:'Log',...(key === 'ghost' ? {} : {delete:'Delete message',timeout:'Timeout'})}
+      return '<article class="filter-card"><h3>' + label + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options(actions,rule?.action ?? 'off') + '</select></label><label>Threshold<input type="number" required min="1" max="4000" name="' + key + '-limit" value="' + esc(rule?.limit ?? limit) + '"></label></div></article>'
+    }).join('')
+    return '<section class="policy-group"><h3>Message filters</h3><p>Text and attachment filters require Message Content access. Domain checks use your list and do not open URLs.</p><div class="grid filter-grid">' + cards + '</div></section>'
+  }
+  if (section === 'checkpoint') {
+    const rows = Array.from({length:3},(_,index) => {
+      const rule = config.rules?.[index]
+      return '<article class="filter-card"><h3>Rule ' + (index+1) + '</h3><div class="fields"><label>Minimum score<input type="number" min="1" max="25" required name="score-' + index + '" value="' + esc(rule?.score ?? config.threshold) + '"></label><label>Response<select name="rule-' + index + '">' + options({off:'Disabled',log:'Log and alert',kick:'Kick',quarantine:'Quarantine',tempban:'Temporary ban'},rule?.action ?? 'off') + '</select></label></div></article>'
+    }).join('')
+    return '<section class="policy-group"><h3>Risk score rules</h3><p>The highest matching threshold wins. If all rules are disabled, the minimum score above controls logging and alerts.</p><div class="grid filter-grid">' + rows + '</div></section>'
+  }
+  return ''
+}
 function protectionControls(form, section, config) {
   const button = form.querySelector('button')
+  button.insertAdjacentHTML('beforebegin',extraControls(section,config))
   if (section === 'nuke') {
     const rows = Object.entries(rateLabels).map(([key,label]) => {
       const rule = config.rates?.[key] ?? config
       return '<div class="rate-row"><label class="toggle"><input type="checkbox" name="' + key + '-enabled"' + ((!config.rates || rule.enabled) ? ' checked' : '') + '> ' + label + '</label><div class="fields"><label>Actions<input required type="number" min="2" max="30" name="' + key + '-threshold" value="' + rule.threshold + '"></label><label>Window in seconds<input required type="number" min="5" max="120" name="' + key + '-window" value="' + rule.window + '"></label></div></div>'
     }).join('')
-    button.insertAdjacentHTML('beforebegin','<details class="rate-settings" ' + (config.rates ? 'open' : '') + '><summary>Per-action rate limits</summary><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></details>')
+    button.insertAdjacentHTML('beforebegin','<section class="rate-settings"><h3>Per-action rate limits</h3><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></section>')
     return
   }
   if (section !== 'raid') return
@@ -52,8 +81,8 @@ const timedResponses = [['tempBanMinutes','Temporary ban duration (minutes)',1,1
 const settingFields = {
   nuke: [['threshold','Actions per actor',2,30],['window','Detection window (seconds)',5,120],['trusted','Trusted Discord user IDs (comma-separated)'],...alerts,...timedResponses],
   raid: [['threshold','Joins to trigger',3,100],['window','Detection window (seconds)',5,120],['duration','Protection duration (seconds)',15,600],['age','Maximum account age (days, 0 for all)',0,365],['timeoutMinutes','Timeout duration (minutes)',1,1440],...alerts,...timedResponses],
-  checkpoint: [['age','Young account threshold (days)',1,365],['agePoints','Points for a young account',0,5],['avatarPoints','Points for a default avatar',0,5],['threshold','Minimum score to log and alert',1,10],...alerts],
-  automod: [['threshold','Messages per member',3,30],['window','Detection window (seconds)',2,60],['timeoutMinutes','Timeout duration (minutes)',1,1440]]
+  checkpoint: [['age','Young account threshold (days)',1,365],['agePoints','Points for a young account',0,5],['avatarPoints','Points for a default avatar',0,5],['rejoinPoints','Points for 3 joins in an hour',0,5],['similarPoints','Points for a burst of similar accounts',0,5],['inviteNamePoints','Points for invite links in display names',0,5],['threshold','Minimum score to log and alert',1,25],...timedResponses,...alerts],
+  automod: [['threshold','Messages per member',3,30],['window','Detection window (seconds)',2,60],['timeoutMinutes','Timeout duration (minutes)',1,1440],['badWords','Blocked phrases (comma-separated)'],['nsfwDomains','Blocked domains (comma-separated)']]
 }
 const actionsByKind = {
   nuke:['log','strip','quarantine','kick','ban','tempban'],
@@ -72,7 +101,7 @@ function permitsForm(config) {
 async function accountMenu(me) {
   if (!me.user) return
   const avatar = me.user.avatar ? '<img alt="" src="https://cdn.discordapp.com/avatars/' + esc(me.user.id) + '/' + esc(me.user.avatar) + '.png?size=64">' : '<span class="initial">' + esc(me.user.username.slice(0,1)) + '</span>'
-  account.outerHTML = '<details class="account-menu"><summary class="button small">' + avatar + '<span>' + esc(me.user.username) + '</span><span aria-hidden="true">⌄</span></summary><div class="account-links">' + (me.supportInvite ? '<a href="' + esc(me.supportInvite) + '">Support server ↗</a>' : '<span class="muted">Support invite pending</span>') + '<a href="/premium">Premium</a><button type="button" id="sign-out">Log out</button></div></details>'
+  account.outerHTML = '<details class="account-menu"><summary class="button small">' + avatar + '<span>' + esc(me.user.username) + '</span></summary><div class="account-links">' + (me.supportInvite ? '<a href="' + esc(me.supportInvite) + '">Support server ↗</a>' : '<span class="muted">Support invite pending</span>') + '<a href="/premium">Premium</a><button type="button" id="sign-out">Log out</button></div></details>'
   document.querySelector('#sign-out').onclick = async () => {
     try { await request('/auth/logout',{method:'POST'}); location.assign(base) }
     catch (error) { alert(error.message) }
@@ -135,6 +164,12 @@ async function dashboard() {
       const fields = new FormData(settings)
       const payload = section === 'permits' ? Object.fromEntries(commandNames.map(name => [name,{users:ids(fields.get(name + '-users')),roles:ids(fields.get(name + '-roles'))}])) : {enabled:fields.has('enabled')}
       if (fields.has('action')) payload.action = fields.get('action')
+      if (section === 'automod') payload.filters = Object.fromEntries(Object.keys(filters).map(key => [key,{
+        action:fields.get(key + '-action'),limit:Number(fields.get(key + '-limit'))
+      }]))
+      if (section === 'checkpoint') payload.rules = Array.from({length:3},(_,index) => ({
+        score:Number(fields.get('score-' + index)),action:fields.get('rule-' + index)
+      })).filter(rule => rule.action !== 'off')
       if (fields.has('custom-rates')) {
         payload.rates = Object.fromEntries(Object.keys(rateLabels).map(key => [key,{
           enabled:fields.has(key + '-enabled'),

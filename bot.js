@@ -1,7 +1,8 @@
 import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, PermissionFlagsBits as P } from 'discord.js'
 import { attachModeration, temporaryBan } from './moderation.js'
+import { createHash } from 'node:crypto'
 
-export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages
+export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages
 const dangerous = P.Administrator | P.ManageGuild | P.ManageRoles | P.ManageChannels | P.BanMembers | P.KickMembers | P.ManageWebhooks | P.ModerateMembers
 const tracked = new Set([A.ChannelDelete,A.RoleDelete,A.MemberBanAdd,A.MemberKick,A.BotAdd])
 const rateByAction = new Map([
@@ -11,6 +12,47 @@ const rateByAction = new Map([
   [A.WebhookCreate,'webhookCreate']
 ])
 const flags = value => typeof value === 'string' && /^\d+$/.test(value) ? BigInt(value) : 0n
+const invitePattern = /(?:discord\.gg\/|discord(?:app)?\.com\/invite\/)[\w-]+/i
+
+function messageSignals(message, repeats, now, window, cfg) {
+  const body = message.content ?? ''
+  const text = body.normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' ')
+  let duplicate = 0
+  let multiUser = 0
+  if (text.length >= 5) {
+    const digest = createHash('sha256').update(text).digest('base64url')
+    const key = message.guildId + ':' + digest
+    const recent = (repeats.get(key) ?? []).filter(hit => hit.at > now-window)
+    recent.push({id:message.author.id,at:now})
+    repeats.set(key,recent.slice(-100))
+    duplicate = recent.filter(hit => hit.id === message.author.id).length
+    multiUser = new Set(recent.map(hit => hit.id)).size
+  }
+  const letters = body.match(/[a-z]/gi)?.length ?? 0
+  const urls = body.match(/https?:\/\/[^\s]+/gi) ?? []
+  const entries = value => value.toLowerCase().split(',').map(item => item.trim()).filter(Boolean)
+  const domains = entries(cfg.nsfwDomains)
+  return {
+    mentions:message.mentions.users.size + message.mentions.roles.size + (message.mentions.everyone ? 10 : 0),
+    files:message.attachments.size,
+    images:message.attachments.filter(file => file.contentType?.startsWith('image/')).size,
+    stickers:message.stickers.size,
+    invites:Number(invitePattern.test(body)),
+    links:urls.length,
+    badWords:entries(cfg.badWords).filter(word => text.includes(word)).length,
+    scam:Number(urls.length > 0 && /\b(?:free nitro|claim your nitro|verify your wallet|steam gift)\b/i.test(body)),
+    nsfw:urls.filter(url => {
+      const hostname = URL.parse(url)?.hostname.toLowerCase()
+      return hostname && domains.some(domain => hostname === domain || hostname.endsWith('.' + domain))
+    }).length,
+    caps:letters >= 10 ? Math.round((body.match(/[A-Z]/g)?.length ?? 0)*100/letters) : 0,
+    newlines:(body.match(/\n/g) ?? []).length,
+    length:body.length,
+    emoji:(body.match(/<a?:\w+:\d+>|\p{Extended_Pictographic}/gu) ?? []).length,
+    headers:(body.match(/^\s{0,3}#{1,3} /gm) ?? []).length,
+    duplicate,multiUser
+  }
+}
 
 export function isDestructive(entry,guild) {
   if (tracked.has(entry.action)) return true
@@ -34,6 +76,9 @@ export function attachProtection(client, db) {
   const audits = new Map()
   const joins = new Map()
   const messages = new Map()
+  const repeats = new Map()
+  const checkpointJoins = new Map()
+  const recentAccounts = new Map()
   const raids = new Map()
   const seen = new Map()
   const responses = new Set()
@@ -41,6 +86,9 @@ export function attachProtection(client, db) {
     const now = Date.now()
     for (const history of [audits,joins,messages]) for (const [key,hits] of history) if (hits.at(-1) <= now-120000) history.delete(key)
     for (const active of [raids,seen]) for (const [key,until] of active) if (until <= now) active.delete(key)
+    for (const [key,hits] of repeats) if (hits.at(-1).at <= now-60000) repeats.delete(key)
+    for (const [key,hits] of checkpointJoins) if (hits.at(-1) <= now-3600000) checkpointJoins.delete(key)
+    for (const [key,hits] of recentAccounts) if (hits.at(-1).at <= now-60000) recentAccounts.delete(key)
   },60000)
   cleanup.unref()
   const log = (guild,kind,text) => db.event(guild.id,kind,text)
@@ -87,10 +135,37 @@ export function attachProtection(client, db) {
       const cfg = db.config(guild.id,'automod')
       if (!cfg.enabled) return
       const key = guild.id + ':' + message.author.id
-      if (recordHit(messages,key,Date.now(),cfg.window*1000,cfg.threshold) < cfg.threshold) return
+      const now = Date.now()
+      if (cfg.filters && Object.values(cfg.filters).some(rule => rule.action !== 'off')) {
+        const signals = messageSignals(message,repeats,now,cfg.window*1000,cfg)
+        const severity = {log:0,delete:1,timeout:2}
+        const matches = Object.entries(cfg.filters).filter(([name,rule]) => rule.action !== 'off' && signals[name] >= rule.limit)
+        if (matches.length) {
+          const [,rule] = matches.reduce((a,b) => severity[b[1].action] > severity[a[1].action] ? b : a)
+          log(guild,'automod','Matched ' + matches.map(([name]) => name).join(', ') + ' · member ' + message.author.id)
+          if (rule.action === 'delete') {
+            if (message.deletable) await message.delete()
+            else log(guild,'automod','Message deletion blocked by Discord permissions')
+          }
+          if (rule.action === 'timeout') await enforce(message.member,'automod',{...cfg,action:'timeout'})
+          return
+        }
+      }
+      if (recordHit(messages,key,now,cfg.window*1000,cfg.threshold) < cfg.threshold) return
       messages.delete(key)
       log(guild,'automod','Message rate exceeded by ' + message.author.id)
       if (cfg.action !== 'log') await enforce(message.member,'automod',cfg)
+    })
+  })
+  client.on(Events.MessageDelete,message => {
+    if (!message.inGuild() || message.partial || message.author?.bot || message.webhookId) return
+    const guild = message.guild
+    void run(guild,'automod',async () => {
+      const cfg = db.config(guild.id,'automod')
+      const rule = cfg.filters?.ghost
+      if (!cfg.enabled || rule?.action !== 'log') return
+      const count = message.mentions.users.size + message.mentions.roles.size + (message.mentions.everyone ? 10 : 0)
+      if (count >= rule.limit) log(guild,'automod','Deleted message with mentions · author ' + message.author.id)
     })
   })
   client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => void run(guild,'nuke',async () => {
@@ -159,18 +234,33 @@ export function attachProtection(client, db) {
     if (member.user.bot) return
     const cfg = db.config(member.guild.id,'checkpoint')
     if (!cfg.enabled) return
+    const now = Date.now()
+    const joined = recordHit(checkpointJoins,member.guild.id + ':' + member.id,now,3600000,3)
+    const accounts = (recentAccounts.get(member.guild.id) ?? []).filter(hit => hit.at > now-60000 && hit.id !== member.id)
+    const name = member.user.username?.toLowerCase().replace(/[\d_.]+$/g,'') ?? ''
+    const similar = accounts.filter(hit => Math.abs(hit.created-member.user.createdTimestamp) <= 3600000 &&
+      ((name.length >= 3 && name === hit.name) || (member.user.avatar && member.user.avatar === hit.avatar))).length >= 2
+    accounts.push({id:member.id,at:now,created:member.user.createdTimestamp,name,avatar:member.user.avatar})
+    recentAccounts.set(member.guild.id,accounts.slice(-100))
     const score = (member.user.avatar ? 0 : cfg.avatarPoints) +
-      (Date.now()-member.user.createdTimestamp < cfg.age*86400000 ? cfg.agePoints : 0)
-    if (score < cfg.threshold) return
+      (now-member.user.createdTimestamp < cfg.age*86400000 ? cfg.agePoints : 0) +
+      (joined >= 3 ? cfg.rejoinPoints : 0) + (similar ? cfg.similarPoints : 0) +
+      (invitePattern.test(member.displayName ?? '') ? cfg.inviteNamePoints : 0)
+    const rule = (cfg.rules?.length ? cfg.rules : [{score:cfg.threshold,action:'log'}])
+      .filter(rule => score >= rule.score).sort((a,b) => b.score-a.score)[0]
+    if (!rule) return
     const detail = 'Checkpoint flagged ' + member.id + ' with risk score ' + score
     log(member.guild,'checkpoint',detail)
     alert(member.guild,'checkpoint',cfg,detail)
+    if (rule.action !== 'log' && member.id !== member.guild.ownerId) await enforce(member,'checkpoint',{...cfg,action:rule.action})
   }))
   return () => clearInterval(cleanup)
 }
 
 export function startBot(token,db) {
-  const client = new Client({intents:[I.Guilds,I.GuildModeration,I.GuildMembers,I.GuildMessages]})
+  const intents = [I.Guilds,I.GuildModeration,I.GuildMembers,I.GuildMessages]
+  if (process.env.ENABLE_MESSAGE_CONTENT === 'true') intents.push(I.MessageContent)
+  const client = new Client({intents})
   attachProtection(client,db)
   attachModeration(client,db)
   client.once(Events.ClientReady,() => console.log('Discord bot connected'))

@@ -111,6 +111,9 @@ fieldset{border:0;padding:0;margin:14px 0 0;min-width:0}
 .pricing{max-width:700px;margin-top:20px}
 .pricing .card{padding:22px;border-top:2px solid #8b79bc}
 .pricing strong{display:block;font-size:34px;margin-top:10px;letter-spacing:-.04em}
+.filter-grid{margin-top:14px}
+.filter-card{padding:12px;border:1px solid var(--line);border-radius:8px;background:#131315}
+.filter-card .fields{margin-bottom:0}
 @media(max-width:760px){
   .wrap{width:calc(100% - 32px)}
   .hero{grid-template-columns:1fr;padding-block:44px;gap:24px}
