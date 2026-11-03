@@ -3,6 +3,12 @@ import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, PermissionF
 export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers
 const dangerous = P.Administrator | P.ManageGuild | P.ManageRoles | P.ManageChannels | P.BanMembers | P.KickMembers | P.ManageWebhooks | P.ModerateMembers
 const tracked = new Set([A.ChannelDelete,A.RoleDelete,A.MemberBanAdd,A.MemberKick,A.BotAdd])
+const rateByAction = new Map([
+  [A.MemberKick,'moderation'], [A.MemberBanAdd,'moderation'],
+  [A.RoleCreate,'roleCreate'], [A.RoleDelete,'roleDelete'],
+  [A.ChannelCreate,'channelCreate'], [A.ChannelDelete,'channelDelete'],
+  [A.WebhookCreate,'webhookCreate']
+])
 const flags = value => typeof value === 'string' && /^\d+$/.test(value) ? BigInt(value) : 0n
 
 export function isDestructive(entry,guild) {
@@ -46,14 +52,19 @@ export function attachProtection(client, db) {
     const cfg = db.config(guild.id,'nuke')
     const actor = entry.executorId
     const now = Date.now()
+    const category = rateByAction.get(entry.action)
+    const rate = cfg.rates?.[category]
+    const policy = rate ?? cfg
     if (!cfg.enabled || !actor || actor === guild.ownerId || actor === client.user.id ||
         cfg.trusted.split(',').some(id => id.trim() === actor) || seen.has(entry.id) ||
-        now - entry.createdTimestamp > cfg.window*1000 || !isDestructive(entry,guild)) return
+        !policy.enabled || now - entry.createdTimestamp > policy.window*1000 ||
+        (!rate && !isDestructive(entry,guild))) return
     seen.set(entry.id,now+120000)
     const key = guild.id + ':' + actor
-    const count = recordHit(audits,key,now,cfg.window*1000,cfg.threshold)
-    if (count < cfg.threshold || responses.has(key)) return
-    audits.delete(key)
+    const bucket = rate ? key + ':' + category : key
+    const count = recordHit(audits,bucket,now,policy.window*1000,policy.threshold)
+    if (count < policy.threshold || responses.has(key)) return
+    audits.delete(bucket)
     const detail = A[entry.action] + ' by ' + actor + ' · ' + count + ' tracked actions'
     log(guild,'nuke',detail + ' · threshold reached')
     if (cfg.action === 'log') return
@@ -92,7 +103,19 @@ export function attachProtection(client, db) {
     if (!active) {
       if (count < cfg.threshold) return
       raids.set(guild.id,now+cfg.duration*1000)
-      log(guild,'raid',count + ' joins in ' + cfg.window + 's · protection active for ' + cfg.duration + 's')
+      const detail = count + ' joins in ' + cfg.window + 's · protection active for ' + cfg.duration + 's'
+      log(guild,'raid',detail)
+      if (cfg.alertChannel) {
+        const roles = [...new Set(cfg.alertRoles)].filter(id => id !== guild.id && guild.roles.cache.has(id))
+        void run(guild,'raid',async () => {
+          const channel = await guild.channels.fetch(cfg.alertChannel)
+          if (!channel?.isSendable() || channel.guildId !== guild.id) throw new Error('Invalid raid alert channel')
+          await channel.send({
+            content: ['Blackridge raid detected: ' + detail, ...roles.map(id => '<@&' + id + '>')].join(' '),
+            allowedMentions:{parse:[],roles}
+          })
+        })
+      }
     }
     if (cfg.age && now - member.user.createdTimestamp > cfg.age*86400000) return
     if (cfg.action === 'log') { log(guild,'raid','Flagged join from ' + member.id); return }
@@ -100,8 +123,8 @@ export function attachProtection(client, db) {
       await member.kick('Blackridge Anti-Raid protection active')
       log(guild,'raid','Kicked ' + member.id)
     } else if (cfg.action === 'timeout' && member.moderatable) {
-      await member.timeout(600000,'Blackridge Anti-Raid protection active')
-      log(guild,'raid','Timed out ' + member.id + ' for 10 minutes')
+      await member.timeout(cfg.timeoutMinutes*60000,'Blackridge Anti-Raid protection active')
+      log(guild,'raid','Timed out ' + member.id + ' for ' + cfg.timeoutMinutes + ' minute(s)')
     } else log(guild,'raid','Response blocked by Discord permissions or role hierarchy for ' + member.id)
   }))
   return () => clearInterval(cleanup)

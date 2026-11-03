@@ -4,13 +4,18 @@ import { dirname } from 'node:path'
 import { z } from 'zod'
 
 const integer = (min,max) => z.number().int().min(min).max(max)
+const rate = z.strictObject({enabled:z.boolean(),threshold:integer(2,30),window:integer(5,120)})
+const rates = z.strictObject(Object.fromEntries(
+  ['moderation','roleCreate','roleDelete','channelCreate','channelDelete','webhookCreate'].map(key => [key,rate])
+))
+const snowflake = z.string().regex(/^\d{17,20}$/)
 export const policies = {
-  nuke: z.strictObject({enabled:z.boolean(),threshold:integer(2,30),window:integer(5,120),trusted:z.string().max(500).regex(/^\s*(?:\d{17,20}(?:\s*,\s*\d{17,20})*)?\s*$/),action:z.enum(['log','strip','kick'])}),
-  raid: z.strictObject({enabled:z.boolean(),threshold:integer(3,100),window:integer(5,120),duration:integer(15,600),age:integer(0,365),action:z.enum(['log','timeout','kick'])})
+  nuke: z.strictObject({enabled:z.boolean(),threshold:integer(2,30),window:integer(5,120),trusted:z.string().max(500).regex(/^\s*(?:\d{17,20}(?:\s*,\s*\d{17,20})*)?\s*$/),action:z.enum(['log','strip','kick']),rates:rates.optional()}),
+  raid: z.strictObject({enabled:z.boolean(),threshold:integer(3,100),window:integer(5,120),duration:integer(15,600),age:integer(0,365),action:z.enum(['log','timeout','kick']),timeoutMinutes:integer(1,1440).optional(),alertChannel:z.union([snowflake,z.literal('')]).optional(),alertRoles:z.array(snowflake).max(5).optional()})
 }
 const defaults = {
   nuke:{enabled:true,threshold:3,window:20,trusted:'',action:'log'},
-  raid:{enabled:true,threshold:8,window:15,duration:60,age:7,action:'log'}
+  raid:{enabled:true,threshold:8,window:15,duration:60,age:7,action:'log',timeoutMinutes:10,alertChannel:'',alertRoles:[]}
 }
 export function createStore(file) {
   if (file !== ':memory:') mkdirSync(dirname(file),{recursive:true})

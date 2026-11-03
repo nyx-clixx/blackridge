@@ -11,13 +11,38 @@ const request = async (url, options) => {
 const shell = html => { app.innerHTML = '<div class="wrap dashboard">' + html + '</div>' }
 const logList = entries => entries.length ? entries.map(event => '<div class="log-row"><span class="badge">' + esc(sections[event.kind] || 'Settings') + '</span><span>' + esc(event.detail) + '</span><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></div>').join('') : '<p>No security events in this view.</p>'
 const base = '/dashboard'
+const rateLabels = {
+  moderation:'Kicks and bans', roleCreate:'Role creations', roleDelete:'Role deletions',
+  channelCreate:'Channel creations', channelDelete:'Channel deletions', webhookCreate:'Webhook creations'
+}
+const sensitivity = [['Low',20],['Medium',10],['High',5],['Custom',0]]
+function protectionControls(form, section, config) {
+  const button = form.querySelector('button')
+  if (section === 'nuke') {
+    const rows = Object.entries(rateLabels).map(([key,label]) => {
+      const rule = config.rates?.[key] ?? config
+      return '<div class="card"><label class="toggle"><input type="checkbox" name="' + key + '-enabled"' + ((!config.rates || rule.enabled) ? ' checked' : '') + '> ' + label + '</label><div class="fields"><label>Actions<input required type="number" min="2" max="30" name="' + key + '-threshold" value="' + rule.threshold + '"></label><label>Window in seconds<input required type="number" min="5" max="120" name="' + key + '-window" value="' + rule.window + '"></label></div></div>'
+    }).join('')
+    button.insertAdjacentHTML('beforebegin','<details class="stack" ' + (config.rates ? 'open' : '') + '><summary>Per-action rate limits</summary><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></details><br>')
+    return
+  }
+  const matched = sensitivity.find(([,count]) => count && config.window === 10 && config.threshold === count)?.[1] ?? 0
+  form.querySelector('.fields').insertAdjacentHTML('beforebegin','<div class="fields"><label>Detection sensitivity<select name="sensitivity">' + sensitivity.map(([label,count]) => '<option value="' + count + '"' + (matched === count ? ' selected' : '') + '>' + label + (count ? ' · ' + count + ' joins / 10 s' : '') + '</option>').join('') + '</select></label></div>')
+  const preset = form.elements.sensitivity
+  preset.onchange = () => {
+    if (!Number(preset.value)) return
+    form.elements.threshold.value = preset.value
+    form.elements.window.value = 10
+  }
+  for (const key of ['threshold','window']) form.elements[key].oninput = () => { preset.value = '0' }
+}
 const settingFields = {
   nuke: [['threshold','Actions per actor',2,30],['window','Detection window (seconds)',5,120],['trusted','Trusted Discord user IDs (comma-separated)']],
-  raid: [['threshold','Joins to trigger',3,100],['window','Detection window (seconds)',5,120],['duration','Protection duration (seconds)',15,600],['age','Maximum account age (days, 0 for all)',0,365]]
+  raid: [['threshold','Joins to trigger',3,100],['window','Detection window (seconds)',5,120],['duration','Protection duration (seconds)',15,600],['age','Maximum account age (days, 0 for all)',0,365],['timeoutMinutes','Timeout duration (minutes)',1,1440],['alertChannel','Alert channel ID (optional)'],['alertRoles','Alert role IDs (up to five, comma-separated)']]
 }
 function form(kind, config, owner) {
   const disabled = owner ? '' : ' disabled'
-  return '<form class="card" id="settings"><h3>' + sections[kind] + ' policy</h3><p>' + (owner ? 'Choose when Blackridge should act and what response it should take.' : 'The server owner can change this policy.') + '</p><fieldset' + disabled + '><label class="toggle"><input type="checkbox" name="enabled"' + (config.enabled ? ' checked' : '') + '> Enable detection</label><div class="fields">' + settingFields[kind].map(([key,label,min,max]) => '<label>' + label + '<input name="' + key + '" value="' + esc(config[key]) + '"' + (min === undefined ? ' maxlength="500"' : ' type="number" required min="' + min + '" max="' + max + '"') + '></label>').join('') + '<label>Response<select name="action">' + (kind === 'raid' ? ['log','timeout','kick'] : ['log','strip','kick']).map(action => '<option value="' + action + '"' + (config.action === action ? ' selected' : '') + '>' + ({log:'Log only',timeout:'Time out for 10 minutes',kick:'Kick',strip:'Remove dangerous roles'})[action] + '</option>').join('') + '</select></label></div><button class="button primary">Save settings</button></fieldset><p role="status" id="notice"></p></form>'
+  return '<form class="card" id="settings"><h3>' + sections[kind] + ' policy</h3><p>' + (owner ? 'Choose when Blackridge should act and what response it should take.' : 'The server owner can change this policy.') + '</p><fieldset' + disabled + '><label class="toggle"><input type="checkbox" name="enabled"' + (config.enabled ? ' checked' : '') + '> Enable detection</label><div class="fields">' + settingFields[kind].map(([key,label,min,max]) => '<label>' + label + '<input name="' + key + '" value="' + esc(config[key]) + '"' + (min === undefined ? ' maxlength="500"' : ' type="number" required min="' + min + '" max="' + max + '"') + '></label>').join('') + '<label>Response<select name="action">' + (kind === 'raid' ? ['log','timeout','kick'] : ['log','strip','kick']).map(action => '<option value="' + action + '"' + (config.action === action ? ' selected' : '') + '>' + ({log:'Log only',timeout:'Time out',kick:'Kick',strip:'Remove dangerous roles'})[action] + '</option>').join('') + '</select></label></div><button class="button primary">Save settings</button></fieldset><p role="status" id="notice"></p></form>'
 }
 async function dashboard() {
   shell('<p role="status">Loading dashboard…</p>')
@@ -44,11 +69,23 @@ async function dashboard() {
     const summary = value => '<div class="card"><span class="muted">Events · 24 hours</span><strong class="stat">' + value.total + '</strong></div><div class="card"><span class="muted">Anti-Nuke</span><strong class="stat">' + value.nuke + '</strong></div><div class="card"><span class="muted">Anti-Raid</span><strong class="stat">' + value.raid + '</strong></div>'
     shell('<div class="dash-layout"><aside class="sidebar"><a href="' + base + '">← All servers</a>' + Object.entries(sections).map(([key,title]) => '<a href="' + base + '/' + id + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + title + '</a>').join('') + '</aside><div>' + heading + (section === 'overview' ? '<div id="stats" class="stats">' + summary(data.stats) + '</div><p class="muted">Anti-Nuke ' + (data.config.nuke.enabled ? 'enabled' : 'disabled') + ' · Anti-Raid ' + (data.config.raid.enabled ? 'enabled' : 'disabled') + '</p>' + activity : section === 'logs' ? activity : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div>')
     const settings = document.querySelector('#settings')
+    if (settings) protectionControls(settings,section,data.config[section])
     if (settings) settings.onsubmit = async event => {
       event.preventDefault()
       const fields = new FormData(settings)
       const payload = {enabled:fields.has('enabled'),action:fields.get('action')}
+      if (fields.has('custom-rates')) {
+        payload.rates = Object.fromEntries(Object.keys(rateLabels).map(key => [key,{
+          enabled:fields.has(key + '-enabled'),
+          threshold:Number(fields.get(key + '-threshold')),
+          window:Number(fields.get(key + '-window'))
+        }]))
+      }
       for (const [key,,min] of settingFields[section]) payload[key] = min === undefined ? fields.get(key) : Number(fields.get(key))
+      if (section === 'raid') {
+        payload.alertChannel = payload.alertChannel.trim()
+        payload.alertRoles = payload.alertRoles.split(',').map(id => id.trim()).filter(Boolean)
+      }
       const notice = document.querySelector('#notice')
       const button = settings.querySelector('button')
       button.disabled = true
