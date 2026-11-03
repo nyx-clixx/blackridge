@@ -1,0 +1,20 @@
+{
+  "name": "blackridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "discord.js": "^14.22.1",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "zod": "^4.1.0"
+  }
+}
+
