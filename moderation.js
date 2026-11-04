@@ -1,17 +1,19 @@
 import { randomUUID } from 'node:crypto'
-import { ChannelType, Events, MessageFlags, PermissionFlagsBits as P, SlashCommandBuilder } from 'discord.js'
+import { ApplicationCommandType, ChannelType, Events, MessageFlags, PermissionFlagsBits as P, SlashCommandBuilder } from 'discord.js'
 import { commandNames, matchesPermit } from './store.js'
 import { sendModuleLog } from './recovery.js'
 
-const channelCommands = new Set(['lock','unlock'])
+const channelCommands = new Set(['lock-channel','unlock-channel'])
 const timedCommands = new Set(['timeout','tempban'])
 const permissions = {
-  ban:P.BanMembers, tempban:P.BanMembers, kick:P.KickMembers,
-  timeout:P.ModerateMembers, warn:P.ModerateMembers, lock:P.ManageChannels, unlock:P.ManageChannels
+  ban:P.BanMembers, tempban:P.BanMembers, unban:P.BanMembers, kick:P.KickMembers,
+  timeout:P.ModerateMembers, warn:P.ModerateMembers, 'lock-channel':P.ManageChannels, 'unlock-channel':P.ManageChannels
 }
 const commands = commandNames.map(name => {
   const builder = new SlashCommandBuilder().setName(name).setDescription('Blackridge ' + name + ' moderation action')
-  if (!channelCommands.has(name)) {
+  if (name === 'unban') {
+    builder.addStringOption(option => option.setName('user-id').setDescription('Discord ID of the banned user').setRequired(true).setMinLength(17).setMaxLength(20))
+  } else if (!channelCommands.has(name)) {
     builder.addUserOption(option => option.setName('member').setDescription('Server member').setRequired(true))
     if (timedCommands.has(name)) builder.addIntegerOption(option => option.setName('minutes').setDescription('Duration in minutes').setMinValue(1).setMaxValue(1440).setRequired(true))
   }
@@ -37,7 +39,12 @@ export async function temporaryBan(member, minutes, db, reason) {
 export function attachModeration(client,db) {
   const channelChanges = new Set()
   const register = async guild => {
-    try { for (const command of commands) await guild.commands.create(command) }
+    try {
+      for (const command of commands) await guild.commands.create(command)
+      for (const command of (await guild.commands.fetch()).values()) {
+        if (command.type === ApplicationCommandType.ChatInput && ['lock','unlock'].includes(command.name)) await command.delete()
+      }
+    }
     catch (error) { console.error('Command registration failed:',error.code ?? error.name) }
   }
   client.once(Events.ClientReady,async () => {
@@ -85,7 +92,7 @@ export function attachModeration(client,db) {
           if (channel?.type !== ChannelType.GuildText) return await interaction.editReply('Use this command in a server text channel.')
           if (!canModerate(actor,guild.ownerId,name,permit,channel.permissionsFor(actor))) return await interaction.editReply('You do not have access in this channel.')
           const current = channel.permissionOverwrites.cache.get(guild.id)
-          if (name === 'lock') {
+          if (name === 'lock-channel') {
             if (current?.allow.has(P.SendMessages) || current?.deny.has(P.SendMessages)) return await interaction.editReply('This channel already has an explicit everyone send rule.')
             db.lock(guild.id,channel.id)
           } else {
@@ -95,9 +102,20 @@ export function attachModeration(client,db) {
               return await interaction.editReply('The Blackridge lock was already removed.')
             }
           }
-          await channel.permissionOverwrites.edit(guild.roles.everyone,{SendMessages:name === 'lock' ? false : null},{reason})
-          if (name === 'unlock') db.unlock(guild.id,channel.id)
+          await channel.permissionOverwrites.edit(guild.roles.everyone,{SendMessages:name === 'lock-channel' ? false : null},{reason})
+          if (name === 'unlock-channel') db.unlock(guild.id,channel.id)
         } finally { channelChanges.delete(key) }
+      } else if (name === 'unban') {
+        const id = interaction.options.getString('user-id',true).trim()
+        if (!/^\d{17,20}$/.test(id)) return await interaction.editReply('Enter a valid Discord user ID.')
+        const pending = db.pendingTempBan(guild.id,id)
+        try { await guild.bans.remove(id,reason) }
+        catch (error) {
+          if (error.code === 10026) return await interaction.editReply('That user is not banned.')
+          throw error
+        }
+        if (pending) db.removeTempBan(guild.id,id,pending.marker)
+        db.event(guild.id,'moderation','unban · member ' + id + ' · moderator ' + actor.id + ' · ' + reason)
       } else {
         const target = await guild.members.fetch({user:interaction.options.getUser('member',true).id,force:true})
         if (target.id === actor.id || target.id === guild.ownerId || target.id === client.user.id ||

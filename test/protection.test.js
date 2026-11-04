@@ -98,6 +98,19 @@ test('legacy command permits become named grants and bypasses stay scoped to the
   assert.equal(db.recent(guild.id).length,count)
 })
 
+test('permit migration drops the generated kick entry and retains custom channel grants', t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  const grant = {users:['123456789012345678'],roles:[],bypasses:[]}
+  db.save('guild','permits',{entries:[
+    {...grant,name:'/kick',commands:['kick']},
+    {...grant,name:'Server Manager',commands:['kick','lock','unlock']}
+  ]},'owner')
+  assert.deepEqual(policies.permits.parse(db.config('guild','permits')).entries,[
+    {...grant,name:'Server Manager',commands:['kick','lock-channel','unlock-channel']}
+  ])
+})
+
 test('Anti-Nuke journals existing roles before replacing them with quarantine', async t => {
   const db = createStore(':memory:')
   const client = new EventEmitter()

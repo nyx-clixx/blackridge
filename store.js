@@ -9,7 +9,7 @@ const rates = z.strictObject(Object.fromEntries(
   ['moderation','roleCreate','roleDelete','channelCreate','channelDelete','webhookCreate'].map(key => [key,rate])
 ))
 const snowflake = z.string().regex(/^\d{17,20}$/)
-export const commandNames = ['ban','kick','timeout','warn','tempban','lock','unlock']
+export const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel']
 const principals = z.array(snowflake).max(15)
 export const permitBypasses = ['automod','nuke','raid','checkpoint']
 const permit = z.strictObject({
@@ -25,11 +25,18 @@ export function matchesPermit(permit,userId,guildId,roles) {
 }
 
 function normalizePermits(config) {
-  if (Array.isArray(config.entries)) return config
-  return {entries:commandNames.flatMap(command => {
+  if (Array.isArray(config.entries)) {
+    return {entries:config.entries.filter(entry =>
+      !(entry.name === '/kick' && entry.commands.length === 1 && entry.commands[0] === 'kick' && !entry.bypasses.length)
+    ).map(entry => ({...entry,commands:[...new Set(entry.commands.map(name =>
+      name === 'lock' || name === 'unlock' ? name + '-channel' : name
+    ))]}))}
+  }
+  return {entries:['ban','tempban','timeout','warn','lock','unlock'].flatMap(command => {
     const entry = config[command]
     if (!entry || !(entry.users.length || entry.roles.length)) return []
-    return [{name:'/' + command,users:entry.users,roles:entry.roles,commands:[command],bypasses:[]}]
+    const name = command === 'lock' || command === 'unlock' ? command + '-channel' : command
+    return [{name:'/' + name,users:entry.users,roles:entry.roles,commands:[name],bypasses:[]}]
   })}
 }
 const alerts = {alertChannel:z.union([snowflake,z.literal('')]).optional(),alertRoles:z.array(snowflake).max(5).optional()}
@@ -106,6 +113,7 @@ export function createStore(file) {
     unlock(guild,channel) { db.prepare('DELETE FROM channel_lock WHERE guild=? AND channel=?').run(guild,channel) },
     tempBan(guild,user,marker,expires) { db.prepare('INSERT INTO temp_ban VALUES (?,?,?,?)').run(guild,user,marker,expires) },
     dueBans() { return db.prepare('SELECT * FROM temp_ban WHERE expires<=? ORDER BY expires LIMIT 100').all(Date.now()) },
+    pendingTempBan(guild,user) { return db.prepare('SELECT marker FROM temp_ban WHERE guild=? AND user=?').get(guild,user) },
     removeTempBan(guild,user,marker) { db.prepare('DELETE FROM temp_ban WHERE guild=? AND user=? AND marker=?').run(guild,user,marker) },
     config(guild,kind) {
       const saved = JSON.parse(read.get(guild,kind)?.config ?? '{}')

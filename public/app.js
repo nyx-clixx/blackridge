@@ -84,7 +84,7 @@ function logList(entries,moderation = false) {
     const avatar = event.userId && event.avatar
       ? '<img class="event-avatar" alt="" src="https://cdn.discordapp.com/avatars/' + encodeURIComponent(event.userId) + '/' + encodeURIComponent(event.avatar) + '.png?size=32">'
       : '<span class="event-avatar fallback-avatar" aria-hidden="true">' + icon('checkpoint') + '</span>'
-    const command = event.kind === 'moderation' && event.detail.match(/^(ban|kick|timeout|warn|tempban|lock|unlock)\b/)?.[1]
+    const command = event.kind === 'moderation' && event.detail.match(/^(ban|tempban|unban|kick|timeout|warn|lock-channel|unlock-channel|lock|unlock)\b/)?.[1]
     const action = command ? '/' + command : event.detail.replace(/ · initiated by .+$/,'').replace(/\b(?:invites_disabled_until|dms_disabled_until)\b/g,key => key === 'invites_disabled_until' ? 'invite pause' : 'DM pause').trim()
     return '<tr><td><div class="case-user">' + avatar + '<div><strong>' + esc(event.userName ?? (event.userId ? 'Unknown user' : 'System')) + '</strong><code>' + esc(event.userId ?? '—') + '</code></div></div></td><td><span title="' + esc(event.detail) + '">' + esc(action) + '</span></td><td><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></td></tr>'
   }).join('')
@@ -171,7 +171,7 @@ const actionsByKind = {
   automod:['log','timeout']
 }
 const actionLabels = {log:'Log only',timeout:'Time out',strip:'Remove dangerous roles',quarantine:'Quarantine',kick:'Kick',ban:'Ban',tempban:'Temporary ban'}
-const commandNames = ['ban','kick','timeout','warn','tempban','lock','unlock']
+const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel']
 const ids = value => value.split(',').map(id => id.trim()).filter(Boolean)
 
 const bypassLabels = {automod:'Auto Moderation',nuke:'Anti-Nuke',raid:'Anti-Raid',checkpoint:'Checkpoint'}
@@ -179,10 +179,16 @@ function permitCard(entry,roles) {
   const choices = (name,labels,selected) => Object.entries(labels).map(([id,label]) =>
     '<label class="toggle"><input type="checkbox" name="' + name + '" value="' + esc(id) + '"' + (selected.includes(id) ? ' checked' : '') + '> ' + esc(label) + '</label>'
   ).join('')
-  return '<details class="card permit-card"><summary>' + esc(entry.name) + '</summary><div class="fields"><label>Name<input name="permit-name" maxlength="60" required value="' + esc(entry.name) + '"></label><label>Discord user IDs<input name="permit-users" data-commit-on-change maxlength="330" value="' + esc(entry.users.join(', ')) + '" placeholder="Comma-separated user IDs"></label><div class="discord-field"><span>Discord roles</span>' + discordSelect('permit-roles',roles,entry.roles,true) + '</div></div><div class="fields permit-access"><fieldset><legend>Commands</legend>' + choices('permit-commands',Object.fromEntries(commandNames.map(name => [name,'/' + name])),entry.commands) + '</fieldset><fieldset><legend>Protection bypasses</legend>' + choices('permit-bypasses',bypassLabels,entry.bypasses) + '</fieldset></div><button type="button" class="button small remove-permit">Remove Permit</button></details>'
+  const commands = Object.fromEntries(commandNames.map(name => [name,'/' + name]))
+  return '<details class="card permit-card"><summary>' + esc(entry.name) + '</summary>' +
+    '<section class="permit-section"><h3>Permit Name</h3><div class="fields"><label>Display name<input name="permit-name" maxlength="60" required value="' + esc(entry.name) + '"></label></div></section>' +
+    '<section class="permit-section"><h3>Permit Access</h3><div class="fields"><label>Discord user IDs<input name="permit-users" data-commit-on-change maxlength="330" value="' + esc(entry.users.join(', ')) + '" placeholder="Comma-separated user IDs"></label><div class="discord-field"><span>Discord roles</span>' + discordSelect('permit-roles',roles,entry.roles,true) + '</div></div></section>' +
+    '<section class="permit-section"><h3>Permit Command Access</h3><div class="permit-choices">' + choices('permit-commands',commands,entry.commands) + '</div></section>' +
+    '<section class="permit-section"><h3>Permit Bypass</h3><div class="permit-choices">' + choices('permit-bypasses',bypassLabels,entry.bypasses) + '</div></section>' +
+    '<button type="button" class="button small remove-permit">Remove Permit</button></details>'
 }
 function permitsForm(config,roles) {
-  return '<form class="settings-panels" id="settings"><section class="card settings-section"><div class="module-head"><h3>Named permits</h3><button type="button" class="button small" id="add-permit">Add Permit</button></div><p>Grant commands and protection bypasses to selected Discord users or roles. Command users also need the corresponding Discord permissions.</p></section><div class="settings-panels" id="permit-list">' + config.entries.map(entry => permitCard(entry,roles)).join('') + '</div><p id="notice" role="status"></p></form>'
+  return '<form class="settings-panels" id="settings"><section class="card settings-section"><div class="module-head"><h3>Permit Manager</h3><button type="button" class="button small" id="add-permit">Add Permit</button></div><p>Grant commands and protection bypasses to selected Discord users or roles. Command users also need the corresponding Discord permissions.</p></section><div class="settings-panels" id="permit-list">' + config.entries.map(entry => permitCard(entry,roles)).join('') + '</div><p id="notice" role="status"></p></form>'
 }
 function wirePermits(form,roles) {
   const list = form.querySelector('#permit-list')
