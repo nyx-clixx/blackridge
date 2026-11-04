@@ -314,3 +314,39 @@ body.has-workspace .sidebar{overflow:auto}
 .landing-faq details p{margin:10px 0 0}
 .landing-faq>a{margin-top:8px}
 @media(max-width:640px){.security-summary{grid-template-columns:1fr;padding:16px;gap:14px}.security-summary li{font-size:.85rem}.compact-module .module-head{min-height:86px;padding:14px}}
+.dashboard-page select,.dashboard-page .discord-select summary{
+  width:100%;min-width:0;min-height:42px;padding:9px 12px;
+  border:1px solid #3c414c;border-radius:10px;background:#17191f;color:var(--text);
+  font:inherit;cursor:pointer
+}
+.dashboard-page select:hover,.dashboard-page .discord-select summary:hover{border-color:#626b7c}
+.dashboard-page select:focus-visible,.dashboard-page .discord-select summary:focus-visible{
+  outline:2px solid var(--accent);outline-offset:2px
+}
+.dashboard-page select:disabled,.dashboard-page fieldset:disabled .discord-select summary{cursor:default;opacity:.65}
+.dashboard-page .discord-options{
+  padding:6px;border-radius:12px;border-color:#454c5a;background:#1d2028;box-shadow:0 14px 40px #0009
+}
+.dashboard-page .discord-option{border-radius:7px;padding:8px 10px}
+.dashboard-page .discord-option:hover,.dashboard-page .discord-option:focus-within{background:#ffffff0d}
+.dashboard-page .discord-option:has(input:checked){background:#6099ff23;color:#dceaff}
+.dashboard-page .discord-select[open] summary{border-color:var(--accent)}
+.dashboard-page .discord-select[open] summary span:last-child{transform:rotate(180deg)}
+@supports (appearance:base-select) {
+  .dashboard-page select,.dashboard-page select::picker(select){appearance:base-select}
+  .dashboard-page select::picker(select){
+    margin-block:5px;padding:5px;border:1px solid #454c5a;border-radius:12px;
+    color:var(--text);background:#1d2028;box-shadow:0 14px 40px #0009;max-height:min(320px,45vh);overflow:auto
+  }
+  .dashboard-page select::picker-icon{color:#aebcd0;font-size:.85em}
+  .dashboard-page select:open::picker-icon{rotate:180deg}
+  .dashboard-page select option{padding:9px 12px;border-radius:7px;gap:8px}
+  .dashboard-page select option:hover,.dashboard-page select option:focus{background:#ffffff0d}
+  .dashboard-page select option:checked{background:#6099ff23;color:#dceaff}
+  .dashboard-page select option::checkmark{color:var(--accent)}
+}
+#appeals-panel textarea{display:block;width:100%;margin-top:8px;padding:10px;border:1px solid #3c414c;border-radius:10px;background:#15171c;color:inherit;font:inherit;resize:vertical}
+.appeal-item{border-top:1px solid var(--line);padding:12px 0}
+.appeal-item summary{cursor:pointer;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.appeal-item summary time{margin-left:auto;color:var(--muted)}
+.appeal-item dd{margin:4px 0 12px;color:var(--muted);overflow-wrap:anywhere;white-space:pre-wrap}

@@ -7,6 +7,50 @@ import { createStore, policies } from '../store.js'
 import { canModerate, syncModerationCommands } from '../moderation.js'
 import { recoveryTools } from '../recovery.js'
 import { attachVerification } from '../verification.js'
+import { appealMarker, hasAppealableBan } from '../appeals.js'
+
+test('ban appeal links are single use and accept only the original ban', async t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  db.inviteAppeal('appeal','guild','member',['Why should we unban you?'])
+  assert.equal(db.submitAppeal('appeal','other',['Answer']),false)
+  assert.equal(db.submitAppeal('appeal','member',['Answer']),true)
+  assert.equal(db.submitAppeal('appeal','member',['Duplicate']),false)
+  assert.deepEqual(db.appeals('other'),[])
+  assert.deepEqual(db.appeals('guild')[0].answers,['Answer'])
+  let reason = 'Unrelated ban'
+  const guild = {bans:{fetch:async () => ({reason})}}
+  assert.equal(await hasAppealableBan(guild,db.appeal('appeal')),false)
+  reason = appealMarker('appeal')+'Original ban'
+  assert.equal(await hasAppealableBan(guild,db.appeal('appeal')),true)
+  assert.equal(db.reviewAppeal('appeal','other','accepted'),false)
+  assert.equal(db.reviewAppeal('appeal','guild','accepted'),true)
+  assert.equal(db.reviewAppeal('appeal','guild','rejected'),false)
+})
+
+test('Anti-Nuke restores a selected channel name without replacing a newer name', async t => {
+  const db = createStore(':memory:')
+  const client = new EventEmitter()
+  client.user = {id:'bot'}
+  const cleanup = attachProtection(client,db)
+  t.after(() => { cleanup(); db.close() })
+  const channel = {name:'edited',async setName(name) { this.name = name }}
+  const guild = {id:'guild',ownerId:'owner',channels:{fetch:async () => channel},
+    members:{fetch:async () => ({id:'actor',guild,kickable:true,kick:async () => {}})}}
+  db.save(guild.id,'nuke',{guards:{channelRename:{enabled:true,channels:['channel'],action:'kick'}}},'owner')
+  async function rename(id,targetId) {
+    client.emit(Events.GuildAuditLogEntryCreate,{id,executorId:'actor',targetId,action:A.ChannelUpdate,
+      createdTimestamp:Date.now(),changes:[{key:'name',old:'original',new:'edited'}]},guild)
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  await rename('1','different-channel')
+  assert.equal(channel.name,'edited')
+  await rename('2','channel')
+  assert.equal(channel.name,'original')
+  channel.name = 'newer'
+  await rename('3','channel')
+  assert.equal(channel.name,'newer')
+})
 
 test('moderation history survives the dashboard log limit and stays scoped to the server', t => {
   const db = createStore(':memory:')

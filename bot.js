@@ -280,6 +280,21 @@ export function attachProtection(client, db) {
     const hit = (key,undo) => { if (guards[key]?.enabled) hits.push({key,rule:guards[key],undo}) }
     if (entry.action === A.GuildUpdate && (guards.identity?.identity ?? ['icon_hash','name','vanity_url_code']).some(changed)) hit('identity')
     if (entry.action === A.BotAdd) hit('botAdd')
+    if (entry.action === A.EmojiDelete) hit('emojiDelete')
+    if (entry.action === A.StickerDelete) hit('stickerDelete')
+    const rename = entry.action === A.ChannelUpdate ? 'channelRename' : entry.action === A.RoleUpdate ? 'roleRename' : null
+    if (rename && guards[rename]?.enabled) {
+      const channel = rename === 'channelRename'
+      const targets = channel ? guards[rename].channels : guards[rename].roles
+      const name = changed('name')
+      if (targets?.includes(entry.targetId) && typeof name?.old === 'string' && typeof name.new === 'string' && name.old !== name.new) {
+        hit(rename,async () => {
+          const manager = channel ? guild.channels : guild.roles
+          const target = await manager.fetch(entry.targetId,{force:true})
+          if (target?.name === name.new) await target.setName(name.old,'Blackridge protected name')
+        })
+      }
+    }
     if (entry.action === A.MemberRoleUpdate && (guards.gate?.enabled || guards.assignments?.enabled)) {
       const added = changed('$add')?.new
       if (Array.isArray(added) && added.length) {

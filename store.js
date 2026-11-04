@@ -12,12 +12,13 @@ const rates = z.strictObject(Object.fromEntries(
   ['moderation','roleCreate','roleDelete','channelCreate','channelDelete','webhookCreate'].map(key => [key,rate.optional()])
 ))
 const snowflake = z.string().regex(/^\d{17,20}$/)
-const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles','rolePermissions','assignments','botAdd'].map(key => [key,z.strictObject({
+const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles','rolePermissions','assignments','botAdd','channelRename','roleRename','emojiDelete','stickerDelete'].map(key => [key,z.strictObject({
   enabled:z.boolean(),...ruleResponse,
   permissions:z.array(z.enum(['Administrator','KickMembers','BanMembers','ManageGuild','ManageRoles','ManageChannels','ManageWebhooks','MentionEveryone'])).max(8).optional(),
   identity:z.array(z.enum(['icon_hash','name','vanity_url_code'])).max(3).optional(),
   onboarding:z.boolean().optional(),
   roles:z.array(snowflake).max(100).optional(),
+  channels:z.array(snowflake).max(100).optional(),
   gates:z.array(z.strictObject({role:snowflake,required:z.array(snowflake).min(1).max(15)})).max(100).optional()
 }).optional()])))
 export const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history']
@@ -56,6 +57,7 @@ const timedResponse = {tempBanMinutes:integer(1,1440).optional(),quarantineMinut
 export const spamFilters = ['mentions','files','images','stickers','invites','links','caps','newlines','length','emoji','headers','duplicate','multiUser','badWords','scam','nsfw','malicious','ghost']
 const filter = z.strictObject({action:z.enum(['off','log','delete','timeout']),limit:integer(1,4000),points:integer(0,100).optional()})
 export const policies = {
+  appeals:z.strictObject({questions:z.array(z.string().trim().min(1).max(45)).min(1).max(4)}),
   verification:z.strictObject({
     enabled:z.boolean(),mode:z.enum(['button','captcha']),channel:z.union([snowflake,z.literal('')]),
     verifiedRole:z.union([snowflake,z.literal('')]),unverifiedRole:z.union([snowflake,z.literal('')]),
@@ -72,6 +74,7 @@ export const policies = {
   raid: z.strictObject({enabled:z.boolean(),threshold:integer(3,100),window:integer(5,120),duration:integer(15,600),age:integer(0,365),action:z.enum(['log','timeout','kick','ban','tempban','quarantine']),timeoutMinutes:integer(1,1440).optional(),...alerts,...timedResponse})
 }
 const defaults = {
+  appeals:{questions:['Why should the server lift your ban?','What would you do differently?']},
   verification:{enabled:false,mode:'button',channel:'',verifiedRole:'',unverifiedRole:'',alertChannel:'',minAge:0,attempts:3,minutes:2,failure:'retry'},
   permits:{entries:[]},
   automod:{enabled:false,threshold:6,window:8,action:'log',timeoutMinutes:5,badWords:'',nsfwDomains:'',maliciousDomains:'',spamPoints:0,pointRules:[]},
@@ -113,6 +116,10 @@ export function createStore(file) {
   ); CREATE INDEX IF NOT EXISTS automod_points_user ON automod_points(guild,user,at);
   CREATE INDEX IF NOT EXISTS automod_points_age ON automod_points(at);`)
   const awardPoints = db.prepare('INSERT OR IGNORE INTO automod_points VALUES (?,?,?,?,?)')
+  db.exec(`CREATE TABLE IF NOT EXISTS ban_appeal (
+    id TEXT PRIMARY KEY, guild TEXT NOT NULL, user TEXT NOT NULL, questions TEXT NOT NULL,
+    answers TEXT, status TEXT NOT NULL, created INTEGER NOT NULL, submitted INTEGER, reviewed INTEGER
+  ); CREATE INDEX IF NOT EXISTS ban_appeal_inbox ON ban_appeal(guild,status,submitted DESC);`)
   db.exec(`CREATE TABLE IF NOT EXISTS moderation_history (id INTEGER PRIMARY KEY, guild TEXT, user TEXT, action TEXT, detail TEXT, at INTEGER, audit TEXT UNIQUE);
     CREATE INDEX IF NOT EXISTS moderation_history_target ON moderation_history(guild,user,at DESC);
     CREATE TABLE IF NOT EXISTS blackridge_migration (name TEXT PRIMARY KEY);`)
@@ -135,6 +142,23 @@ export function createStore(file) {
   const countDetections = db.prepare('SELECT COUNT(*) AS total FROM nuke_detection WHERE guild=? AND actor=? AND rule=? AND at>?')
   const sumPoints = db.prepare('SELECT coalesce(sum(points),0) AS total FROM automod_points WHERE guild=? AND user=? AND at>?')
   return {
+    inviteAppeal(id,guild,user,questions) {
+      db.prepare("INSERT INTO ban_appeal(id,guild,user,questions,status,created) VALUES (?,?,?,?,'invited',?)")
+        .run(id,guild,user,JSON.stringify(questions),Date.now())
+    },
+    appeal(id) { return db.prepare('SELECT * FROM ban_appeal WHERE id=?').get(id) },
+    submitAppeal(id,user,answers) {
+      return db.prepare("UPDATE ban_appeal SET answers=?,status='pending',submitted=? WHERE id=? AND user=? AND status='invited' AND created>?")
+        .run(JSON.stringify(answers),Date.now(),id,user,Date.now()-30*86400000).changes === 1
+    },
+    appeals(guild) {
+      return db.prepare("SELECT id,user,questions,answers,status,submitted,reviewed FROM ban_appeal WHERE guild=? AND submitted IS NOT NULL ORDER BY (status='pending') DESC,submitted DESC LIMIT 50").all(guild)
+        .map(row => ({...row,questions:JSON.parse(row.questions),answers:JSON.parse(row.answers)}))
+    },
+    reviewAppeal(id,guild,status) {
+      return db.prepare("UPDATE ban_appeal SET status=?,reviewed=? WHERE id=? AND guild=? AND status='pending'")
+        .run(status,Date.now(),id,guild).changes === 1
+    },
     nukeDetection(guild,actor,rule,entry,now) {
       if (!addDetection.run(guild,actor,rule,entry,now).changes) return 0
       return countDetections.get(guild,actor,rule,now-86400000).total
@@ -211,6 +235,8 @@ export function createStore(file) {
     stats(guild) { return db.prepare("SELECT COUNT(*) total,COUNT(CASE WHEN kind='nuke' THEN 1 END) nuke,COUNT(CASE WHEN kind='raid' THEN 1 END) raid FROM event WHERE guild=? AND at>=?").get(guild,Date.now()-86400000) },
     prune() {
       db.prepare('DELETE FROM event WHERE at<?').run(Date.now()-30*86400000)
+      db.prepare("DELETE FROM ban_appeal WHERE (status='invited' AND created<=?) OR (reviewed IS NOT NULL AND reviewed<=?)")
+        .run(Date.now()-30*86400000,Date.now()-90*86400000)
       db.prepare('DELETE FROM nuke_detection WHERE at<=?').run(Date.now()-86400000)
       db.prepare('DELETE FROM web_session WHERE expires<=?').run(Date.now())
       db.prepare('DELETE FROM automod_points WHERE at<=?').run(Date.now()-168*3600000)

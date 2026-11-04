@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ApplicationCommandType, AuditLogEvent, ChannelType, Events, MessageFlags, PermissionFlagsBits as P, SlashCommandBuilder } from 'discord.js'
 import { commandNames, matchesPermit } from './store.js'
 import { sendModuleLog } from './recovery.js'
+import { appealMarker, attachAppeals, sendBanNotice } from './appeals.js'
 
 const channelCommands = new Set(['lock-channel','unlock-channel'])
 const timedCommands = new Set(['timeout','tempban'])
@@ -23,6 +24,7 @@ const commands = commandNames.map(name => {
     builder.addUserOption(option => option.setName('member').setDescription('Server member').setRequired(true))
     if (timedCommands.has(name)) builder.addIntegerOption(option => option.setName('minutes').setDescription('Duration in minutes').setMinValue(1).setMaxValue(1440).setRequired(true))
   }
+  if (name === 'ban') builder.addBooleanOption(option => option.setName('appeal').setDescription('Allow the member to appeal this ban'))
   return builder.addStringOption(option => option.setName('reason').setDescription('Reason for the action').setMaxLength(250))
 })
 const commandSync = new Map()
@@ -57,6 +59,7 @@ export async function temporaryBan(member, minutes, db, reason) {
 }
 
 export function attachModeration(client,db) {
+  attachAppeals(client,db)
   const channelChanges = new Set()
   client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => {
     if (!db.config(guild.id,'moderation').enabled || !entry.targetId || !entry.executorId || entry.executorId === client.user.id) return
@@ -130,6 +133,7 @@ export function attachModeration(client,db) {
           allowedMentions:{parse:[]},files:[{attachment:Buffer.from(rows.join('\n')),name:'moderation-history.txt'}]})
       }
       const reason = interaction.options.getString('reason') || 'No reason supplied'
+      let notice
       if (channelCommands.has(name)) {
         const key = interaction.channelId
         if (channelChanges.has(key)) return await interaction.editReply('A channel change is already in progress.')
@@ -170,7 +174,12 @@ export function attachModeration(client,db) {
           return await interaction.editReply('You cannot moderate that member.')
         }
         const minutes = interaction.options.getInteger('minutes')
-        if (name === 'ban' && target.bannable) await target.ban({reason})
+        if (name === 'ban' && target.bannable) {
+          const appeal = interaction.options.getBoolean('appeal') === true ? randomUUID() : null
+          await target.ban({reason:appeal ? appealMarker(appeal)+reason : reason})
+          if (appeal) db.inviteAppeal(appeal,guild.id,target.id,db.config(guild.id,'appeals').questions)
+          notice = sendBanNotice(guild,target.user,reason,appeal)
+        }
         else if (name === 'tempban' && target.bannable) await temporaryBan(target,minutes,db,reason)
         else if (name === 'kick' && target.kickable) await target.kick(reason)
         else if (name === 'timeout' && target.moderatable) await target.timeout(minutes*60000,reason)
@@ -179,7 +188,7 @@ export function attachModeration(client,db) {
       }
       if (channelCommands.has(name)) db.event(guild.id,'moderation',name + ' · channel ' + interaction.channelId + ' · moderator ' + actor.id)
       void sendModuleLog(guild,db,'moderation','/' + name + ' completed · moderator ' + actor.id + ' · channel ' + interaction.channelId)
-      await interaction.editReply({content:'Recorded /' + name + '.',allowedMentions:{parse:[]}})
+      await interaction.editReply({content:'Recorded /' + name + '.' + (notice && !await notice ? ' Discord did not deliver the ban DM.' : ''),allowedMentions:{parse:[]}})
     } catch (error) {
       console.error('Moderation command failed:',error.code ?? error.name)
       if (interaction.deferred) await interaction.editReply('The action could not be completed.').catch(() => {})

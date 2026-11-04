@@ -7,6 +7,7 @@ import { ChannelType, PermissionFlagsBits as P } from 'discord.js'
 import { createStore, policies } from './store.js'
 import { startBot, requiredPermissions } from './bot.js'
 import { publishVerification } from './verification.js'
+import { hasAppealableBan } from './appeals.js'
 import { recoveryTools } from './recovery.js'
 import { syncModerationCommands } from './moderation.js'
 
@@ -177,7 +178,7 @@ app.use('/api/guilds/:id',async (req,res,next) => {
 app.get('/api/guilds/:id',(req,res) => {
   const {id,name,owner} = req.guild
   const guild = bot.guilds.cache.get(id)
-  const config = Object.fromEntries(Object.keys(policies).filter(kind => kind !== 'permits' || owner).map(kind => [kind,db.config(id,kind)]))
+  const config = Object.fromEntries(Object.keys(policies).filter(kind => owner || !['permits','appeals'].includes(kind)).map(kind => [kind,db.config(id,kind)]))
   const me = guild.members.me
   const highest = guild.roles?.highest
   const quarantine = db.recovery(id,'quarantineRole')?.role
@@ -203,6 +204,31 @@ app.get('/api/guilds/:id/events',async (req,res) => {
   })})
 })
 const verificationPublishing = new Set()
+const appealReviews = new Set()
+app.get('/api/guilds/:id/appeals', (req,res) => {
+  if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can view appeals.'})
+  res.json({appeals:db.appeals(req.guild.id)})
+})
+app.post('/api/guilds/:id/appeals/:appeal',async (req,res) => {
+  if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can review appeals.'})
+  const {id} = req.guild
+  const {decision} = req.body ?? {}
+  if (!['accepted','rejected'].includes(decision)) return res.status(400).json({error:'Choose a valid decision.'})
+  const row = db.appeal(req.params.appeal)
+  if (!row || row.guild !== id || row.status !== 'pending') return res.status(404).json({error:'Pending appeal not found.'})
+  if (appealReviews.has(row.id)) return res.status(409).json({error:'This appeal is already being reviewed.'})
+  appealReviews.add(row.id)
+  try {
+    if (decision === 'accepted') {
+      const guild = bot.guilds.cache.get(id)
+      if (!await hasAppealableBan(guild,row)) return res.status(409).json({error:'The original ban is no longer active. This appeal cannot lift a different ban.'})
+      await guild.bans.remove(row.user,'Blackridge appeal accepted by '+req.session.user.id)
+    }
+    db.reviewAppeal(row.id,id,decision)
+    db.event(id,'appeals','Ban appeal ' + decision + ' for ' + row.user + ' by ' + req.session.user.id)
+    res.json({ok:true})
+  } finally { appealReviews.delete(row.id) }
+})
 app.post('/api/guilds/:id/verification-panel',async (req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can publish verification.'})
   const {id} = req.guild
@@ -219,6 +245,7 @@ app.get('/api/guilds/:id/options',async (req,res) => {
   const {channels,roles} = await recovery.scope(guild)
   res.json({
     channels:channels.filter(channel => channel?.permissionOverwrites && channel.type !== ChannelType.GuildCategory && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name,sendable:channel.isSendable()})),
+    renameChannels:channels.filter(channel => channel?.permissionOverwrites && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name})),
     roles:roles.filter(role => role.id !== guild.id).map(role => ({id:role.id,name:role.name}))
   })
 })

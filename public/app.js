@@ -4,7 +4,8 @@ const app = document.querySelector('#app')
 const account = document.querySelector('#account')
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char])
 const iconPaths = {
-  verification:'<path d="M12 22s7-3 7-10V5l-7-3-7 3v7c0 7 7 10 7 10Z"/><path d="m9 12 2 2 4-4"/>',
+  verification:'<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="3" width="6" height="6" rx="1"/><rect x="3" y="15" width="6" height="6" rx="1"/><path d="M13 13h4v4h4m0-4v1m-8 3v4h4m4 0h.01"/>',
+  appeals:'<path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.5-3A7.5 7.5 0 1 1 20 11.5Z"/><path d="M9 10h6m-6 3h4"/>',
   pin:'<path d="m16 3 5 5-3 1-3 5v3l-3-3-5 5-2-2 5-5-3-3h3l5-3z"/>',
   configure:'<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.5" fill="var(--panel)"/><circle cx="15" cy="17" r="2.5" fill="var(--panel)"/>',
   lockdown:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/>',
@@ -15,7 +16,7 @@ const iconPaths = {
   moderation:'<path d="M5 4h14v16H5zM8 8h8M8 12h8m-8 4h4"/>',
   permits:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"/>',
   overview:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
-  nuke:'<path d="m13 2-8 12h6l-1 8 9-12h-6l1-8Z"/>',
+  nuke:'<path d="M8 12V5a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v6-3a1.5 1.5 0 0 1 3 0v6a8 8 0 0 1-8 8h-1a6 6 0 0 1-5-3l-3-5a1.7 1.7 0 0 1 2.7-2L8 14"/>',
   raid:'<path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2m19 0v-2a4 4 0 0 0-3-4m-2-12a4 4 0 0 1 0 8"/><circle cx="9.5" cy="7" r="4"/>',
   logs:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
@@ -23,7 +24,7 @@ const iconPaths = {
 }
 const icon = key => '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (iconPaths[key] ?? iconPaths.nuke) + '</svg>'
 for (const tile of document.querySelectorAll('[data-icon]')) tile.innerHTML = icon(tile.dataset.icon)
-const sections = { overview:'Overview', premium:'Premium', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups',verification:'Verification' }
+const sections = { overview:'Overview', premium:'Premium', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups',verification:'Verification',appeals:'Ban Appeals' }
 const request = async (url, options) => {
   const res = await fetch(url, options)
   const data = await res.json()
@@ -105,13 +106,17 @@ const nukeGuards = {
   publicRoles:['Public Role Permissions','Watch public roles for dangerous permission grants in the server, channels, and categories.'],
   gate:['Role Gate','Require a grantor to hold an approved role before assigning a gated role.'],
   botAdd:['Bot Additions','Detect when someone adds a bot to the server.'],
-  identity:['Server Identity Changes','Watch for changes to the server name, icon, or vanity invite link.']
+  identity:['Server Identity Changes','Watch for changes to the server name, icon, or vanity invite link.'],
+  channelRename:['Anti-Channel Rename','Detect renames of selected channels and restore their names when enforcement is enabled.'],
+  roleRename:['Anti-Role Rename','Detect renames of selected roles and restore their names when enforcement is enabled.'],
+  emojiDelete:['Emoji Deletion Protection','Detect deleted server emoji and apply the configured response.'],
+  stickerDelete:['Sticker Deletion Protection','Detect deleted server stickers and apply the configured response.']
 }
 const nukePermissions = {
   Administrator:'Administrator',KickMembers:'Kick Members',BanMembers:'Ban Members',ManageGuild:'Manage Server',
   ManageRoles:'Manage Roles',ManageChannels:'Manage Channels',ManageWebhooks:'Manage Webhooks',MentionEveryone:'Mention Everyone'
 }
-function nukeControls(form,config,roles) {
+function nukeControls(form,config,{roles,channels,renameChannels}) {
   const check = (name,label,checked) => '<label class="toggle"><input type="checkbox" name="' + name + '"' + (checked ? ' checked' : '') + '>' + label + '</label>'
   const number = (name,label,value,max) => '<label>' + label + '<span class="nuke-stepper"><button type="button" data-step="-1" aria-label="Decrease ' + label + '">−</button><input required type="number" name="' + name + '" min="0" max="' + max + '" value="' + value + '"><button type="button" data-step="1" aria-label="Increase ' + label + '">+</button></span></label>'
   const gateRow = (gate = {role:'',required:[]}) => '<div class="nuke-gate"><div class="discord-field"><span>Gated Role</span>' + discordSelect('gate-role-' + gateIndex++,roles,[gate.role]) + '</div><div class="discord-field"><span>Required Roles</span>' + discordSelect('gate-required',roles,gate.required,true) + '</div><button class="button small" type="button" data-remove-gate>Remove</button></div>'
@@ -125,6 +130,8 @@ function nukeControls(form,config,roles) {
       ? '<div class="nuke-choices"><strong>Dangerous Permissions</strong>' + choices('permission',nukePermissions,rule.permissions ?? Object.keys(nukePermissions)) + '</div>' : ''
     const extras = key === 'publicRoles' ? check('publicRoles-onboarding','Protect Self-Assignable Onboarding Roles',rule.onboarding !== false) +
       '<div class="discord-field"><span>Additional Protected Roles</span>' + discordSelect('publicRoles-roles',roles,rule.roles ?? [],true) + '</div>'
+      : key === 'channelRename' ? '<div class="discord-field"><span>Protected Channels</span>' + discordSelect('channelRename-channels',renameChannels ?? channels,rule.channels ?? [],true) + '</div>'
+      : key === 'roleRename' ? '<div class="discord-field"><span>Protected Roles</span>' + discordSelect('roleRename-roles',roles,rule.roles ?? [],true) + '</div>'
       : key === 'identity' ? '<div class="nuke-choices"><strong>Identity Changes to Watch</strong>' + choices('identity',{icon_hash:'Server Icon',name:'Server Name',vanity_url_code:'Vanity Invite Link'},rule.identity ?? ['icon_hash','name','vanity_url_code']) + '</div>'
       : key === 'gate' ? '<p>Members need at least one required role. With an enforcement response, Blackridge also removes unauthorized grants where it can.</p><div class="nuke-gates">' + (rule.gates ?? []).map(gateRow).join('') + '</div><button type="button" class="button small" data-add-gate>Add Gated Role</button>' : ''
     const time = isRate ? '<div class="fields">' + number(key + '-minute','Per Minute',rule.minute ?? 5,500) + number(key + '-hour','Per Hour',rule.hour ?? 15,500) + '</div><p>Set either limit to 0 to turn off that window.' +
@@ -185,6 +192,36 @@ function verificationForm(config,owner,choices) {
     field('unverifiedRole','Unverified Role (optional)',choices.roles) + '<label>Minimum Account Age (days)<input type="number" name="minAge" min="0" max="365" required value="' + config.minAge + '"></label></div>' +
     (owner ? '<button class="button primary stack" type="button" id="publish-verification">Publish Verification Panel</button><p id="verification-publish-result" role="status"></p>' : '') +
     '</section><section class="card settings-section" id="captcha-settings"><h3>CAPTCHA Settings</h3><div class="fields"><label>Max Attempts<input name="attempts" type="number" min="1" max="5" required value="' + config.attempts + '"></label><label>Challenge Duration (minutes)<input name="minutes" type="number" min="1" max="10" required value="' + config.minutes + '"></label><label>After Failed Attempts<select name="failure">' + options({retry:'Keep Unverified',kick:'Kick Member'},config.failure) + '</select></label></div></section><section class="card settings-section"><h3>Discord Logging</h3>' + field('alertChannel','Logging Channel',channels) + '</section></fieldset><p id="notice" role="status"></p></form>'
+}
+function appealsPanel(path,config) {
+  const panel = document.querySelector('#appeals-panel')
+  panel.innerHTML = '<form class="card stack"><h3>Appeal Form</h3><p>Questions are sent when a moderator uses <code>/ban</code> with <code>appeal:True</code>. Use one question per line, up to four questions with 45 characters each.</p><label>Questions<textarea name="questions" rows="4" maxlength="183" required>' + esc(config.questions.join('\n')) + '</textarea></label><p role="status"></p></form><section class="card stack"><h3>Appeal Inbox</h3><div id="appeal-inbox"></div><p id="appeal-status" role="status"></p></section>'
+  const form = panel.querySelector('form')
+  const inbox = panel.querySelector('#appeal-inbox')
+  const status = panel.querySelector('#appeal-status')
+  autosave(form,form.querySelector('[role=status]'),async () => {
+    const questions = form.elements.questions.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    if (!questions.length || questions.length > 4 || questions.some(line => line.length > 45)) throw new Error('Enter 1–4 questions, up to 45 characters each.')
+    await request(path + '/appeals',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({questions}),keepalive:true})
+  })
+  async function refresh() {
+    const {appeals} = await request(path + '/appeals')
+    inbox.innerHTML = appeals.length ? appeals.map(item => '<details class="appeal-item"><summary><span>' + esc(item.user) + '</span><span class="badge">' + esc(item.status) + '</span><time>' + esc(new Date(item.submitted).toLocaleString()) + '</time></summary><dl>' + item.questions.map((question,index) =>
+      '<dt>' + esc(question) + '</dt><dd>' + esc(item.answers[index]) + '</dd>').join('') + '</dl>' +
+      (item.status === 'pending' ? '<div class="actions"><button type="button" class="button small primary" data-decision="accepted" data-appeal="' + esc(item.id) + '">Accept and Unban</button><button type="button" class="button small" data-decision="rejected" data-appeal="' + esc(item.id) + '">Reject</button></div>' : '') + '</details>').join('') : '<p>No appeals submitted yet.</p>'
+  }
+  inbox.onclick = async event => {
+    const button = event.target.closest('[data-decision]')
+    if (!button || !confirm(button.dataset.decision === 'accepted' ? 'Accept this appeal and lift the original ban?' : 'Reject this appeal?')) return
+    button.disabled = true
+    try {
+      await request(path + '/appeals/' + encodeURIComponent(button.dataset.appeal),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:button.dataset.decision})})
+      status.textContent = 'Appeal ' + button.dataset.decision + '.'
+      await refresh()
+    } catch (error) { status.textContent = error.message }
+    finally { button.disabled = false }
+  }
+  refresh().catch(error => { status.textContent = error.message })
 }
 function securityScore(checks) {
   const labels = {nuke:'Anti-Nuke enabled',raid:'Anti-Raid enabled',checkpoint:'Checkpoint enabled',quarantine:'Quarantine role configured',priority:'Highest role priority',admin:'Administrator permission'}
@@ -554,7 +591,7 @@ async function dashboard() {
     }
     const path = '/api/guilds/' + encodeURIComponent(id)
     const data = await request(path)
-    if (section === 'permits' && !data.owner) throw new Error('Only the server owner can view permits.')
+    if (['permits','appeals'].includes(section) && !data.owner) throw new Error('Only the server owner can view this page.')
     const recoverySection = ['lockdown','backup','moderation'].includes(section)
     const needsOptions = Object.hasOwn(settingFields,section) || ['permits','verification'].includes(section) || (recoverySection && data.owner)
     const [choices,recoveryState,eventData] = await Promise.all([
@@ -582,7 +619,8 @@ async function dashboard() {
     }).join('')
     const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('verification') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('verification') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + (data.owner ? navigation('appeals') : '') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    if (section === 'appeals') appealsPanel(path,data.config.appeals)
     const settings = document.querySelector('#settings')
     const headerSwitch = document.querySelector('.module-switch input[form=settings]')
     headerSwitch?.addEventListener('change',() => settings.dispatchEvent(new Event('change')))
@@ -597,7 +635,7 @@ async function dashboard() {
     if (settings?.elements.alertChannel && section !== 'verification') wireDiscordSelectors(settings,choices)
     if (section === 'permits') wirePermits(settings,choices.roles)
     if (settings && settingFields[section]) protectionControls(settings,section,data.config[section])
-    if (settings && section === 'nuke') nukeControls(settings,data.config.nuke,choices.roles)
+    if (settings && section === 'nuke') nukeControls(settings,data.config.nuke,choices)
     if (settings && section === 'nuke' && data.owner) setupQuarantine(settings,path)
     if (recoverySection) await recoveryPanel(section,path,data,[choices,recoveryState])
     if (settings && data.owner) autosave(settings,settings.querySelector('#notice'),async () => {
@@ -643,6 +681,8 @@ async function dashboard() {
             rule.permissions = Object.keys(nukePermissions).filter(permission => fields.has(key + '-permission-' + permission))
           if (key === 'identity') rule.identity = ['icon_hash','name','vanity_url_code'].filter(field => fields.has(key + '-identity-' + field))
           if (key === 'publicRoles') Object.assign(rule,{onboarding:fields.has('publicRoles-onboarding'),roles:fields.getAll('publicRoles-roles')})
+          if (key === 'channelRename') rule.channels = fields.getAll('channelRename-channels')
+          if (key === 'roleRename') rule.roles = fields.getAll('roleRename-roles')
           if (key === 'gate') rule.gates = [...row.querySelectorAll('.nuke-gate')].flatMap(gate => {
             const role = gate.querySelector('input[type=radio]:checked')?.value
             const required = [...gate.querySelectorAll('input[name=gate-required]:checked')].map(input => input.value).filter(id => id !== role)
