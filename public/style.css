@@ -154,6 +154,7 @@ fieldset{border:0;padding:0;margin:14px 0 0;min-width:0}
 .permit-section .fields{margin-bottom:0}
 .permit-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,155px),1fr));gap:8px;margin-top:10px}
 .permit-choices .toggle{width:100%;min-height:34px;padding:6px 8px;border:1px solid var(--line);border-radius:7px}
+.permit-management{grid-template-columns:minmax(0,235px)}
 .remove-permit{margin-top:14px}
 fieldset.settings-panels{margin:0}
 .quarantine-panel{margin-bottom:14px}
