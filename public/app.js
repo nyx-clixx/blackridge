@@ -27,7 +27,16 @@ const request = async (url, options) => {
   return data
 }
 const shell = html => { app.innerHTML = '<div class="wrap dashboard">' + html + '</div>' }
-const logList = entries => entries.length ? entries.map(event => '<div class="log-row"><span class="badge">' + esc(sections[event.kind] || 'Settings') + '</span><span>' + esc(event.detail) + '</span><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></div>').join('') : '<p class="empty">' + icon('logs') + ' No security events in this view.</p>'
+function logList(entries) {
+  if (!entries.length) return '<p class="empty">' + icon('logs') + ' No security events in this view.</p>'
+  const rows = entries.map(event => {
+    const avatar = event.userId && event.avatar
+      ? '<img class="event-avatar" alt="" src="https://cdn.discordapp.com/avatars/' + encodeURIComponent(event.userId) + '/' + encodeURIComponent(event.avatar) + '.png?size=32">'
+      : '<span class="event-avatar fallback-avatar" aria-hidden="true">' + icon('checkpoint') + '</span>'
+    return '<tr><td>' + avatar + '</td><td>' + esc(event.userName ?? (event.userId ? 'Unknown user' : 'System')) + '</td><td><code>' + esc(event.userId ?? '—') + '</code></td><td><span class="badge">' + esc(sections[event.kind] ?? 'Settings') + '</span><div>' + esc(event.detail) + '</div></td><td><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></td></tr>'
+  }).join('')
+  return '<div class="event-scroll"><table class="event-table"><thead><tr><th scope="col">Icon</th><th scope="col">User Name</th><th scope="col">User ID</th><th scope="col">Action</th><th scope="col">Date and time</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+}
 const base = '/dashboard'
 const rateLabels = {
   moderation:'Kicks and bans', roleCreate:'Role creations', roleDelete:'Role deletions',
@@ -136,17 +145,58 @@ function form(kind, config, owner) {
 function discordSelect(name,items,values,multiple = false) {
   const selected = new Set(values.filter(Boolean))
   const available = new Set(items.map(item => item.id))
-  const choices = [...items,...[...selected].filter(id => !available.has(id)).map(id => ({id,name:'Deleted or unavailable (' + id + ')'}))]
-  return '<select name="' + name + '"' + (multiple ? ' multiple size="4"' : '') + '>' + (multiple ? '' : '<option value="">None</option>') + choices.map(item => '<option value="' + esc(item.id) + '"' + (selected.has(item.id) ? ' selected' : '') + '>' + esc(item.name) + '</option>').join('') + '</select>'
+  const missing = [...selected].filter(id => !available.has(id)).map(id => ({id,name:'Deleted or unavailable (' + id + ')'}))
+  const choices = [...(multiple ? [] : [{id:'',name:'None'}]),...items,...missing]
+  const label = multiple ? (selected.size ? selected.size + ' selected' : 'Select options') : choices.find(item => selected.has(item.id))?.name ?? 'None'
+  return '<details class="discord-select" data-multiple="' + multiple + '"><summary><span>' + esc(label) + '</span><span aria-hidden="true">⌄</span></summary><div class="discord-options"><input class="discord-search" type="search" aria-label="Search options" placeholder="Search…" autocomplete="off"><div class="discord-results">' + choices.map(item => {
+    const checked = selected.has(item.id) || (!multiple && !selected.size && !item.id)
+    return '<label class="discord-option"><input type="' + (multiple ? 'checkbox' : 'radio') + '" name="' + name + '" value="' + esc(item.id) + '"' + (checked ? ' checked' : '') + '><span>' + esc(item.name) + '</span></label>'
+  }).join('') + '</div></div></details>'
 }
+function replaceDiscordInput(input,markup) {
+  const label = input.parentElement
+  label.outerHTML = '<div class="discord-field"><span>' + esc(label.textContent) + '</span>' + markup + '</div>'
+}
+document.addEventListener('input',event => {
+  if (!event.target.matches('.discord-search')) return
+  const query = event.target.value.trim().toLowerCase()
+  for (const item of event.target.closest('.discord-options').querySelectorAll('.discord-option')) {
+    item.hidden = !item.textContent.toLowerCase().includes(query) && !item.querySelector('input').value.includes(query)
+  }
+})
+document.addEventListener('change',event => {
+  const picker = event.target.closest('.discord-select')
+  if (!picker || !event.target.matches('.discord-option input')) return
+  const checked = picker.querySelectorAll('.discord-option input:checked')
+  const multiple = picker.dataset.multiple === 'true'
+  picker.querySelector('summary span').textContent = multiple
+    ? (checked.length ? checked.length + ' selected' : 'Select options')
+    : checked[0]?.nextElementSibling.textContent ?? 'None'
+  if (!multiple) {
+    picker.open = false
+    picker.querySelector('summary').focus()
+  }
+})
+document.addEventListener('click',event => {
+  for (const picker of document.querySelectorAll('.discord-select[open]')) {
+    if (!picker.contains(event.target)) picker.open = false
+  }
+})
+document.addEventListener('keydown',event => {
+  const picker = event.target.closest('.discord-select[open]')
+  if (picker && event.key === 'Escape') {
+    picker.open = false
+    picker.querySelector('summary').focus()
+  }
+})
 async function wireDiscordSelectors(form,path,section) {
   const choices = await request(path + '/options')
   const channel = form.elements.alertChannel
-  if (channel) channel.outerHTML = discordSelect('alertChannel',choices.channels.filter(item => item.sendable),[channel.value])
+  if (channel) replaceDiscordInput(channel,discordSelect('alertChannel',choices.channels.filter(item => item.sendable),[channel.value]))
   const roleFields = section === 'permits' ? commandNames.map(name => name + '-roles') : ['alertRoles']
   for (const name of roleFields) {
     const input = form.elements[name]
-    if (input) input.outerHTML = discordSelect(name,choices.roles,ids(input.value),true)
+    if (input) replaceDiscordInput(input,discordSelect(name,choices.roles,ids(input.value),true))
   }
 }
 async function recoveryPanel(section,path,data) {
@@ -155,21 +205,21 @@ async function recoveryPanel(section,path,data) {
     if (section !== 'moderation') panel.innerHTML = '<p>Only the server owner can manage recovery operations.</p>'
     return
   }
-  const {channels,roles} = await request(path + '/options')
+  const {channels} = await request(path + '/options')
   const state = section === 'moderation' ? {} : await request(path + '/recovery')
   const channel = discordSelect('alertChannel',channels.filter(item => item.sendable),[data.config[section]?.alertChannel])
   let controls = ''
   if (section === 'lockdown') {
     controls = state.lockdown
       ? '<form class="card stack" data-operation="lift"><h3>Lockdown active</h3><p>Started ' + esc(new Date(state.lockdown).toLocaleString()) + '</p><div class="fields"><label>Type LIFT LOCKDOWN<input name="confirm" required></label></div><button class="button primary">Lift Lockdown</button></form>'
-      : '<form class="card stack" data-operation="enable"><h3>Lockdown controls</h3><p>Channel locks modify @everyone. Invite and DM pauses are applied for one hour where Discord exposes the current state.</p><div class="fields"><label>Channels' + discordSelect('channels',channels,[],true) + '</label><label>Collection role' + discordSelect('collection',roles,[]) + '</label></div><label class="toggle"><input type="checkbox" name="all"> Lock all supported channels</label><label class="toggle"><input type="checkbox" name="verification"> Raise verification to highest</label><label class="toggle"><input type="checkbox" name="invites"> Pause invites</label><label class="toggle"><input type="checkbox" name="dms"> Pause direct messages</label><div class="fields"><label>Type ENABLE LOCKDOWN<input name="confirm" required></label></div><button class="button primary">Enable Lockdown</button></form>'
+      : '<form class="card stack" data-operation="enable"><h3>Lockdown controls</h3><p>Channel locks modify @everyone. Invite and DM pauses are applied for one hour where Discord exposes the current state.</p><div class="fields"><div class="discord-field"><span>Channels</span>' + discordSelect('channels',channels,[],true) + '</div></div><label class="toggle"><input type="checkbox" name="all"> Lock all supported channels</label><label class="toggle"><input type="checkbox" name="verification"> Raise verification to highest</label><label class="toggle"><input type="checkbox" name="invites"> Pause invites</label><label class="toggle"><input type="checkbox" name="dms"> Pause direct messages</label><div class="fields"><label>Type ENABLE LOCKDOWN<input name="confirm" required></label></div><button class="button primary">Enable Lockdown</button></form>'
   }
   if (section === 'backup') {
     const history = (state.backups ?? []).map(item => '<option value="' + item.id + '">' + esc(new Date(item.at).toLocaleString()) + '</option>').join('')
     controls = '<form class="card stack" data-operation="backup"><h3>Manual backup</h3><p>Save server settings, roles, channels and overwrites. The latest 20 backups are retained.</p><button class="button">Create Backup</button></form><form class="card stack" data-operation="schedule"><h3>Automatic backups</h3><div class="fields"><label>Frequency<select name="hours">' + options({0:'Disabled',6:'Every 6 hours',12:'Every 12 hours',24:'Daily',168:'Weekly'},String(state.schedule?.hours ?? 0)) + '</select></label></div><button class="button">Save Schedule</button></form>' +
       (history ? '<form class="card stack" data-operation="restore"><h3>Backup history</h3><p>Restore supported settings and recreate eligible deleted roles and channels. Messages, role memberships, member overwrites, and ordering require manual recovery.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label><label>Type RESTORE BACKUP<input name="confirm" required></label></div><button class="button primary">Restore Backup</button></form>' : '<p class="stack">No backups yet.</p>')
   }
-  panel.innerHTML = '<form class="card stack" data-operation="logging"><h3>Discord logging</h3><div class="fields"><label>Logging channel' + channel + '</label></div><button class="button">Save Logging</button></form>' + controls + '<p class="stack" role="status"></p>'
+  panel.innerHTML = '<form class="card stack" data-operation="logging"><h3>Discord logging</h3><div class="fields"><div class="discord-field"><span>Logging channel</span>' + channel + '</div></div><button class="button">Save Logging</button></form>' + controls + '<p class="stack" role="status"></p>'
   const status = panel.querySelector('[role="status"]')
   for (const form of panel.querySelectorAll('form')) form.onsubmit = async event => {
     event.preventDefault()
@@ -226,20 +276,19 @@ async function dashboard() {
       logs:'Review recent detections, responses, and policy changes.'
     }
     const heading = '<div class="page-heading"><span class="icon-tile">' + icon(section) + '</span><div><h2 class="dash-title">' + sections[section] + '</h2></div></div>'
-    const activity = '<section class="card stack"><h3>' + (section === 'logs' ? 'Event history' : 'Recent activity') + '</h3><div id="events">' + logList(data.events.slice(0, section === 'logs' ? 100 : 6)) + '</div></section>'
-    const summary = value => '<div class="card"><span class="muted">Events · 24 hours</span><strong class="stat">' + value.total + '</strong></div><div class="card"><span class="muted">Anti-Nuke</span><strong class="stat">' + value.nuke + '</strong></div><div class="card"><span class="muted">Anti-Raid</span><strong class="stat">' + value.raid + '</strong></div>'
+    const events = ['logs','moderation'].includes(section) ? (await request(path + '/events')).events : []
+    const activity = '<section class="card stack"><h3>' + 'Event history' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
-    const modules = ['nuke','raid','checkpoint','automod'].map(key => {
-      const enabled = data.config[key].enabled
-      const state = enabled ? '<i class="dot"></i> Enabled' : 'Disabled'
-      return '<article class="card compact-module"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + '</h3><span class="badge">' + state + '</span></div></div><a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a></article>'
+    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits'].map(key => {
+      const restricted = key === 'permits' && !data.owner
+      const enabled = data.config[key]?.enabled
+      const state = key === 'lockdown' ? (data.lockdownActive ? 'Active' : 'Inactive') : key === 'backup' ? (data.backupsScheduled ? 'Scheduled' : 'Manual') : key === 'moderation' || key === 'permits' ? (restricted ? 'Owner only' : 'Available') : enabled ? '<i class="dot"></i> Enabled' : 'Disabled'
+      return '<article class="card compact-module"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + '</h3><span class="badge">' + state + '</span></div></div>' + (restricted ? '<span class="button module-configure" aria-disabled="true">Owner only</span>' : '<a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a>') + '</article>'
     }).join('')
-    const enabled = ['nuke','raid','checkpoint','automod'].filter(key => data.config[key].enabled).length
-    const score = '<section class="card score-card"><div><h3>Security score</h3><p>' + enabled + ' of 4 protection modules enabled</p></div><meter min="0" max="4" value="' + enabled + '" aria-label="Enabled protection modules"></meter><strong>' + enabled * 25 + '%</strong></section>'
-    const overview = '<section class="module-section"><h3>Protection modules</h3><div class="module-grid">' + modules + '</div></section><div class="overview-metrics">' + score + '<div id="stats" class="stats">' + summary(data.stats) + '</div></div>' + activity
+    const overview = '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<div id="recovery"></div><section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(data.events.filter(event => event.kind === 'moderation')) + '</section>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<div id="recovery"></div><section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(events.filter(event => event.kind === 'moderation')) + '</section>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div>')
     if (['lockdown','backup','moderation'].includes(section)) await recoveryPanel(section,path,data)
     const settings = document.querySelector('#settings')
     if (settings && (settings.elements.alertChannel || section === 'permits')) {
@@ -276,13 +325,12 @@ async function dashboard() {
       catch (error) { notice.textContent = error.message }
       finally { button.disabled = false }
     }
-    if (section === 'overview' || section === 'logs') {
+    if (section === 'logs') {
       const refresh = async () => {
         try {
           if (!document.hidden) {
-            const latest = await request(path)
-            document.querySelector('#events').innerHTML = logList(latest.events.slice(0,section === 'logs' ? 100 : 6))
-            if (section === 'overview') document.querySelector('#stats').innerHTML = summary(latest.stats)
+            const latest = await request(path + '/events')
+            document.querySelector('#events').innerHTML = logList(latest.events)
             document.querySelector('#refresh').textContent = ''
           }
         } catch (error) { document.querySelector('#refresh').textContent = error.message }

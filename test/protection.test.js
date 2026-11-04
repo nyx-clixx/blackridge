@@ -22,7 +22,7 @@ test('lockdown records recovery before mutation and preserves a changed verifica
     }
   }
   const tools = recoveryTools(db)
-  const input = {confirm:'ENABLE LOCKDOWN',all:false,channels:[],collection:'',verification:true,invites:false,dms:false}
+  const input = {confirm:'ENABLE LOCKDOWN',all:false,channels:[],verification:true,invites:false,dms:false}
   assert.deepEqual(await tools.enable(guild,'owner',input),[])
   assert.equal(verification,4)
   verification = 3

@@ -120,6 +120,28 @@ fieldset{border:0;padding:0;margin:14px 0 0;min-width:0}
 .pricing{margin-inline:auto}
 .plan-purchase{margin-right:10px}
 .plan-purchase:disabled{opacity:.8}
+.plan-purchase.button{display:flex;width:100%;min-height:45px;margin:0 0 10px;font-size:15px}
+.dash-main{max-width:1080px}
+#settings{max-width:none}
+.fields{align-items:start}
+.discord-field{display:grid;gap:5px;min-width:0;color:#d7d7de;font-size:13px}
+.discord-select{position:relative;min-width:0}
+.discord-select summary{display:flex;justify-content:space-between;align-items:center;gap:8px;list-style:none;min-height:37px;padding:8px 10px;border:1px solid #37373e;border-radius:7px;background:#121214;cursor:pointer}
+.discord-select summary::-webkit-details-marker{display:none}
+.discord-select summary span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.discord-options{position:absolute;z-index:4;top:calc(100% + 5px);width:100%;border:1px solid #37373e;border-radius:8px;background:#1b1b1e;padding:8px;box-shadow:0 12px 24px #0006}
+.discord-results{max-height:190px;overflow:auto;margin-top:6px}
+.discord-results label.discord-option{display:flex;align-items:center;gap:8px;padding:6px;border-radius:5px;cursor:pointer}
+.discord-results label.discord-option[hidden]{display:none}
+.discord-option:hover{background:#28282c}
+.discord-option input{width:15px;height:15px;min-height:0;flex:none;accent-color:var(--accent)}
+.event-scroll{overflow:auto}
+.event-table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}
+.event-table th,.event-table td{padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+.event-table th,.event-table time,.event-table code{white-space:nowrap}
+.event-table th,.event-table time{color:var(--muted)}
+.event-avatar{width:30px;height:30px;border-radius:50%;vertical-align:middle}
+.fallback-avatar{display:inline-grid;place-items:center;background:#292633;color:var(--accent)}
 .module-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:10px}
 .compact-module{padding:0;overflow:hidden;background:linear-gradient(150deg,#202023,#171719)}
 .compact-module .module-head{justify-content:flex-start;padding:11px 12px;gap:9px}

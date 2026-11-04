@@ -174,7 +174,20 @@ app.use('/api/guilds/:id',async (req,res,next) => {
 })
 app.get('/api/guilds/:id',(req,res) => {
   const {id,name,owner} = req.guild
-  res.json({name,owner,icon:bot.guilds.cache.get(id)?.icon ?? null,config:Object.fromEntries(Object.keys(policies).filter(kind => kind !== 'permits' || owner).map(kind => [kind,db.config(id,kind)])),events:db.recent(id),stats:db.stats(id)})
+  res.json({name,owner,icon:bot.guilds.cache.get(id)?.icon ?? null,config:Object.fromEntries(Object.keys(policies).filter(kind => kind !== 'permits' || owner).map(kind => [kind,db.config(id,kind)])),events:db.recent(id),lockdownActive: Boolean(db.recovery(id,'lockdown')),backupsScheduled:Boolean(db.recovery(id,'backupSchedule'))})
+})
+app.get('/api/guilds/:id/events',async (req,res) => {
+  const events = db.recent(req.guild.id).map(event => {
+    const pattern = event.kind === 'moderation' ? /\bmoderator (\d{17,20})\b/
+      : /(?:\b(?:by|from|out|for|flagged|author) |\bmember )(\d{17,20})\b/i
+    return {...event,userId:event.detail.match(pattern)?.[1] ?? null}
+  })
+  const missing = [...new Set(events.map(event => event.userId).filter(id => id && !bot.users.cache.has(id)))].slice(0,8)
+  await Promise.allSettled(missing.map(id => bot.users.fetch(id)))
+  res.json({events:events.map(event => {
+    const user = event.userId && bot.users.cache.get(event.userId)
+    return {...event,userName:user?.username ?? null,avatar:user?.avatar ?? null}
+  })})
 })
 app.get('/api/guilds/:id/options',async (req,res) => {
   const guild = bot.guilds.cache.get(req.guild.id)

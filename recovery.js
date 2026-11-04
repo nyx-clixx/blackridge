@@ -4,13 +4,12 @@ import { z } from 'zod'
 const snowflake = z.string().regex(/^\d{17,20}$/)
 const lockdownInput = z.strictObject({
   confirm:z.literal('ENABLE LOCKDOWN'), all:z.boolean(), channels:z.array(snowflake).max(500),
-  collection:z.union([snowflake,z.literal('')]), verification:z.boolean(), invites:z.boolean(), dms:z.boolean()
+  verification:z.boolean(), invites:z.boolean(), dms:z.boolean()
 })
 const textTypes = new Set([C.GuildText,C.GuildAnnouncement,C.GuildForum,C.GuildMedia])
 const voiceTypes = new Set([C.GuildVoice,C.GuildStageVoice])
 const restorableTypes = new Set([...textTypes,...voiceTypes,C.GuildCategory])
 const textBits = ['SendMessages','AddReactions','CreatePublicThreads','CreatePrivateThreads','SendMessagesInThreads']
-const stripMask = P.Administrator | P.ManageGuild | P.ManageRoles | P.ManageChannels | P.ManageWebhooks | P.BanMembers | P.KickMembers | P.MentionEveryone
 const invalid = message => Object.assign(new Error(message),{status:400})
 const incidentPath = guild => '/guilds/' + guild.id + '/incident-actions'
 const guildRaw = guild => guild.client.rest.get(Routes.guild(guild.id))
@@ -46,7 +45,7 @@ export function recoveryTools(db,bot) {
     if (!parsed.success) throw invalid('Confirm lockdown and select valid controls.')
     const cfg = parsed.data
     if (db.recovery(guild.id,'lockdown')) throw invalid('Lift the existing lockdown first.')
-    const {channels,roles} = await scope(guild)
+    const channels = await guild.channels.fetch()
     const raw = await guildRaw(guild)
     const steps = []
     const notices = []
@@ -58,17 +57,6 @@ export function recoveryTools(db,bot) {
       const overwrite = channel.permissionOverwrites.cache.get(guild.id)
       const before = Object.fromEntries(keys.filter(key => !overwrite?.deny.has(P[key],false)).map(key => [key,overwrite?.allow.has(P[key],false) ? true : null]))
       if (Object.keys(before).length) steps.push({kind:'channel',id,before})
-    }
-    if (cfg.collection) {
-      const boundary = roles.get(cfg.collection)
-      if (!boundary || boundary.id === guild.id) throw invalid('Select a valid Collection boundary role.')
-      for (const role of roles.values()) {
-        const bits = role.permissions.bitfield & stripMask
-        if (bits && role.id !== guild.id && !guild.members.me?.roles.cache.has(role.id) &&
-            role.editable && role.comparePositionTo(boundary) < 0) {
-          steps.push({kind:'role',id:role.id,before:String(bits)})
-        }
-      }
     }
     if (cfg.verification && raw.verification_level < 4) steps.push({kind:'verification',before:raw.verification_level,applied:4})
     for (const [option,key] of [['invites','invites_disabled_until'],['dms','dms_disabled_until']]) {
@@ -86,10 +74,6 @@ export function recoveryTools(db,bot) {
       db.saveRecovery(guild.id,'lockdown',journal)
       try {
         if (step.kind === 'channel') await channels.get(step.id).permissionOverwrites.edit(guild.id,Object.fromEntries(Object.keys(step.before).map(key => [key,false])),{reason:'Blackridge lockdown'})
-        if (step.kind === 'role') {
-          const role = roles.get(step.id)
-          await role.setPermissions(role.permissions.bitfield & ~BigInt(step.before),'Blackridge lockdown')
-        }
         if (step.kind === 'verification') await guild.setVerificationLevel(step.applied,'Blackridge lockdown')
         if (step.kind === 'incident') await guild.client.rest.put(incidentPath(guild),{body:{[step.key]:step.applied}})
         record(guild,'lockdown',actor,'Applied ' + step.kind + ' ' + (step.id ?? step.key ?? ''))
