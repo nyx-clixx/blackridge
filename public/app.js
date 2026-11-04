@@ -136,7 +136,7 @@ function nukeControls(form,config,{roles,channels,renameChannels},paid) {
   function row(key,label,description,saved,isRate) {
     if (!paid && paidGuards.includes(key)) return '<article class="nuke-row"><div><h4>' + label + crown + '</h4><p>' + description + '</p></div><a class="button small" href="premium">View Plans</a></article>'
     const rule = saved ?? {}
-    const actionOptions = actionsByKind.nuke.map(action => [action,actionLabels[action]])
+    const actionOptions = shortestFirst(actionsByKind.nuke.map(action => [action,actionLabels[action]]))
     const select = (name,label,items,value) => '<label>' + label + '<select name="' + key + '-' + name + '">' + items.map(([id,text]) => '<option value="' + id + '"' + (id === value ? ' selected' : '') + '>' + text + '</option>').join('') + '</select></label>'
     const choices = (name,items,selected) => Object.entries(items).map(([value,text]) => check(key + '-' + name + '-' + value,text,selected.includes(value))).join('')
     const permissions = ['publicRoles','assignments','rolePermissions'].includes(key)
@@ -150,7 +150,7 @@ function nukeControls(form,config,{roles,channels,renameChannels},paid) {
     const time = isRate ? '<div class="fields">' + number(key + '-minute','Per Minute',rule.minute ?? 5,500) + number(key + '-hour','Per Hour',rule.hour ?? 15,500) + '</div><p>Set either limit to 0 to turn off that window.' +
       (saved && rule.minute === undefined ? ' This rule currently uses its previous ' + rule.threshold + ' in ' + rule.window + 's limit. Edit either limit to switch to rolling windows.' : '') + '</p>' : ''
     return '<article class="nuke-row" data-nuke="' + key + '" data-configured="' + Boolean(saved) + '" data-rolling="' + (rule.minute !== undefined) + '"><div><h4>' + label + (paidGuards.includes(key) ? crown : '') + '</h4><p>' + description + '</p></div><div class="nuke-row-actions"><button type="button" class="button small" data-nuke-config aria-label="Configure ' + label + '">' + icon('automod') + ' Configure</button><label class="nuke-switch"><input type="checkbox" role="switch" aria-label="Enable ' + label + '" name="' + key + '-enabled"' + (rule.enabled ? ' checked' : '') + '><span aria-hidden="true"></span></label></div><dialog class="nuke-dialog" aria-labelledby="nuke-title-' + key + '"><header><h3 id="nuke-title-' + key + '">' + label + '</h3><button type="button" class="button small" data-close-nuke aria-label="Close settings">×</button></header><div class="nuke-dialog-fields">' +
-      select('action','Response',[['','Use Default Response'],...actionOptions],rule.action ?? '') + '<div class="fields">' +
+      select('action','Response',shortestFirst([['','Use Default Response'],...actionOptions]),rule.action ?? '') + '<div class="fields">' +
       number(key + '-escalate','Escalate After',rule.escalateAfter ?? 0,100) + select('escalateTo','Escalate To',actionOptions,rule.escalateTo ?? 'ban') + '</div><p>Detections by the same actor within 24 hours. Use 0 to disable escalation.</p>' + time + permissions + extras + '</div></dialog></article>'
   }
   const guards = Object.entries(nukeGuards).map(([key,[label,description]]) => row(key,label,description,config.guards?.[key],false)).join('')
@@ -194,17 +194,60 @@ const filters = {
   files:['Attachments',3],newlines:['New Lines',12],headers:['Markdown Headings',1],length:['Message Length',1500],
   ghost:['Ghost Mentions',1],nsfw:['Block NSFW Links',1],malicious:['Block Malicious Links',1]
 }
-function options(labels, selected) {
-  return Object.entries(labels).map(([value,label]) => '<option value="' + value + '"' + (selected === value ? ' selected' : '') + '>' + label + '</option>').join('')
+function shortestFirst(entries) {
+  return entries.sort(([,a],[,b]) => a.length - b.length)
 }
+function options(labels, selected, byLength = false) {
+  const entries = Object.entries(labels)
+  return (byLength ? shortestFirst(entries) : entries).map(([value,label]) => '<option value="' + value + '"' + (selected === value ? ' selected' : '') + '>' + label + '</option>').join('')
+}
+const durationUnits = {seconds:1,minutes:60,hours:3600,days:86400}
+const durationLabels = {seconds:'Seconds',minutes:'Minutes',hours:'Hours',days:'Days'}
+function displayDuration(seconds,unit) {
+  return Number((seconds / durationUnits[unit]).toFixed(10))
+}
+function durationField(name,label,value,min,max,base) {
+  return '<div class="duration-field" data-duration data-base="' + base + '" data-min="' + min + '" data-max="' + max + '"><label>' + label +
+    '<input type="number" required step="any" min="0" name="' + name + '" value="' + esc(value) + '"></label><label>Unit<select data-duration-unit data-previous="' + base + '" aria-label="' + label + ' unit">' +
+    options(durationLabels,base) + '</select></label></div>'
+}
+function durationValue(input) {
+  const field = input.closest('[data-duration]')
+  const unit = field.querySelector('[data-duration-unit]').value
+  return input.valueAsNumber * durationUnits[unit] / durationUnits[field.dataset.base]
+}
+function readDuration(input) {
+  const base = durationUnits[input.closest('[data-duration]').dataset.base]
+  return Math.round(durationValue(input) * base) / base
+}
+function validateDuration(input) {
+  const {min,max,base} = input.closest('[data-duration]').dataset
+  const seconds = durationValue(input) * durationUnits[base]
+  const rounded = Math.round(seconds)
+  const outOfRange = rounded < Number(min) * durationUnits[base] || rounded > Number(max) * durationUnits[base]
+  input.setCustomValidity(outOfRange ? 'Enter a duration between ' + min + ' and ' + max + ' ' + base + '.' :
+    Math.abs(seconds - rounded) > 0.00001 ? 'Use a duration in whole seconds.' : '')
+}
+document.addEventListener('input',event => {
+  if (event.target.matches('[data-duration] input')) validateDuration(event.target)
+},true)
+document.addEventListener('change',event => {
+  const select = event.target
+  if (select.matches('[data-duration] input')) { select.reportValidity(); return }
+  if (!select.matches('[data-duration-unit]')) return
+  const input = select.closest('[data-duration]').querySelector('input')
+  if (input.value !== '') input.value = displayDuration(input.valueAsNumber * durationUnits[select.dataset.previous],select.value)
+  select.dataset.previous = select.value
+  validateDuration(input)
+},true)
 function verificationForm(config,owner,choices) {
   const field = (name,label,items) => '<div class="discord-field"><span>' + label + '</span>' + discordSelect(name,items,[config[name]]) + '</div>'
   const channels = choices.channels.filter(channel => channel.sendable)
   return '<form id="settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') + '><section class="card settings-section"><h3>Verification Setup</h3><p>Give the Verified Role access to your member channels in Discord. Keep the verification channel visible to new members.</p><div class="fields"><label>Verification Mode<select name="mode">' + options({button:'One-click verification',captcha:'Image CAPTCHA'},config.mode) + '</select></label>' +
     field('channel','Verification Channel',channels) + field('verifiedRole','Verified Role',choices.roles) +
-    field('unverifiedRole','Unverified Role (optional)',choices.roles) + '<label>Minimum Account Age (days)<input type="number" name="minAge" min="0" max="365" required value="' + config.minAge + '"></label></div>' +
+    field('unverifiedRole','Unverified Role (optional)',choices.roles) + durationField('minAge','Minimum Account Age',config.minAge,0,365,'days') + '</div>' +
     (owner ? '<button class="button primary stack" type="button" id="publish-verification">Publish Verification Panel</button><p id="verification-publish-result" role="status"></p>' : '') +
-    '</section><section class="card settings-section" id="captcha-settings"><h3>CAPTCHA Settings</h3><div class="fields"><label>Max Attempts<input name="attempts" type="number" min="1" max="5" required value="' + config.attempts + '"></label><label>Challenge Duration (minutes)<input name="minutes" type="number" min="1" max="10" required value="' + config.minutes + '"></label><label>After Failed Attempts<select name="failure">' + options({retry:'Keep Unverified',kick:'Kick Member'},config.failure) + '</select></label></div></section><section class="card settings-section"><h3>Discord Logging</h3>' + field('alertChannel','Logging Channel',channels) + '</section></fieldset><p id="notice" role="status"></p></form>'
+    '</section><section class="card settings-section" id="captcha-settings"><h3>CAPTCHA Settings</h3><div class="fields"><label>Max Attempts<input name="attempts" type="number" min="1" max="5" required value="' + config.attempts + '"></label>' + durationField('minutes','Challenge Duration',config.minutes,1,10,'minutes') + '<label>After Failed Attempts<select name="failure">' + options({retry:'Keep Unverified',kick:'Kick Member'},config.failure,true) + '</select></label></div></section><section class="card settings-section"><h3>Discord Logging</h3>' + field('alertChannel','Logging Channel',channels) + '</section></fieldset><p id="notice" role="status"></p></form>'
 }
 function appealsPanel(path,config,channels) {
   const panel = document.querySelector('#appeals-panel')
@@ -243,7 +286,7 @@ function appealsPanel(path,config,channels) {
 function securityScore(checks) {
   const labels = {nuke:'Anti-Nuke enabled',raid:'Anti-Raid enabled',checkpoint:'Checkpoint enabled',quarantine:'Quarantine role configured',priority:'Highest role priority',admin:'Administrator permission'}
   const passed = Object.keys(labels).filter(key => checks?.[key]).length
-  return '<section class="card security-summary"><div><h3>Security Score</h3><strong>' + Math.round(passed/6*100) + '%</strong><p>' + passed + ' of 6 checks passed</p></div><ul>' + Object.entries(labels).map(([key,label]) =>
+  return '<section class="card security-summary"><div><h3>Security Score</h3><strong>' + Math.round(passed/6*100) + '%</strong><p>' + passed + ' of 6 checks passed</p></div><ul>' + shortestFirst(Object.entries(labels)).map(([key,label]) =>
     '<li><span class="security-check' + (checks?.[key] ? ' passed' : '') + '">' + (checks?.[key] ? '✓' : '–') + '</span><span>' + label + '</span><span class="muted">' + (checks?.[key] ? 'Pass' : 'Needs attention') + '</span></li>').join('') + '</ul></section>'
 }
 function renderServerPicker(guilds,userId) {
@@ -280,7 +323,7 @@ function extraControls(section,config,paid) {
       const actions = {off:'Disabled',log:'Log',...(key === 'ghost' ? {timeout:'Timeout'} : {delete:'Delete message',timeout:'Timeout'})}
       const field = configFields[key]
       const configure = field ? '<details class="filter-config"><summary class="button small">' + icon('configure') + ' Configure</summary><label>' + field[1] + ' (one per line)<textarea name="' + field[0] + '" maxlength="500" rows="5" spellcheck="false">' + esc(config[field[0]].split(',').map(value => value.trim()).filter(Boolean).join('\n')) + '</textarea></label></details>' : ''
-      return '<article class="filter-card"><h3>' + label + (paidFilters.includes(key) ? crown : '') + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options(actions,rule?.action ?? 'off') + '</select></label><label>Threshold<input type="number" required min="1" max="4000" name="' + key + '-limit" value="' + esc(rule?.limit ?? limit) + '"></label><label>Points<input type="number" required min="0" max="100" name="' + key + '-points" value="' + esc(rule?.points ?? 0) + '"></label></div>' + configure + '</article>'
+      return '<article class="filter-card"><h3>' + label + (paidFilters.includes(key) ? crown : '') + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options(actions,rule?.action ?? 'off',true) + '</select></label><label>Threshold<input type="number" required min="1" max="4000" name="' + key + '-limit" value="' + esc(rule?.limit ?? limit) + '"></label><label>Points<input type="number" required min="0" max="100" name="' + key + '-points" value="' + esc(rule?.points ?? 0) + '"></label></div>' + configure + '</article>'
     }).join('')
     return '<section class="card settings-section"><h3>Message Filters</h3><p>Text and attachment filters require Message Content access. Domain filters use community feeds and your additional domains. Blackridge matches hostnames without opening URLs.</p><div class="grid filter-grid">' + cards + '</div></section><section class="card settings-section"><h3>Point Escalation</h3><p>When a member reaches a threshold within its time window, Blackridge applies the highest matching rule.</p><div class="settings-panels stack" id="point-rules">' + (config.pointRules ?? []).map(pointRule).join('') + '</div><button type="button" class="button small stack" id="add-point-rule">Add Points Rule</button></section>'
   }
@@ -288,17 +331,17 @@ function extraControls(section,config,paid) {
     const rows = (config.rules ?? []).map(rule => checkpointRule(rule.score,rule.action)).join('')
     const botRules = ['verifiedBot','unverifiedBot'].map(key => {
       const rule = config[key] ?? {action:'off',quarantine:false}
-      return '<article class="filter-card"><h3>' + (key === 'verifiedBot' ? 'Verified Bot Addition' : 'Unverified Bot Addition') + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options({off:'Disabled',kick:'Kick Bot',ban:'Ban Bot'},rule.action) + '</select></label></div><label class="toggle"><input type="checkbox" name="' + key + '-quarantine"' + (rule.quarantine ? ' checked' : '') + '> Quarantine the Inviter</label></article>'
+      return '<article class="filter-card"><h3>' + (key === 'verifiedBot' ? 'Verified Bot Addition' : 'Unverified Bot Addition') + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options({off:'Disabled',kick:'Kick Bot',ban:'Ban Bot'},rule.action,true) + '</select></label></div><label class="toggle"><input type="checkbox" name="' + key + '-quarantine"' + (rule.quarantine ? ' checked' : '') + '> Quarantine the Inviter</label></article>'
     }).join('')
     return '<section class="card settings-section"><h3>Risk Score Rules</h3><p>The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.</p><div class="grid filter-grid" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section><section class="card settings-section"><h3>Bot Addition Rules</h3><p>Quarantining the inviter uses the quarantine role configured in Anti-Nuke.</p><div class="grid filter-grid">' + botRules + '</div></section>'
   }
   return ''
 }
 function pointRule(rule = {points:5,hours:24,action:'timeout'}) {
-  return '<article class="filter-card point-rule"><div class="module-head"><h3>Escalation rule</h3><button type="button" class="button small remove-point-rule">Remove</button></div><div class="fields"><label>Points<input name="rule-points" type="number" min="1" max="1000" required value="' + esc(rule.points) + '"></label><label>Within hours<input name="rule-hours" type="number" min="1" max="168" required value="' + esc(rule.hours) + '"></label><label>Response<select name="rule-action">' + options({timeout:'Timeout',kick:'Kick',ban:'Ban'},rule.action) + '</select></label></div></article>'
+  return '<article class="filter-card point-rule"><div class="module-head"><h3>Escalation rule</h3><button type="button" class="button small remove-point-rule">Remove</button></div><div class="fields"><label>Points<input name="rule-points" type="number" min="1" max="1000" required value="' + esc(rule.points) + '"></label>' + durationField('rule-hours','Within',rule.hours,1,168,'hours') + '<label>Response<select name="rule-action">' + options({timeout:'Timeout',kick:'Kick',ban:'Ban'},rule.action,true) + '</select></label></div></article>'
 }
 function checkpointRule(score,action = 'log') {
-  return '<article class="filter-card checkpoint-rule"><div class="module-head"><h3>Risk rule</h3><button type="button" class="button small remove-rule">Remove</button></div><div class="fields"><label>Minimum score<input type="number" min="1" max="25" required name="score" value="' + esc(score) + '"></label><label>Response<select name="rule">' + options({log:'Log and alert',kick:'Kick',quarantine:'Quarantine',tempban:'Temporary ban'},action) + '</select></label></div></article>'
+  return '<article class="filter-card checkpoint-rule"><div class="module-head"><h3>Risk rule</h3><button type="button" class="button small remove-rule">Remove</button></div><div class="fields"><label>Minimum score<input type="number" min="1" max="25" required name="score" value="' + esc(score) + '"></label><label>Response<select name="rule">' + options({log:'Log and alert',kick:'Kick',quarantine:'Quarantine',tempban:'Temporary ban'},action,true) + '</select></label></div></article>'
 }
 function protectionControls(form, section, config, paid) {
   const alerts = form.querySelector('.discord-alerts')
@@ -329,17 +372,19 @@ function protectionControls(form, section, config, paid) {
   preset.onchange = () => {
     if (!Number(preset.value)) return
     form.elements.threshold.value = preset.value
-    form.elements.window.value = 10
+    const input = form.elements.window
+    input.value = displayDuration(10,input.closest('[data-duration]').querySelector('select').value)
+    validateDuration(input)
   }
   for (const key of ['threshold','window']) form.elements[key].oninput = () => { preset.value = '0' }
 }
 const alerts = [['alertChannel','Discord Logging Channel'],['alertRoles','Roles to Notify']]
-const timedResponses = [['tempBanMinutes','Temporary ban duration (minutes)',1,1440],['quarantineMinutes','Quarantine duration (minutes)',1,1440]]
+const timedResponses = [['tempBanMinutes','Temporary ban duration',1,1440,'minutes'],['quarantineMinutes','Quarantine duration',1,1440,'minutes']]
 const settingFields = {
-  nuke: [['threshold','Actions per actor',2,30],['window','Detection window (seconds)',5,120],['trusted','Trusted Discord user IDs (comma-separated)'],...alerts,...timedResponses],
-  raid: [['threshold','Joins to trigger',3,100],['window','Detection window (seconds)',5,120],['duration','Protection duration (seconds)',15,600],['age','Maximum account age (days, 0 for all)',0,365],['timeoutMinutes','Timeout duration (minutes)',1,1440],...alerts,...timedResponses],
-  checkpoint: [['age','Young account threshold (days)',1,365],['agePoints','Points for a young account',0,5],['avatarPoints','Points for a default avatar',0,5],['rejoinPoints','Points for 3 joins in an hour',0,5],['similarPoints','Points for a burst of similar accounts',0,5],['inviteNamePoints','Points for invite links in display names',0,5],['threshold','Minimum score to log and alert',1,25],...timedResponses,...alerts],
-  automod: [['threshold','Messages per member',3,30],['window','Detection window (seconds)',2,60],['timeoutMinutes','Timeout duration (minutes)',1,1440],...alerts,['spamPoints','Points per spam violation',0,100]]
+  nuke: [['threshold','Actions per actor',2,30],['window','Detection window',5,120,'seconds'],['trusted','Trusted Discord user IDs (comma-separated)'],...alerts,...timedResponses],
+  raid: [['threshold','Joins to trigger',3,100],['window','Detection window',5,120,'seconds'],['duration','Protection duration',15,600,'seconds'],['age','Maximum account age (0 for all)',0,365,'days'],['timeoutMinutes','Timeout duration',1,1440,'minutes'],...alerts,...timedResponses],
+  checkpoint: [['age','Young account threshold',1,365,'days'],['agePoints','Points for a young account',0,5],['avatarPoints','Points for a default avatar',0,5],['rejoinPoints','Points for 3 joins in an hour',0,5],['similarPoints','Points for a burst of similar accounts',0,5],['inviteNamePoints','Points for invite links in display names',0,5],['threshold','Minimum score to log and alert',1,25],...timedResponses,...alerts],
+  automod: [['threshold','Messages per member',3,30],['window','Detection window',2,60,'seconds'],['timeoutMinutes','Timeout duration',1,1440,'minutes'],...alerts,['spamPoints','Points per spam violation',0,100]]
 }
 const actionsByKind = {
   nuke:['log','strip','quarantine','kick','ban','tempban'],
@@ -538,8 +583,8 @@ async function customBotPanel(path) {
 }
 function form(kind, config, owner) {
   const disabled = owner ? '' : ' disabled'
-  const fields = group => group.map(([key,label,min,max]) => '<label>' + label + '<input name="' + key + '" value="' + esc(Array.isArray(config[key]) ? config[key].join(', ') : config[key]) + '"' + (min === undefined ? ' maxlength="500"' : ' type="number" required min="' + min + '" max="' + max + '"') + '></label>').join('')
-  const response = actionsByKind[kind] ? '<label>Response<select name="action">' + actionsByKind[kind].map(action => '<option value="' + action + '"' + (config.action === action ? ' selected' : '') + '>' + actionLabels[action] + '</option>').join('') + '</select></label>' : ''
+  const fields = group => group.map(([key,label,min,max,unit]) => unit ? durationField(key,label,config[key],min,max,unit) : '<label>' + label + '<input name="' + key + '" value="' + esc(Array.isArray(config[key]) ? config[key].join(', ') : config[key]) + '"' + (min === undefined ? ' maxlength="500"' : ' type="number" required min="' + min + '" max="' + max + '"') + '></label>').join('')
+  const response = actionsByKind[kind] ? '<label>Response<select name="action">' + options(Object.fromEntries(actionsByKind[kind].map(action => [action,actionLabels[action]])),config.action,true) + '</select></label>' : ''
   const alertFields = settingFields[kind].filter(([key]) => key.startsWith('alert'))
   const baseFields = settingFields[kind].filter(([key]) => !key.startsWith('alert'))
   return '<form id="settings"><fieldset class="settings-panels"' + disabled + '><section class="card settings-section"><h3>' + (kind === 'automod' ? 'Anti-Spam' : sections[kind] + ' Policy') + '</h3><p>' + (owner ? 'Set detection thresholds and how Blackridge responds.' : 'Only the server owner can change this policy.') + '</p><div class="fields">' + fields(baseFields) + response + '</div></section>' + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord Alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '</fieldset><p role="status" id="notice"></p></form>'
@@ -782,7 +827,8 @@ async function dashboard() {
       const payload = section === 'permits' ? {...readPermits(settings),enabled:fields.has('enabled')} : {enabled:fields.has('enabled')}
       if (section === 'verification') {
         for (const key of ['mode','channel','verifiedRole','unverifiedRole','alertChannel','failure']) payload[key] = fields.get(key)
-        for (const key of ['minAge','attempts','minutes']) payload[key] = Number(fields.get(key))
+        payload.attempts = Number(fields.get('attempts'))
+        for (const key of ['minAge','minutes']) payload[key] = readDuration(settings.elements[key])
       }
       if (fields.has('action')) payload.action = fields.get('action')
       if (section === 'automod') payload.filters = Object.fromEntries(Object.keys(filters).map(key => [key,{
@@ -792,7 +838,7 @@ async function dashboard() {
         for (const name of ['badWords','nsfwDomains','maliciousDomains']) payload[name] = fields.get(name).split(/[\n,]/).map(value => value.trim()).filter(Boolean).join(',')
         payload.pointRules = [...settings.querySelectorAll('.point-rule')].map(row => ({
           points:Number(row.querySelector('[name=rule-points]').value),
-          hours:Number(row.querySelector('[name=rule-hours]').value),
+          hours:readDuration(row.querySelector('[name=rule-hours]')),
           action:row.querySelector('[name=rule-action]').value
         }))
       }
@@ -830,7 +876,9 @@ async function dashboard() {
           payload.guards[key] = rule
         }
       }
-      for (const [key,,min] of (settingFields[section] ?? [])) payload[key] = min === undefined ? fields.get(key) : Number(fields.get(key))
+      for (const [key,,min,,unit] of (settingFields[section] ?? [])) {
+        payload[key] = unit ? readDuration(settings.elements[key]) : min === undefined ? fields.get(key) : Number(fields.get(key))
+      }
       if (fields.has('alertChannel') && section !== 'verification') {
         payload.alertChannel = payload.alertChannel.trim()
         payload.alertRoles = fields.getAll('alertRoles')

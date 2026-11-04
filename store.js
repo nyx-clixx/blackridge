@@ -4,6 +4,10 @@ import { dirname } from 'node:path'
 import { z } from 'zod'
 
 const integer = (min,max) => z.number().int().min(min).max(max)
+const duration = (min,max,secondsPerUnit) => z.number().min(min).max(max).refine(value => {
+  const seconds = value * secondsPerUnit
+  return Math.abs(seconds - Math.round(seconds)) < 1e-7
+}, 'Use a whole number of seconds.')
 const nukeAction = z.enum(['log','strip','kick','ban','tempban','quarantine'])
 const ruleResponse = {action:nukeAction.optional(),escalateAfter:integer(0,100).optional(),escalateTo:nukeAction.optional()}
 const rate = z.strictObject({enabled:z.boolean(),threshold:integer(2,30),window:integer(5,120),
@@ -62,7 +66,7 @@ function normalizePermits(config) {
 }
 const alerts = {alertChannel:z.union([snowflake,z.literal('')]).optional(),alertRoles:z.array(snowflake).max(5).optional()}
 const botRule = z.strictObject({action:z.enum(['off','kick','ban']),quarantine:z.boolean()})
-const timedResponse = {tempBanMinutes:integer(1,1440).optional(),quarantineMinutes:integer(1,1440).optional()}
+const timedResponse = {tempBanMinutes:duration(1,1440,60).optional(),quarantineMinutes:duration(1,1440,60).optional()}
 export const spamFilters = ['mentions','files','images','stickers','invites','links','caps','newlines','length','emoji','headers','duplicate','multiUser','badWords','scam','nsfw','malicious','ghost']
 const filter = z.strictObject({action:z.enum(['off','log','delete','timeout']),limit:integer(1,4000),points:integer(0,100).optional()})
 export const policies = {
@@ -70,17 +74,17 @@ export const policies = {
   verification:z.strictObject({
     enabled:z.boolean(),mode:z.enum(['button','captcha']),channel:z.union([snowflake,z.literal('')]),
     verifiedRole:z.union([snowflake,z.literal('')]),unverifiedRole:z.union([snowflake,z.literal('')]),
-    alertChannel:z.union([snowflake,z.literal('')]),minAge:integer(0,365),attempts:integer(1,5),
-    minutes:integer(1,10),failure:z.enum(['retry','kick'])
+    alertChannel:z.union([snowflake,z.literal('')]),minAge:duration(0,365,86400),attempts:integer(1,5),
+    minutes:duration(1,10,60),failure:z.enum(['retry','kick'])
   }),
   permits: z.strictObject({enabled:z.boolean().optional(),entries:z.array(permit).max(30)}),
-  automod: z.strictObject({enabled:z.boolean(),threshold:integer(3,30),window:integer(2,60),action:z.enum(['log','timeout']),timeoutMinutes:integer(1,1440),filters:z.strictObject(Object.fromEntries(spamFilters.map(key => [key,key === 'malicious' ? filter.optional() : filter]))).optional(),badWords:z.string().max(500).optional(),nsfwDomains:z.string().max(500).optional(),maliciousDomains:z.string().max(500).optional(),spamPoints:integer(0,100).optional(),pointRules:z.array(z.strictObject({points:integer(1,1000),hours:integer(1,168),action:z.enum(['timeout','kick','ban'])})).max(4).optional(),...alerts}),
+  automod: z.strictObject({enabled:z.boolean(),threshold:integer(3,30),window:integer(2,60),action:z.enum(['log','timeout']),timeoutMinutes:duration(1,1440,60),filters:z.strictObject(Object.fromEntries(spamFilters.map(key => [key,key === 'malicious' ? filter.optional() : filter]))).optional(),badWords:z.string().max(500).optional(),nsfwDomains:z.string().max(500).optional(),maliciousDomains:z.string().max(500).optional(),spamPoints:integer(0,100).optional(),pointRules:z.array(z.strictObject({points:integer(1,1000),hours:duration(1,168,3600),action:z.enum(['timeout','kick','ban'])})).max(4).optional(),...alerts}),
   moderation:z.strictObject({enabled:z.boolean().optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
   lockdown:z.strictObject({enabled:z.boolean().optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
   backup:z.strictObject({enabled:z.boolean()}),
-  checkpoint: z.strictObject({enabled:z.boolean(),age:integer(1,365),agePoints:integer(0,5),avatarPoints:integer(0,5),threshold:integer(1,25),alertChannel:z.union([snowflake,z.literal('')]),alertRoles:z.array(snowflake).max(5),rejoinPoints:integer(0,5).optional(),similarPoints:integer(0,5).optional(),inviteNamePoints:integer(0,5).optional(),verifiedBot:botRule.optional(),unverifiedBot:botRule.optional(),rules:z.array(z.strictObject({score:integer(1,25),action:z.enum(['log','kick','quarantine','tempban'])})).max(4).optional(),...timedResponse}),
+  checkpoint: z.strictObject({enabled:z.boolean(),age:duration(1,365,86400),agePoints:integer(0,5),avatarPoints:integer(0,5),threshold:integer(1,25),alertChannel:z.union([snowflake,z.literal('')]),alertRoles:z.array(snowflake).max(5),rejoinPoints:integer(0,5).optional(),similarPoints:integer(0,5).optional(),inviteNamePoints:integer(0,5).optional(),verifiedBot:botRule.optional(),unverifiedBot:botRule.optional(),rules:z.array(z.strictObject({score:integer(1,25),action:z.enum(['log','kick','quarantine','tempban'])})).max(4).optional(),...timedResponse}),
   nuke: z.strictObject({enabled:z.boolean(),threshold:integer(2,30),window:integer(5,120),trusted:z.string().max(500).regex(/^\s*(?:\d{17,20}(?:\s*,\s*\d{17,20})*)?\s*$/),action:nukeAction,rates:rates.optional(),guards:guards.optional(),...alerts,...timedResponse}),
-  raid: z.strictObject({enabled:z.boolean(),threshold:integer(3,100),window:integer(5,120),duration:integer(15,600),age:integer(0,365),action:z.enum(['log','timeout','kick','ban','tempban','quarantine']),timeoutMinutes:integer(1,1440).optional(),...alerts,...timedResponse})
+  raid: z.strictObject({enabled:z.boolean(),threshold:integer(3,100),window:integer(5,120),duration:integer(15,600),age:duration(0,365,86400),action:z.enum(['log','timeout','kick','ban','tempban','quarantine']),timeoutMinutes:duration(1,1440,60).optional(),...alerts,...timedResponse})
 }
 const defaults = {
   appeals:{questions:['Why should the server lift your ban?','What would you do differently?'],channel:''},
