@@ -55,9 +55,9 @@ body.has-workspace header .wrap,body.has-workspace .dashboard{width:auto;margin:
 body.has-workspace header .wrap{padding-inline:20px}
 .dash-layout{display:grid;grid-template-columns:222px minmax(0,1fr);min-height:calc(100vh - 63px)}
 .sidebar{border-right:1px solid var(--line);padding:18px 12px;background:#121213}
-.sidebar a{display:flex;align-items:center;gap:9px;min-height:38px;padding:7px 10px;border-radius:7px;color:var(--muted);font-weight:550}
+.sidebar a{display:flex;align-items:center;gap:9px;min-height:38px;padding:7px 10px;border-radius:7px;color:#eeeeF2;font-weight:550}
 .sidebar a:hover{background:#202023;color:var(--text)}
-.sidebar a[aria-current]{background:#292633;color:#e5dfff}
+.sidebar a[aria-current]{background:#292633;color:#fff}
 .sidebar .server-switch{margin-bottom:18px;background:var(--panel);border:1px solid var(--line);color:var(--text)}
 .server-switch span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nav-label{display:block;margin:14px 10px 4px;color:var(--muted);font-size:11px;font-weight:650}
@@ -150,7 +150,6 @@ fieldset{border:0;padding:0;margin:14px 0 0;min-width:0}
 .case-user .event-avatar{flex:none}
 .settings-panels{display:grid;gap:14px;min-width:0}
 fieldset.settings-panels{margin:0}
-.settings-save{justify-self:start}
 .quarantine-panel{margin-bottom:14px}
 .settings-section .fields:last-child{margin-bottom:0}
 .settings-section>h3+.toggle{margin-top:12px}

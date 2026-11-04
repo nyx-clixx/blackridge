@@ -11,7 +11,7 @@ const iconPaths = {
   moderation:'<path d="M5 4h14v16H5zM8 8h8M8 12h8m-8 4h4"/>',
   permits:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"/>',
   overview:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
-  nuke:'<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/>',
+  nuke:'<path d="m13 2-8 12h6l-1 8 9-12h-6l1-8Z"/>',
   raid:'<path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2m19 0v-2a4 4 0 0 0-3-4m-2-12a4 4 0 0 1 0 8"/><circle cx="9.5" cy="7" r="4"/>',
   logs:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
@@ -26,6 +26,57 @@ const request = async (url, options) => {
   if (!res.ok) throw new Error(data.error || 'Request failed.')
   return data
 }
+const pendingSettings = new Set()
+function autosave(form,errorOutput,write) {
+  let timer
+  let dirty = false
+  let active
+  const flush = () => {
+    clearTimeout(timer)
+    if (active) return active
+    if (!dirty) return
+    if (!form.isConnected || !form.checkValidity()) {
+      pendingSettings.delete(flush)
+      return
+    }
+    active = (async () => {
+      while (dirty && form.isConnected && form.checkValidity()) {
+        dirty = false
+        try {
+          await write()
+          errorOutput.textContent = ''
+        } catch (error) {
+          errorOutput.textContent = error.message
+        }
+      }
+    })().finally(() => {
+      active = null
+      pendingSettings.delete(flush)
+    })
+    return active
+  }
+  const changed = event => {
+    if (event.target !== form && !event.target.name) return
+    if (event.type === 'input' && !event.target.matches('input:not([type=radio]):not([type=checkbox])')) return
+    dirty = true
+    pendingSettings.add(flush)
+    clearTimeout(timer)
+    if (event.type === 'change') void flush()
+    else timer = setTimeout(flush,350)
+  }
+  form.addEventListener('input',changed)
+  form.addEventListener('change',changed)
+  form.addEventListener('submit',event => { event.preventDefault(); void flush() })
+}
+document.addEventListener('click',async event => {
+  if (!pendingSettings.size || event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+  const link = event.target.closest('a[href]')
+  if (!link || link.target || link.origin !== location.origin || link.hash) return
+  event.preventDefault()
+  await Promise.all([...pendingSettings].map(flush => flush()))
+  location.assign(link.href)
+})
+window.addEventListener('pagehide',() => { for (const flush of pendingSettings) void flush() })
 const shell = html => { app.innerHTML = '<div class="wrap dashboard">' + html + '</div>' }
 function logList(entries,moderation = false) {
   if (!entries.length) return '<p class="empty">' + icon('logs') + ' No security events in this view.</p>'
@@ -74,16 +125,16 @@ function checkpointRule(score,action = 'log') {
   return '<article class="filter-card checkpoint-rule"><div class="module-head"><h3>Risk rule</h3><button type="button" class="button small remove-rule">Remove</button></div><div class="fields"><label>Minimum score<input type="number" min="1" max="25" required name="score" value="' + esc(score) + '"></label><label>Response<select name="rule">' + options({log:'Log and alert',kick:'Kick',quarantine:'Quarantine',tempban:'Temporary ban'},action) + '</select></label></div></article>'
 }
 function protectionControls(form, section, config) {
-  const button = form.querySelector('button[type=submit]')
-  const anchor = form.querySelector('.discord-alerts') ?? button
-  anchor.insertAdjacentHTML('beforebegin',extraControls(section,config))
+  const alerts = form.querySelector('.discord-alerts')
+  const insert = html => (alerts ?? form.querySelector('fieldset')).insertAdjacentHTML(alerts ? 'beforebegin' : 'beforeend',html)
+  insert(extraControls(section,config))
   if (section === 'checkpoint') {
     const list = form.querySelector('#checkpoint-rules')
     const add = form.querySelector('#add-checkpoint-rule')
     const refresh = () => { add.disabled = list.children.length >= 4 }
-    add.onclick = () => { if (list.children.length < 4) list.insertAdjacentHTML('beforeend',checkpointRule(config.threshold)); refresh() }
+    add.onclick = () => { if (list.children.length < 4) list.insertAdjacentHTML('beforeend',checkpointRule(config.threshold)); refresh(); form.dispatchEvent(new Event('change')) }
     list.onclick = event => {
-      if (event.target.matches('.remove-rule')) { event.target.closest('.checkpoint-rule').remove(); refresh(); add.focus() }
+      if (event.target.matches('.remove-rule')) { event.target.closest('.checkpoint-rule').remove(); refresh(); add.focus(); form.dispatchEvent(new Event('change')) }
     }
     refresh()
   }
@@ -92,7 +143,7 @@ function protectionControls(form, section, config) {
       const rule = config.rates?.[key] ?? config
       return '<div class="rate-row"><label class="toggle"><input type="checkbox" name="' + key + '-enabled"' + ((!config.rates || rule.enabled) ? ' checked' : '') + '> ' + label + '</label><div class="fields"><label>Actions<input required type="number" min="2" max="30" name="' + key + '-threshold" value="' + rule.threshold + '"></label><label>Window in seconds<input required type="number" min="5" max="120" name="' + key + '-window" value="' + rule.window + '"></label></div></div>'
     }).join('')
-    anchor.insertAdjacentHTML('beforebegin','<section class="card settings-section"><h3>Per-action rate limits</h3><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></section>')
+    insert('<section class="card settings-section"><h3>Per-action rate limits</h3><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></section>')
     return
   }
   if (section !== 'raid') return
@@ -125,7 +176,7 @@ const ids = value => value.split(',').map(id => id.trim()).filter(Boolean)
 
 function permitsForm(config) {
   const rows = commandNames.map(name => '<section class="card settings-section"><h3>/' + name + '</h3><div class="fields"><label>User IDs<input name="' + name + '-users" maxlength="330" value="' + esc(config[name].users.join(', ')) + '"></label><label>Roles<input name="' + name + '-roles" maxlength="330" value="' + esc(config[name].roles.join(', ')) + '"></label></div></section>').join('')
-  return '<form class="settings-panels" id="settings"><section class="card settings-section"><h3>Command access</h3><p>Enter up to 15 comma-separated user IDs and select up to 15 roles per command. Delegates also need the corresponding Discord permission.</p></section>' + rows + '<button class="button primary settings-save" type="submit">Save permits</button><p id="notice" role="status"></p></form>'
+  return '<form class="settings-panels" id="settings"><section class="card settings-section"><h3>Command access</h3><p>Enter up to 15 comma-separated user IDs and select up to 15 roles per command. Delegates also need the corresponding Discord permission.</p></section>' + rows + '<p id="notice" role="status"></p></form>'
 }
 
 async function accountMenu(me) {
@@ -133,7 +184,11 @@ async function accountMenu(me) {
   const avatar = me.user.avatar ? '<img alt="" src="https://cdn.discordapp.com/avatars/' + esc(me.user.id) + '/' + esc(me.user.avatar) + '.png?size=64">' : '<span class="initial">' + esc(me.user.username.slice(0,1)) + '</span>'
   account.outerHTML = '<details class="account-menu"><summary class="button small">' + avatar + '<span>' + esc(me.user.username) + '</span></summary><div class="account-links">' + '<a href="/support">Support Server</a>' + '<a href="/premium">Premium</a><button type="button" id="sign-out">Log out</button></div></details>'
   document.querySelector('#sign-out').onclick = async () => {
-    try { await request('/auth/logout',{method:'POST'}); location.assign(base) }
+    try {
+      await Promise.all([...pendingSettings].map(flush => flush()))
+      await request('/auth/logout',{method:'POST'})
+      location.assign(base)
+    }
     catch (error) { alert(error.message) }
   }
 }
@@ -153,7 +208,7 @@ function form(kind, config, owner) {
   const response = actionsByKind[kind] ? '<label>Response<select name="action">' + actionsByKind[kind].map(action => '<option value="' + action + '"' + (config.action === action ? ' selected' : '') + '>' + actionLabels[action] + '</option>').join('') + '</select></label>' : ''
   const alertFields = settingFields[kind].filter(([key]) => key.startsWith('alert'))
   const baseFields = settingFields[kind].filter(([key]) => !key.startsWith('alert'))
-  return '<form id="settings"><fieldset class="settings-panels"' + disabled + '><section class="card settings-section"><h3>' + (kind === 'automod' ? 'Anti-Spam' : sections[kind] + ' policy') + '</h3><p>' + (owner ? 'Set detection thresholds and how Blackridge responds.' : 'Only the server owner can change this policy.') + '</p><label class="toggle stack"><input type="checkbox" name="enabled"' + (config.enabled ? ' checked' : '') + '> Enable detection</label><div class="fields">' + fields(baseFields) + response + '</div></section>' + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '<button class="button primary settings-save" type="submit">Save settings</button></fieldset><p role="status" id="notice"></p></form>'
+  return '<form id="settings"><fieldset class="settings-panels"' + disabled + '><section class="card settings-section"><h3>' + (kind === 'automod' ? 'Anti-Spam' : sections[kind] + ' policy') + '</h3><p>' + (owner ? 'Set detection thresholds and how Blackridge responds.' : 'Only the server owner can change this policy.') + '</p><label class="toggle stack"><input type="checkbox" name="enabled"' + (config.enabled ? ' checked' : '') + '> Enable detection</label><div class="fields">' + fields(baseFields) + response + '</div></section>' + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '</fieldset><p role="status" id="notice"></p></form>'
 }
 function discordSelect(name,items,values,multiple = false) {
   const selected = new Set(values.filter(Boolean))
@@ -229,15 +284,28 @@ async function recoveryPanel(section,path,data,prepared) {
   }
   if (section === 'backup') {
     const history = (state.backups ?? []).map(item => '<option value="' + item.id + '">' + esc(new Date(item.at).toLocaleString()) + '</option>').join('')
-    controls = '<form class="card stack" data-operation="backup"><h3>Manual backup</h3><p>Save server settings, roles, channels and overwrites. The latest three backups are retained.</p><button class="button">Create Backup</button></form><form class="card stack" data-operation="schedule"><h3>Automatic backups</h3><div class="fields"><label>Frequency<select name="hours">' + options({0:'Disabled',6:'Every 6 hours',12:'Every 12 hours',24:'Daily',168:'Weekly'},String(state.schedule?.hours ?? 0)) + '</select></label></div><button class="button">Save Schedule</button></form>' +
+    controls = '<form class="card stack" data-operation="backup"><h3>Manual backup</h3><p>Save server settings, roles, channels and overwrites. The latest three backups are retained.</p><button class="button">Create Backup</button></form><form class="card stack" data-operation="schedule"><h3>Automatic backups</h3><div class="fields"><label>Frequency<select name="hours">' + options({0:'Disabled',6:'Every 6 hours',12:'Every 12 hours',24:'Daily',168:'Weekly'},String(state.schedule?.hours ?? 0)) + '</select></label></div></form>' +
       (history ? '<form class="card stack" data-operation="restore"><h3>Backup history</h3><p>Restore supported settings and recreate eligible deleted roles and channels. Messages, role memberships, member overwrites, and ordering require manual recovery.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label><label>Type RESTORE BACKUP<input name="confirm" required></label></div><button class="button primary">Restore Backup</button></form>' : '<p class="stack">No backups yet.</p>')
   }
-  const logging = '<form class="card stack" data-operation="logging"><h3>Discord logging</h3><div class="fields"><div class="discord-field"><span>Logging channel</span>' + channel + '</div></div><button class="button">Save Logging</button></form>'
+  const logging = '<form class="card stack" data-operation="logging"><h3>Discord logging</h3><div class="fields"><div class="discord-field"><span>Logging channel</span>' + channel + '</div></div></form>'
   panel.innerHTML = controls + logging + '<p class="stack" role="status"></p>'
   const status = panel.querySelector('[role="status"]')
-  for (const form of panel.querySelectorAll('form')) form.onsubmit = async event => {
-    event.preventDefault()
+  for (const form of panel.querySelectorAll('form')) {
     const operation = form.dataset.operation
+    if (operation === 'logging' || operation === 'schedule') {
+      autosave(form,status,async () => {
+        const fields = new FormData(form)
+        const logging = operation === 'logging'
+        const payload = logging ? {alertChannel:fields.get('alertChannel')} : {hours:Number(fields.get('hours'))}
+        await request(logging ? path + '/' + section : path + '/recovery/schedule',{
+          method:logging ? 'PUT' : 'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true
+        })
+        if (logging) data.config[section].alertChannel = payload.alertChannel
+      })
+      continue
+    }
+    form.onsubmit = async event => {
+    event.preventDefault()
     const fields = new FormData(form)
     const payload = Object.fromEntries(fields)
     if (operation === 'lift') payload.confirm = 'LIFT LOCKDOWN'
@@ -247,18 +315,18 @@ async function recoveryPanel(section,path,data,prepared) {
       for (const key of ['all','verification','invites','dms']) payload[key] = fields.has(key)
     }
     if (operation === 'restore') payload.id = Number(payload.id)
-    if (operation === 'schedule') payload.hours = Number(payload.hours)
     const button = form.querySelector('button')
     button.disabled = true
     try {
-      const result = await request(operation === 'logging' ? path + '/' + section : path + '/recovery/' + operation,{
-        method:operation === 'logging' ? 'PUT' : 'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)
+      await Promise.all([...pendingSettings].map(flush => flush()))
+      const result = await request(path + '/recovery/' + operation,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)
       })
-      if (operation === 'logging') data.config[section].alertChannel = payload.alertChannel
-      else await recoveryPanel(section,path,data)
-      panel.querySelector('[role="status"]').textContent = result.notices?.join(' ') || 'Saved.'
+      await recoveryPanel(section,path,data)
+      panel.querySelector('[role="status"]').textContent = result.notices?.join(' ') || ''
     } catch (error) { status.textContent = error.message }
     finally { button.disabled = false }
+    }
   }
 }
 function setupQuarantine(settings,path) {
@@ -341,8 +409,7 @@ async function dashboard() {
     if (settings && settingFields[section]) protectionControls(settings,section,data.config[section])
     if (settings && section === 'nuke' && data.owner) setupQuarantine(settings,path)
     if (recoverySection) await recoveryPanel(section,path,data,[choices,recoveryState])
-    if (settings) settings.onsubmit = async event => {
-      event.preventDefault()
+    if (settings && data.owner) autosave(settings,settings.querySelector('#notice'),async () => {
       const fields = new FormData(settings)
       const payload = section === 'permits' ? Object.fromEntries(commandNames.map(name => [name,{users:ids(fields.get(name + '-users')),roles:fields.getAll(name + '-roles')}])) : {enabled:fields.has('enabled')}
       if (fields.has('action')) payload.action = fields.get('action')
@@ -364,13 +431,8 @@ async function dashboard() {
         payload.alertChannel = payload.alertChannel.trim()
         payload.alertRoles = fields.getAll('alertRoles')
       }
-      const notice = document.querySelector('#notice')
-      const button = settings.querySelector('button[type=submit]')
-      button.disabled = true
-      try { await request(path + '/' + section,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); notice.textContent = 'Settings saved.' }
-      catch (error) { notice.textContent = error.message }
-      finally { button.disabled = false }
-    }
+      await request(path + '/' + section,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true})
+    })
     if (section === 'logs') {
       const refresh = async () => {
         try {
