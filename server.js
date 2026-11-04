@@ -208,6 +208,9 @@ app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
   const guild = bot.guilds.cache.get(req.guild.id)
   const actor = req.session.user.id
   const input = req.body ?? {}
+  if (req.params.operation === 'enable' && !db.config(guild.id,'lockdown').enabled) {
+    return res.status(400).json({error:'Turn on the Lockdown module first.'})
+  }
   if (['backup','restore','schedule'].includes(req.params.operation) && !db.config(guild.id,'backup').enabled) {
     return res.status(400).json({error:'Turn on Server Backups first.'})
   }
@@ -233,7 +236,7 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   if (!Object.hasOwn(policies,kind)) return res.status(404).json({error:'Unknown protection policy.'})
   const parsed = policies[kind].safeParse(req.body)
   if (!parsed.success) return res.status(400).json({error:'Check your thresholds and Discord user IDs.'})
-  const config = kind === 'moderation' ? {...db.config(req.guild.id,kind),...parsed.data} : parsed.data
+  const config = ['moderation','lockdown'].includes(kind) ? {...db.config(req.guild.id,kind),...parsed.data} : parsed.data
   db.save(req.guild.id,kind,config,req.session.user.id)
   if (kind === 'moderation' && parsed.data.enabled !== undefined) {
     try { await syncModerationCommands(bot.guilds.cache.get(req.guild.id),db) }
@@ -247,7 +250,7 @@ app.use(express.static(publicDir))
 const appShell = readFileSync(new URL('./public/index.html',import.meta.url),'utf8')
   .replace(/<main id="app">[\s\S]*?<\/main>/,'<main id="app"><div class="wrap dashboard"><p role="status">Loading…</p></div></main>')
 app.get('/support',(req,res) => supportInvite ? res.redirect(supportInvite) : res.type('html').send(appShell))
-app.get('/premium',(req,res) => res.type('html').send(appShell))
+app.get(['/premium','/documentation','/terms','/privacy'],(req,res) => res.type('html').send(appShell))
 const dashboardShell = appShell.replace('<body>','<body class="dashboard-page">')
 app.get(['/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => res.type('html').send(dashboardShell))
 app.use((error,req,res,next) => {
@@ -264,5 +267,4 @@ function stop() {
 }
 process.once('SIGTERM',stop)
 process.once('SIGINT',stop)
-
 

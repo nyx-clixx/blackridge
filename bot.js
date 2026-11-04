@@ -3,6 +3,7 @@ import { attachModeration, temporaryBan } from './moderation.js'
 import { createHash } from 'node:crypto'
 import { hasQuarantineOverwrite, sendModuleLog, setQuarantineOverwrite } from './recovery.js'
 import { matchesPermit } from './store.js'
+import { onDomainList, startDomainFeeds } from './domain-feeds.js'
 
 export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages | P.ManageGuild
 const dangerous = P.Administrator | P.ManageGuild | P.ManageRoles | P.ManageChannels | P.BanMembers | P.KickMembers | P.ManageWebhooks | P.ModerateMembers
@@ -36,7 +37,8 @@ function messageSignals(message, repeats, now, window, cfg) {
   const domains = entries(cfg.nsfwDomains)
   const malicious = entries(cfg.maliciousDomains)
   const hosts = urls.map(url => URL.parse(url)?.hostname.toLowerCase().replace(/\.$/,'')).filter(Boolean)
-  const blocked = list => hosts.filter(host => list.some(domain => host === domain || host.endsWith('.' + domain))).length
+  const blocked = (kind,list) => hosts.filter(host => onDomainList(kind,host) ||
+    list.some(domain => host === domain || host.endsWith('.' + domain))).length
   return {
     mentions:message.mentions.users.size + message.mentions.roles.size + (message.mentions.everyone ? 10 : 0),
     files:message.attachments.size,
@@ -46,8 +48,8 @@ function messageSignals(message, repeats, now, window, cfg) {
     links:urls.length,
     badWords:entries(cfg.badWords).filter(word => text.includes(word)).length,
     scam:Number(urls.length > 0 && /\b(?:free nitro|claim your nitro|verify your wallet|steam gift)\b/i.test(body)),
-    nsfw:blocked(domains),
-    malicious:blocked(malicious),
+    nsfw:blocked('nsfw',domains),
+    malicious:blocked('malicious',malicious),
     caps:letters >= 10 ? Math.round((body.match(/[A-Z]/g)?.length ?? 0)*100/letters) : 0,
     newlines:(body.match(/\n/g) ?? []).length,
     length:body.length,
@@ -146,7 +148,7 @@ export function attachProtection(client, db) {
     }
     log(member.guild,kind,action + ' completed for ' + member.id)
   }
-  async function isolate(member,cfg,reason) {
+  async function isolate(member,cfg,reason,kind = 'nuke') {
     const guild = member.guild
     const key = guild.id + ':' + member.id
     const journalKey = 'quarantine:' + member.id
@@ -166,7 +168,7 @@ export function attachProtection(client, db) {
           held.some(item => !item.editable) || hasChannelBypass ||
           guild.roles.everyone.permissions.has(P.Administrator,false) ||
           channels.some(channel => !hasQuarantineOverwrite(channel,role))) {
-        log(guild,'nuke','Response blocked for ' + member.id + ' · quarantine role, channel overrides, or role hierarchy need attention')
+        log(guild,kind,'Response blocked for ' + member.id + ' · quarantine role, channel overrides, or role hierarchy need attention')
         return
       }
       const originals = {...previous?.originals}
@@ -176,7 +178,7 @@ export function attachProtection(client, db) {
       db.quarantineMember(guild.id,member.id,role.id,until)
       await member.roles.add(role,reason)
       for (const item of held.values()) await member.roles.remove(item,reason)
-      log(guild,'nuke','Quarantined ' + member.id + ' · removed ' + held.size + ' role(s)')
+      log(guild,kind,'Quarantined ' + member.id + ' · removed ' + held.size + ' role(s)')
       const isolated = await guild.members.fetch({user:member.id,force:true})
       if (isolated.moderatable) await isolated.disableCommunicationUntil(until,reason)
     } finally { quarantineChanges.delete(key) }
@@ -288,6 +290,34 @@ export function attachProtection(client, db) {
       if (!removed || remaining) log(guild,'nuke','Some or all dangerous permissions could not be removed from ' + actor)
     } finally { responses.delete(key) }
   }))
+  client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => {
+    if (entry.action !== A.BotAdd || !entry.executorId || !entry.targetId ||
+        entry.executorId === client.user.id || entry.targetId === client.user.id) return
+    void run(guild,'checkpoint',async () => {
+      const cfg = db.config(guild.id,'checkpoint')
+      if (!cfg.enabled || ![cfg.verifiedBot,cfg.unverifiedBot].some(rule => rule && rule.action !== 'off')) return
+      const key = 'checkpoint:' + entry.id
+      const now = Date.now()
+      if (seen.has(key) || now-entry.createdTimestamp > 120000) return
+      seen.set(key,now+120000)
+      const inviter = await guild.members.fetch({user:entry.executorId,force:true})
+      if (bypass(guild,'checkpoint',inviter.id,inviter)) return
+      const target = await guild.members.fetch({user:entry.targetId,force:true})
+      if (!target.user.bot) return
+      const flags = await target.user.fetchFlags(true)
+      const verified = flags.has('VerifiedBot')
+      const current = db.config(guild.id,'checkpoint')
+      const rule = verified ? current.verifiedBot : current.unverifiedBot
+      if (!current.enabled || !rule || rule.action === 'off' || bypass(guild,'checkpoint',inviter.id,inviter)) return
+      const detail = 'Checkpoint detected a ' + (verified ? 'verified' : 'non-verified') + ' bot added by ' + inviter.id
+      log(guild,'checkpoint',detail)
+      alert(guild,'checkpoint',current,detail)
+      await enforce(target,'checkpoint',{...current,action:rule.action})
+      if (rule.quarantine && inviter.id !== guild.ownerId) {
+        await isolate(inviter,current,'Blackridge Checkpoint bot addition','checkpoint')
+      }
+    })
+  })
   client.on(Events.GuildMemberAdd,member => void run(member.guild,'raid',async () => {
     const guild = member.guild
     const cfg = db.config(guild.id,'raid')
@@ -371,6 +401,7 @@ export function attachProtection(client, db) {
 }
 
 export function startBot(token,db) {
+  startDomainFeeds()
   const intents = [I.Guilds,I.GuildModeration,I.GuildMembers,I.GuildMessages]
   if (process.env.ENABLE_MESSAGE_CONTENT === 'true') intents.push(I.MessageContent)
   const client = new Client({intents})
@@ -381,4 +412,3 @@ export function startBot(token,db) {
   client.login(token).catch(error => console.error('Discord login failed:',error.name))
   return client
 }
-

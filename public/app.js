@@ -1,3 +1,5 @@
+import { resources } from './resources.js'
+
 const app = document.querySelector('#app')
 const account = document.querySelector('#account')
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char])
@@ -19,7 +21,7 @@ const iconPaths = {
 }
 const icon = key => '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (iconPaths[key] ?? iconPaths.nuke) + '</svg>'
 for (const tile of document.querySelectorAll('[data-icon]')) tile.innerHTML = icon(tile.dataset.icon)
-const sections = { overview:'Overview', premium:'Premium', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups' }
+const sections = { overview:'Overview', premium:'Premium', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups' }
 const request = async (url, options) => {
   const res = await fetch(url, options)
   const data = await res.json()
@@ -57,7 +59,7 @@ function autosave(form,errorOutput,write) {
   }
   const changed = event => {
     if (event.target !== form && !event.target.name) return
-    if (event.type === 'input' && !event.target.matches('input:not([type=radio]):not([type=checkbox]):not([data-commit-on-change])')) return
+    if (event.type === 'input' && !event.target.matches('textarea,input:not([type=radio]):not([type=checkbox]):not([data-commit-on-change])')) return
     dirty = true
     pendingSettings.add(flush)
     clearTimeout(timer)
@@ -97,30 +99,34 @@ const rateLabels = {
 }
 const sensitivity = [['Low',20],['Medium',10],['High',5],['Custom',0]]
 const filters = {
-  multiUser:['Multi-user spam',4],scam:['Common scam patterns',1],badWords:['Blocked words and phrases',1],
-  images:['Image attachments',3],stickers:['Stickers',1],invites:['Discord invites',1],caps:['Excessive caps (%)',80],
-  duplicate:['Duplicate text',3],emoji:['Emoji spam',10],mentions:['Mass mentions',5],links:['Links',3],
-  files:['Attachments',3],newlines:['Newlines',12],headers:['Markdown headings',1],length:['Message length',1500],
-  ghost:['Ghost mentions (cached deletions)',1],nsfw:['Blocked NSFW domains',1],malicious:['Block Malicious Links',1]
+  multiUser:['Multi-User Spam',4],scam:['Common Scam Patterns',1],badWords:['Blocked Words and Phrases',1],
+  images:['Image Attachments',3],stickers:['Stickers',1],invites:['Discord Invites',1],caps:['Excessive Caps (%)',80],
+  duplicate:['Duplicate Text',3],emoji:['Emoji Spam',10],mentions:['Mass Mentions',5],links:['Links',3],
+  files:['Attachments',3],newlines:['New Lines',12],headers:['Markdown Headings',1],length:['Message Length',1500],
+  ghost:['Ghost Mentions',1],nsfw:['Block NSFW Links',1],malicious:['Block Malicious Links',1]
 }
 function options(labels, selected) {
   return Object.entries(labels).map(([value,label]) => '<option value="' + value + '"' + (selected === value ? ' selected' : '') + '>' + label + '</option>').join('')
 }
 function extraControls(section,config) {
   if (section === 'automod') {
-    const configFields = {badWords:['badWords','Blocked phrases'],nsfw:['nsfwDomains','Blocked NSFW domains'],malicious:['maliciousDomains','Malicious domains']}
+    const configFields = {badWords:['badWords','Blocked Phrases'],nsfw:['nsfwDomains','Additional NSFW Domains'],malicious:['maliciousDomains','Additional Malicious Domains']}
     const cards = Object.entries(filters).map(([key,[label,limit]]) => {
       const rule = config.filters?.[key]
       const actions = {off:'Disabled',log:'Log',...(key === 'ghost' ? {} : {delete:'Delete message',timeout:'Timeout'})}
       const field = configFields[key]
-      const configure = field ? '<details class="filter-config"><summary>Configure</summary><label>' + field[1] + ' (comma-separated)<input name="' + field[0] + '" maxlength="500" value="' + esc(config[field[0]]) + '"></label></details>' : ''
+      const configure = field ? '<details class="filter-config"><summary class="button small">' + icon('configure') + ' Configure</summary><label>' + field[1] + ' (one per line)<textarea name="' + field[0] + '" maxlength="500" rows="5" spellcheck="false">' + esc(config[field[0]].split(',').map(value => value.trim()).filter(Boolean).join('\n')) + '</textarea></label></details>' : ''
       return '<article class="filter-card"><h3>' + label + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options(actions,rule?.action ?? 'off') + '</select></label><label>Threshold<input type="number" required min="1" max="4000" name="' + key + '-limit" value="' + esc(rule?.limit ?? limit) + '"></label><label>Points<input type="number" required min="0" max="100" name="' + key + '-points" value="' + esc(rule?.points ?? 0) + '"></label></div>' + configure + '</article>'
     }).join('')
-    return '<section class="card settings-section"><h3>Message filters</h3><p>Text and attachment filters require Message Content access. Domain checks use your list and do not open URLs.</p><div class="grid filter-grid">' + cards + '</div></section><section class="card settings-section"><h3>Point Escalation</h3><p>When a member reaches a threshold within its time window, Blackridge applies the highest matching rule.</p><div class="settings-panels stack" id="point-rules">' + (config.pointRules ?? []).map(pointRule).join('') + '</div><button type="button" class="button small stack" id="add-point-rule">Add Points Rule</button></section>'
+    return '<section class="card settings-section"><h3>Message Filters</h3><p>Text and attachment filters require Message Content access. Domain filters use community feeds and your additional domains. Blackridge matches hostnames without opening URLs.</p><div class="grid filter-grid">' + cards + '</div></section><section class="card settings-section"><h3>Point Escalation</h3><p>When a member reaches a threshold within its time window, Blackridge applies the highest matching rule.</p><div class="settings-panels stack" id="point-rules">' + (config.pointRules ?? []).map(pointRule).join('') + '</div><button type="button" class="button small stack" id="add-point-rule">Add Points Rule</button></section>'
   }
   if (section === 'checkpoint') {
     const rows = (config.rules ?? []).map(rule => checkpointRule(rule.score,rule.action)).join('')
-    return '<section class="card settings-section"><h3>Risk score rules</h3><p>The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.</p><div class="grid filter-grid" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section>'
+    const botRules = ['verifiedBot','unverifiedBot'].map(key => {
+      const rule = config[key] ?? {action:'off',quarantine:false}
+      return '<article class="filter-card"><h3>' + (key === 'verifiedBot' ? 'Verified Bot Addition' : 'Unverified Bot Addition') + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options({off:'Disabled',kick:'Kick Bot',ban:'Ban Bot'},rule.action) + '</select></label></div><label class="toggle"><input type="checkbox" name="' + key + '-quarantine"' + (rule.quarantine ? ' checked' : '') + '> Quarantine the Inviter</label></article>'
+    }).join('')
+    return '<section class="card settings-section"><h3>Risk Score Rules</h3><p>The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.</p><div class="grid filter-grid" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section><section class="card settings-section"><h3>Bot Addition Rules</h3><p>Quarantining the inviter uses the quarantine role configured in Anti-Nuke.</p><div class="grid filter-grid">' + botRules + '</div></section>'
   }
   return ''
 }
@@ -137,9 +143,9 @@ function protectionControls(form, section, config) {
   if (section === 'automod') {
     const list = form.querySelector('#point-rules')
     const add = form.querySelector('#add-point-rule')
-    const changed = () => { add.disabled = list.children.length >= 10; form.dispatchEvent(new Event('change')) }
-    add.disabled = list.children.length >= 10
-    add.onclick = () => { if (list.children.length < 10) { list.insertAdjacentHTML('beforeend',pointRule()); changed() } }
+    const changed = () => { add.disabled = list.children.length >= 4; form.dispatchEvent(new Event('change')) }
+    add.disabled = list.children.length >= 4
+    add.onclick = () => { if (list.children.length < 4) { list.insertAdjacentHTML('beforeend',pointRule()); changed() } }
     list.onclick = event => { if (event.target.matches('.remove-point-rule')) { event.target.closest('.point-rule').remove(); changed(); add.focus() } }
   }
   if (section === 'checkpoint') {
@@ -157,7 +163,7 @@ function protectionControls(form, section, config) {
       const rule = config.rates?.[key] ?? config
       return '<div class="rate-row"><label class="toggle"><input type="checkbox" name="' + key + '-enabled"' + ((!config.rates || rule.enabled) ? ' checked' : '') + '> ' + label + '</label><div class="fields"><label>Actions<input required type="number" min="2" max="30" name="' + key + '-threshold" value="' + rule.threshold + '"></label><label>Window in seconds<input required type="number" min="5" max="120" name="' + key + '-window" value="' + rule.window + '"></label></div></div>'
     }).join('')
-    insert('<section class="card settings-section"><h3>Per-action rate limits</h3><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></section>')
+    insert('<section class="card settings-section"><h3>Per-Action Rate Limits</h3><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></section>')
     return
   }
   if (section !== 'raid') return
@@ -171,7 +177,7 @@ function protectionControls(form, section, config) {
   }
   for (const key of ['threshold','window']) form.elements[key].oninput = () => { preset.value = '0' }
 }
-const alerts = [['alertChannel','Discord logging channel'],['alertRoles','Roles to notify']]
+const alerts = [['alertChannel','Discord Logging Channel'],['alertRoles','Roles to Notify']]
 const timedResponses = [['tempBanMinutes','Temporary ban duration (minutes)',1,1440],['quarantineMinutes','Quarantine duration (minutes)',1,1440]]
 const settingFields = {
   nuke: [['threshold','Actions per actor',2,30],['window','Detection window (seconds)',5,120],['trusted','Trusted Discord user IDs (comma-separated)'],...alerts,...timedResponses],
@@ -272,7 +278,7 @@ function form(kind, config, owner) {
   const response = actionsByKind[kind] ? '<label>Response<select name="action">' + actionsByKind[kind].map(action => '<option value="' + action + '"' + (config.action === action ? ' selected' : '') + '>' + actionLabels[action] + '</option>').join('') + '</select></label>' : ''
   const alertFields = settingFields[kind].filter(([key]) => key.startsWith('alert'))
   const baseFields = settingFields[kind].filter(([key]) => !key.startsWith('alert'))
-  return '<form id="settings"><fieldset class="settings-panels"' + disabled + '><section class="card settings-section"><h3>' + (kind === 'automod' ? 'Anti-Spam' : sections[kind] + ' policy') + '</h3><p>' + (owner ? 'Set detection thresholds and how Blackridge responds.' : 'Only the server owner can change this policy.') + '</p><div class="fields">' + fields(baseFields) + response + '</div></section>' + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '</fieldset><p role="status" id="notice"></p></form>'
+  return '<form id="settings"><fieldset class="settings-panels"' + disabled + '><section class="card settings-section"><h3>' + (kind === 'automod' ? 'Anti-Spam' : sections[kind] + ' Policy') + '</h3><p>' + (owner ? 'Set detection thresholds and how Blackridge responds.' : 'Only the server owner can change this policy.') + '</p><div class="fields">' + fields(baseFields) + response + '</div></section>' + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord Alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '</fieldset><p role="status" id="notice"></p></form>'
 }
 function discordSelect(name,items,values,multiple = false) {
   const selected = new Set(values.filter(Boolean))
@@ -340,22 +346,17 @@ async function recoveryPanel(section,path,data,prepared) {
   let controls = ''
   if (section === 'lockdown') {
     controls = state.lockdown
-      ? '<form class="card stack" data-operation="lift"><h3>Lockdown Controls</h3><p class="badge">Active</p><p>Started ' + esc(new Date(state.lockdown).toLocaleString()) + '</p></form>'
-      : '<form class="card stack" data-operation="enable"><h3>Lockdown Controls</h3><p>Channel locks modify @everyone. Invite and DM pauses are applied for one hour where Discord exposes the current state.</p><div class="fields"><div class="discord-field"><span>Channels</span>' + discordSelect('channels',channels,[],true) + '</div></div><label class="toggle"><input type="checkbox" name="all"> Lock all supported channels</label><label class="toggle"><input type="checkbox" name="verification"> Raise verification to highest</label><label class="toggle"><input type="checkbox" name="invites"> Pause invites</label><label class="toggle"><input type="checkbox" name="dms"> Pause direct messages</label></form>'
+      ? '<form class="card stack" data-operation="lift"><h3>Lockdown Controls</h3><p class="badge">Active</p><p>Started ' + esc(new Date(state.lockdown).toLocaleString()) + '</p><button class="button primary lockdown-submit">Deactivate Lockdown</button></form>'
+      : '<form class="card stack" data-operation="enable"><h3>Lockdown Controls</h3><p>Channel locks modify @everyone. Invite and DM pauses are applied for one hour where Discord exposes the current state.</p><div class="fields"><div class="discord-field"><span>Channels</span>' + discordSelect('channels',channels,[],true) + '</div></div><label class="toggle"><input type="checkbox" name="all"> Lock all supported channels</label><label class="toggle"><input type="checkbox" name="verification"> Raise verification to highest</label><label class="toggle"><input type="checkbox" name="invites"> Pause invites</label><label class="toggle"><input type="checkbox" name="dms"> Pause Direct Messages</label><label class="toggle"><input type="checkbox" name="strip"> Strip Dangerous Permissions</label><button class="button primary lockdown-submit">Start Lockdown</button></form>'
   }
   if (section === 'backup') {
     const history = (state.backups ?? []).map(item => '<option value="' + item.id + '">' + esc(new Date(item.at).toLocaleString()) + '</option>').join('')
-    controls = '<section class="card stack backup-controls"><form data-operation="backup"><h3>Manual backup</h3><p>Save server settings, roles, channels and overwrites. The latest three backups are retained.</p><button class="button">Create Backup</button></form><form data-operation="schedule"><h3>Automatic backups</h3><div class="fields"><label>Frequency<select name="hours">' + options({0:'Disabled',6:'Every 6 hours',12:'Every 12 hours',24:'Daily',168:'Weekly'},String(state.schedule?.hours ?? 0)) + '</select></label></div></form></section>' +
+    controls = '<section class="card stack backup-controls"><form data-operation="backup"><h3>Manual Backup</h3><p>Save server settings, roles, channels and overwrites. The latest three backups are retained.</p><button class="button">Create Backup</button></form><form data-operation="schedule"><h3>Automatic Backups</h3><div class="fields"><label>Frequency<select name="hours">' + options({0:'Disabled',6:'Every 6 hours',12:'Every 12 hours',24:'Daily',168:'Weekly'},String(state.schedule?.hours ?? 0)) + '</select></label></div></form></section>' +
       (history ? '<form class="card stack" data-operation="restore"><h3>Backup Manager</h3><p>Restore supported settings and recreate eligible deleted roles and channels. Messages, role memberships, member overwrites, and ordering require manual recovery.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label></div><button class="button primary">Restore Backup</button></form>' : '<section class="card stack"><h3>Backup Manager</h3><p>No backups yet.</p></section>')
   }
-  const logging = '<form class="card stack" data-operation="logging"><h3>Discord logging</h3><div class="fields"><div class="discord-field"><span>Logging channel</span>' + channel + '</div></div></form>'
+  const logging = '<form class="card stack" data-operation="logging"><h3>Discord Logging</h3><div class="fields"><div class="discord-field"><span>Logging Channel</span>' + channel + '</div></div></form>'
   panel.innerHTML = controls + (section === 'backup' ? '' : logging) + '<p class="stack" role="status"></p>'
   const status = panel.querySelector('[role="status"]')
-  const lockdownSwitch = document.querySelector('#lockdown-switch')
-  if (lockdownSwitch) {
-    lockdownSwitch.setAttribute('aria-checked',String(Boolean(state.lockdown)))
-    lockdownSwitch.onclick = () => panel.querySelector('form[data-operation=enable],form[data-operation=lift]').requestSubmit()
-  }
   for (const form of panel.querySelectorAll('form')) {
     const operation = form.dataset.operation
     if (operation === 'logging' || operation === 'schedule') {
@@ -374,18 +375,22 @@ async function recoveryPanel(section,path,data,prepared) {
     event.preventDefault()
     const fields = new FormData(form)
     const payload = Object.fromEntries(fields)
-    if (operation === 'lift') payload.confirm = 'LIFT LOCKDOWN'
+    if (operation === 'lift') {
+      if (!window.confirm('Deactivate Lockdown and restore the recorded settings?')) return
+      payload.confirm = 'LIFT LOCKDOWN'
+    }
     if (operation === 'enable') {
+      if (!window.confirm('Start Lockdown with the selected controls?')) return
       payload.confirm = 'ENABLE LOCKDOWN'
       payload.channels = fields.getAll('channels')
-      for (const key of ['all','verification','invites','dms']) payload[key] = fields.has(key)
+      for (const key of ['all','verification','invites','dms','strip']) payload[key] = fields.has(key)
     }
     if (operation === 'restore') {
       if (!window.confirm('Confirm you want to restore this backup?')) return
       payload.id = Number(payload.id)
       payload.confirm = 'RESTORE BACKUP'
     }
-    const button = form.querySelector('button') ?? document.querySelector('#lockdown-switch')
+    const button = form.querySelector('button')
     button.disabled = true
     try {
       await Promise.all([...pendingSettings].map(flush => flush()))
@@ -402,14 +407,14 @@ async function recoveryPanel(section,path,data,prepared) {
 function setupQuarantine(settings,path) {
   const panel = document.createElement('section')
   panel.className = 'card quarantine-panel'
-  panel.innerHTML = '<h3>Quarantine role</h3><p>Apply view and chat denies across channels and categories. Anti-Nuke removes manageable roles and restores eligible roles when quarantine ends.</p><button type="button" class="button stack">Configure Quarantine Role</button>'
+  panel.innerHTML = '<h3>Quarantine Role</h3><p>Apply view and chat denies across channels and categories. Anti-Nuke removes manageable roles and restores eligible roles when quarantine ends.</p><button type="button" class="button stack">Configure Quarantine Role</button>'
   settings.before(panel)
   panel.querySelector('button').onclick = async event => {
     const button = event.currentTarget
     button.disabled = true
     try {
       const [state,choices] = await Promise.all([request(path + '/recovery'),request(path + '/options')])
-      panel.innerHTML = '<h3>Quarantine role</h3><p>Select an existing permission-free role, or leave it unselected to create one.</p><form><div class="fields"><div class="discord-field"><span>Role</span>' + discordSelect('role',choices.roles,[state.quarantineSetup || state.quarantineRole]) + '</div></div><button class="button primary">Apply to Channels and Categories</button><p role="status"></p></form>'
+      panel.innerHTML = '<h3>Quarantine Role</h3><p>Select an existing permission-free role, or leave it unselected to create one.</p><form><div class="fields"><div class="discord-field"><span>Role</span>' + discordSelect('role',choices.roles,[state.quarantineSetup || state.quarantineRole]) + '</div></div><button class="button primary">Apply to Channels and Categories</button><p role="status"></p></form>'
       const form = panel.querySelector('form')
       form.onsubmit = async submit => {
         submit.preventDefault()
@@ -418,7 +423,7 @@ function setupQuarantine(settings,path) {
         action.disabled = true
         try {
           const result = await request(path + '/recovery/quarantine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role:new FormData(form).get('role')})})
-          status.textContent = result.notices.length ? result.notices.join(' · ') : 'Quarantine role configured.'
+          status.textContent = result.notices.length ? result.notices.join(' · ') : 'Quarantine Role configured.'
           if (!new FormData(form).get('role')) {
             const [updated,options] = await Promise.all([request(path + '/recovery'),request(path + '/options')])
             form.querySelector('.discord-select').outerHTML = discordSelect('role',options.roles,[updated.quarantineSetup])
@@ -459,17 +464,15 @@ async function dashboard() {
       ['logs','moderation'].includes(section) ? request(path + '/events') : {events:[]}
     ])
     const linkedSwitch = Object.hasOwn(settingFields,section) || section === 'permits'
-    const serviceSwitch = ['backup','moderation'].includes(section)
+    const serviceSwitch = ['backup','moderation','lockdown'].includes(section)
     let switchControl = ''
     if (linkedSwitch || serviceSwitch) {
       const field = '<label class="module-switch"><input type="checkbox" role="switch" name="enabled" aria-label="' + sections[section] + '"' + (linkedSwitch ? ' form="settings"' : '') + (data.config[section].enabled ? ' checked' : '') + (data.owner ? '' : ' disabled') + '><span></span></label>'
       switchControl = serviceSwitch ? '<form id="module-toggle">' + field + '<p class="error" role="status"></p></form>' : field
-    } else if (section === 'lockdown') {
-      switchControl = '<button type="button" id="lockdown-switch" class="module-switch lockdown-switch" role="switch" aria-label="Lockdown" aria-checked="' + Boolean(data.lockdownActive) + '"' + (data.owner ? '' : ' disabled') + '><span></span></button>'
     }
     const heading = '<div class="page-heading"><span class="icon-tile">' + icon(section) + '</span><div><h2 class="dash-title">' + sections[section] + '</h2></div>' + switchControl + '</div>'
     const {events} = eventData
-    const activity = '<section class="card stack"><h3>' + 'Event history' + '</h3><div id="events">' + logList(events) + '</div></section>'
+    const activity = '<section class="card stack"><h3>' + 'Event History' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
     const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits'].map(key => {
@@ -480,7 +483,7 @@ async function dashboard() {
     }).join('')
     const overview = '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     const settings = document.querySelector('#settings')
     const headerSwitch = document.querySelector('.module-switch input[form=settings]')
     headerSwitch?.addEventListener('change',() => settings.dispatchEvent(new Event('change')))
@@ -505,16 +508,19 @@ async function dashboard() {
         action:fields.get(key + '-action'),limit:Number(fields.get(key + '-limit')),points:Number(fields.get(key + '-points'))
       }]))
       if (section === 'automod') {
-        for (const name of ['badWords','nsfwDomains','maliciousDomains']) payload[name] = fields.get(name)
+        for (const name of ['badWords','nsfwDomains','maliciousDomains']) payload[name] = fields.get(name).split(/[\n,]/).map(value => value.trim()).filter(Boolean).join(',')
         payload.pointRules = [...settings.querySelectorAll('.point-rule')].map(row => ({
           points:Number(row.querySelector('[name=rule-points]').value),
           hours:Number(row.querySelector('[name=rule-hours]').value),
           action:row.querySelector('[name=rule-action]').value
         }))
       }
-      if (section === 'checkpoint') payload.rules = fields.getAll('score').map((score,index) => ({
-        score:Number(score),action:fields.getAll('rule')[index]
-      }))
+      if (section === 'checkpoint') {
+        payload.rules = fields.getAll('score').map((score,index) => ({score:Number(score),action:fields.getAll('rule')[index]}))
+        for (const key of ['verifiedBot','unverifiedBot']) payload[key] = {
+          action:fields.get(key + '-action'),quarantine:fields.has(key + '-quarantine')
+        }
+      }
       if (fields.has('custom-rates')) {
         payload.rates = Object.fromEntries(Object.keys(rateLabels).map(key => [key,{
           enabled:fields.has(key + '-enabled'),
@@ -546,8 +552,8 @@ async function dashboard() {
 }
 if (location.pathname.startsWith(base)) dashboard()
 else {
+  if (Object.hasOwn(resources,location.pathname)) shell('<div class="resource-page">' + resources[location.pathname] + '</div>')
   if (location.pathname === '/premium') premium()
   if (location.pathname === '/support') shell('<h2>Support Server</h2><p>The Discord support invite is currently unavailable.</p>')
   request('/api/me').then(accountMenu).catch(() => {})
 }
-

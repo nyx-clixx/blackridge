@@ -4,12 +4,13 @@ import { z } from 'zod'
 const snowflake = z.string().regex(/^\d{17,20}$/)
 const lockdownInput = z.strictObject({
   confirm:z.literal('ENABLE LOCKDOWN'), all:z.boolean(), channels:z.array(snowflake).max(500),
-  verification:z.boolean(), invites:z.boolean(), dms:z.boolean()
+  verification:z.boolean(), invites:z.boolean(), dms:z.boolean(), strip:z.boolean().optional()
 })
 const textTypes = new Set([C.GuildText,C.GuildAnnouncement,C.GuildForum,C.GuildMedia])
 const voiceTypes = new Set([C.GuildVoice,C.GuildStageVoice])
 const restorableTypes = new Set([...textTypes,...voiceTypes,C.GuildCategory])
 const textBits = ['SendMessages','AddReactions','CreatePublicThreads','CreatePrivateThreads','SendMessagesInThreads']
+const dangerousLockdownBits = P.Administrator | P.ManageGuild | P.ManageChannels | P.ManageRoles
 const quarantineBits = Object.fromEntries(['ViewChannel',...textBits,'Speak'].map(key => [key,false]))
 const quarantineMask = Object.keys(quarantineBits).reduce((mask,key) => mask | P[key],0n)
 export function hasQuarantineOverwrite(channel,role) {
@@ -59,6 +60,18 @@ export function recoveryTools(db,bot) {
     const raw = await guildRaw(guild)
     const steps = []
     const notices = []
+    if (cfg.strip) {
+      const roles = await guild.roles.fetch()
+      for (const role of roles.values()) {
+        const bits = role.permissions.bitfield & dangerousLockdownBits
+        if (!bits || role.id === guild.id || guild.members.me?.roles.cache.has(role.id)) continue
+        if (!role.editable) {
+          notices.push('Could not strip permissions from ' + role.name + ' due to Discord role hierarchy.')
+          continue
+        }
+        steps.push({kind:'role',id:role.id,before:String(bits)})
+      }
+    }
     const selected = cfg.all ? [...channels.keys()] : [...new Set(cfg.channels)]
     for (const id of selected) {
       const channel = channels.get(id)
@@ -80,11 +93,20 @@ export function recoveryTools(db,bot) {
     db.saveRecovery(guild.id,'lockdown',journal)
     record(guild,'lockdown',actor,'Lockdown started')
     for (const step of steps) {
-      journal.steps.push(step)
-      db.saveRecovery(guild.id,'lockdown',journal)
       try {
+        let role
+        if (step.kind === 'role') {
+          role = await guild.roles.fetch(step.id,{force:true})
+          if (!role?.editable || guild.members.me?.roles.cache.has(role.id)) throw new Error('Role hierarchy changed')
+          const permissionsToStrip = role.permissions.bitfield & BigInt(step.before)
+          if (!permissionsToStrip) continue
+          step.before = String(permissionsToStrip)
+        }
+        journal.steps.push(step)
+        db.saveRecovery(guild.id,'lockdown',journal)
         if (step.kind === 'channel') await channels.get(step.id).permissionOverwrites.edit(guild.id,Object.fromEntries(Object.keys(step.before).map(key => [key,false])),{reason:'Blackridge lockdown'})
         if (step.kind === 'verification') await guild.setVerificationLevel(step.applied,'Blackridge lockdown')
+        if (role) await role.setPermissions(role.permissions.bitfield & ~BigInt(step.before),'Blackridge lockdown')
         if (step.kind === 'incident') await guild.client.rest.put(incidentPath(guild),{body:{[step.key]:step.applied}})
         record(guild,'lockdown',actor,'Applied ' + step.kind + ' ' + (step.id ?? step.key ?? ''))
       } catch {
@@ -245,4 +267,3 @@ export function recoveryTools(db,bot) {
   timer.unref()
   return {run,scope,enable,lift,backup,restore,quarantine}
 }
-
