@@ -7,6 +7,7 @@ const iconPaths = {
   verification:'<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="3" width="6" height="6" rx="1"/><rect x="3" y="15" width="6" height="6" rx="1"/><path d="M13 13h4v4h4m0-4v1m-8 3v4h4m4 0h.01"/>',
   appeals:'<path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.5-3A7.5 7.5 0 1 1 20 11.5Z"/><path d="M9 10h6m-6 3h4"/>',
   pin:'<path d="m16 3 5 5-3 1-3 5v3l-3-3-5 5-2-2 5-5-3-3h3l5-3z"/>',
+  custom:'<rect x="4" y="7" width="16" height="13" rx="4"/><path d="M12 7V3m-3 9h.01m6 0h.01M9 16h6"/>',
   configure:'<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.5" fill="var(--panel)"/><circle cx="15" cy="17" r="2.5" fill="var(--panel)"/>',
   lockdown:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/>',
   backup:'<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/>',
@@ -24,7 +25,10 @@ const iconPaths = {
 }
 const icon = key => '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (iconPaths[key] ?? iconPaths.nuke) + '</svg>'
 for (const tile of document.querySelectorAll('[data-icon]')) tile.innerHTML = icon(tile.dataset.icon)
-const sections = { overview:'Overview', premium:'Premium', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups',verification:'Verification',appeals:'Ban Appeals' }
+const sections = { overview:'Overview', premium:'Premium', custom:'Custom Bot', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups',verification:'Verification',appeals:'Ban Appeals' }
+const paidGuards = ['channelRename','emojiDelete','stickerDelete','soundboardDelete']
+const paidFilters = ['ghost','malicious']
+const crown = '<span class="premium-crown" title="Premium or Custom Bot" aria-label="Premium or Custom Bot">' + icon('premium') + '</span>'
 const request = async (url, options) => {
   const res = await fetch(url, options)
   const data = await res.json()
@@ -110,18 +114,20 @@ const nukeGuards = {
   channelRename:['Anti-Channel Rename','Detect renames of selected channels and restore their names when enforcement is enabled.'],
   roleRename:['Anti-Role Rename','Detect renames of selected roles and restore their names when enforcement is enabled.'],
   emojiDelete:['Emoji Deletion Protection','Detect deleted server emoji and apply the configured response.'],
-  stickerDelete:['Sticker Deletion Protection','Detect deleted server stickers and apply the configured response.']
+  stickerDelete:['Sticker Deletion Protection','Detect deleted server stickers and apply the configured response.'],
+  soundboardDelete:['Soundboard Deletion Protection','Detect deleted server soundboard sounds and apply the configured response.']
 }
 const nukePermissions = {
   Administrator:'Administrator',KickMembers:'Kick Members',BanMembers:'Ban Members',ManageGuild:'Manage Server',
   ManageRoles:'Manage Roles',ManageChannels:'Manage Channels',ManageWebhooks:'Manage Webhooks',MentionEveryone:'Mention Everyone'
 }
-function nukeControls(form,config,{roles,channels,renameChannels}) {
+function nukeControls(form,config,{roles,channels,renameChannels},paid) {
   const check = (name,label,checked) => '<label class="toggle"><input type="checkbox" name="' + name + '"' + (checked ? ' checked' : '') + '>' + label + '</label>'
   const number = (name,label,value,max) => '<label>' + label + '<span class="nuke-stepper"><button type="button" data-step="-1" aria-label="Decrease ' + label + '">−</button><input required type="number" name="' + name + '" min="0" max="' + max + '" value="' + value + '"><button type="button" data-step="1" aria-label="Increase ' + label + '">+</button></span></label>'
   const gateRow = (gate = {role:'',required:[]}) => '<div class="nuke-gate"><div class="discord-field"><span>Gated Role</span>' + discordSelect('gate-role-' + gateIndex++,roles,[gate.role]) + '</div><div class="discord-field"><span>Required Roles</span>' + discordSelect('gate-required',roles,gate.required,true) + '</div><button class="button small" type="button" data-remove-gate>Remove</button></div>'
   let gateIndex = 0
   function row(key,label,description,saved,isRate) {
+    if (!paid && paidGuards.includes(key)) return '<article class="nuke-row"><div><h4>' + label + crown + '</h4><p>' + description + '</p></div><a class="button small" href="premium">View Plans</a></article>'
     const rule = saved ?? {}
     const actionOptions = actionsByKind.nuke.map(action => [action,actionLabels[action]])
     const select = (name,label,items,value) => '<label>' + label + '<select name="' + key + '-' + name + '">' + items.map(([id,text]) => '<option value="' + id + '"' + (id === value ? ' selected' : '') + '>' + text + '</option>').join('') + '</select></label>'
@@ -136,7 +142,7 @@ function nukeControls(form,config,{roles,channels,renameChannels}) {
       : key === 'gate' ? '<p>Members need at least one required role. With an enforcement response, Blackridge also removes unauthorized grants where it can.</p><div class="nuke-gates">' + (rule.gates ?? []).map(gateRow).join('') + '</div><button type="button" class="button small" data-add-gate>Add Gated Role</button>' : ''
     const time = isRate ? '<div class="fields">' + number(key + '-minute','Per Minute',rule.minute ?? 5,500) + number(key + '-hour','Per Hour',rule.hour ?? 15,500) + '</div><p>Set either limit to 0 to turn off that window.' +
       (saved && rule.minute === undefined ? ' This rule currently uses its previous ' + rule.threshold + ' in ' + rule.window + 's limit. Edit either limit to switch to rolling windows.' : '') + '</p>' : ''
-    return '<article class="nuke-row" data-nuke="' + key + '" data-configured="' + Boolean(saved) + '" data-rolling="' + (rule.minute !== undefined) + '"><div><h4>' + label + '</h4><p>' + description + '</p></div><div class="nuke-row-actions"><button type="button" class="button small" data-nuke-config aria-label="Configure ' + label + '">' + icon('automod') + ' Configure</button><label class="nuke-switch"><input type="checkbox" role="switch" aria-label="Enable ' + label + '" name="' + key + '-enabled"' + (rule.enabled ? ' checked' : '') + '><span aria-hidden="true"></span></label></div><dialog class="nuke-dialog" aria-labelledby="nuke-title-' + key + '"><header><h3 id="nuke-title-' + key + '">' + label + '</h3><button type="button" class="button small" data-close-nuke aria-label="Close settings">×</button></header><div class="nuke-dialog-fields">' +
+    return '<article class="nuke-row" data-nuke="' + key + '" data-configured="' + Boolean(saved) + '" data-rolling="' + (rule.minute !== undefined) + '"><div><h4>' + label + (paidGuards.includes(key) ? crown : '') + '</h4><p>' + description + '</p></div><div class="nuke-row-actions"><button type="button" class="button small" data-nuke-config aria-label="Configure ' + label + '">' + icon('automod') + ' Configure</button><label class="nuke-switch"><input type="checkbox" role="switch" aria-label="Enable ' + label + '" name="' + key + '-enabled"' + (rule.enabled ? ' checked' : '') + '><span aria-hidden="true"></span></label></div><dialog class="nuke-dialog" aria-labelledby="nuke-title-' + key + '"><header><h3 id="nuke-title-' + key + '">' + label + '</h3><button type="button" class="button small" data-close-nuke aria-label="Close settings">×</button></header><div class="nuke-dialog-fields">' +
       select('action','Response',[['','Use Default Response'],...actionOptions],rule.action ?? '') + '<div class="fields">' +
       number(key + '-escalate','Escalate After',rule.escalateAfter ?? 0,100) + select('escalateTo','Escalate To',actionOptions,rule.escalateTo ?? 'ban') + '</div><p>Detections by the same actor within 24 hours. Use 0 to disable escalation.</p>' + time + permissions + extras + '</div></dialog></article>'
   }
@@ -252,15 +258,18 @@ function renderServerPicker(guilds,userId) {
   }
   render()
 }
-function extraControls(section,config) {
+function extraControls(section,config,paid) {
   if (section === 'automod') {
     const configFields = {badWords:['badWords','Blocked Phrases'],nsfw:['nsfwDomains','Additional NSFW Domains'],malicious:['maliciousDomains','Additional Malicious Domains']}
     const cards = Object.entries(filters).map(([key,[label,limit]]) => {
+      if (!paid && paidFilters.includes(key)) return '<article class="filter-card"><h3>' + label + crown + '</h3><p>Included with Premium and Custom Bot.</p><a class="button small" href="premium">View Plans</a></article>' +
+        '<input type="hidden" name="' + key + '-action" value="off"><input type="hidden" name="' + key + '-limit" value="' + limit + '"><input type="hidden" name="' + key + '-points" value="0">' +
+        (key === 'malicious' ? '<input type="hidden" name="maliciousDomains" value="">' : '')
       const rule = config.filters?.[key]
-      const actions = {off:'Disabled',log:'Log',...(key === 'ghost' ? {} : {delete:'Delete message',timeout:'Timeout'})}
+      const actions = {off:'Disabled',log:'Log',...(key === 'ghost' ? {timeout:'Timeout'} : {delete:'Delete message',timeout:'Timeout'})}
       const field = configFields[key]
       const configure = field ? '<details class="filter-config"><summary class="button small">' + icon('configure') + ' Configure</summary><label>' + field[1] + ' (one per line)<textarea name="' + field[0] + '" maxlength="500" rows="5" spellcheck="false">' + esc(config[field[0]].split(',').map(value => value.trim()).filter(Boolean).join('\n')) + '</textarea></label></details>' : ''
-      return '<article class="filter-card"><h3>' + label + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options(actions,rule?.action ?? 'off') + '</select></label><label>Threshold<input type="number" required min="1" max="4000" name="' + key + '-limit" value="' + esc(rule?.limit ?? limit) + '"></label><label>Points<input type="number" required min="0" max="100" name="' + key + '-points" value="' + esc(rule?.points ?? 0) + '"></label></div>' + configure + '</article>'
+      return '<article class="filter-card"><h3>' + label + (paidFilters.includes(key) ? crown : '') + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options(actions,rule?.action ?? 'off') + '</select></label><label>Threshold<input type="number" required min="1" max="4000" name="' + key + '-limit" value="' + esc(rule?.limit ?? limit) + '"></label><label>Points<input type="number" required min="0" max="100" name="' + key + '-points" value="' + esc(rule?.points ?? 0) + '"></label></div>' + configure + '</article>'
     }).join('')
     return '<section class="card settings-section"><h3>Message Filters</h3><p>Text and attachment filters require Message Content access. Domain filters use community feeds and your additional domains. Blackridge matches hostnames without opening URLs.</p><div class="grid filter-grid">' + cards + '</div></section><section class="card settings-section"><h3>Point Escalation</h3><p>When a member reaches a threshold within its time window, Blackridge applies the highest matching rule.</p><div class="settings-panels stack" id="point-rules">' + (config.pointRules ?? []).map(pointRule).join('') + '</div><button type="button" class="button small stack" id="add-point-rule">Add Points Rule</button></section>'
   }
@@ -280,10 +289,10 @@ function pointRule(rule = {points:5,hours:24,action:'timeout'}) {
 function checkpointRule(score,action = 'log') {
   return '<article class="filter-card checkpoint-rule"><div class="module-head"><h3>Risk rule</h3><button type="button" class="button small remove-rule">Remove</button></div><div class="fields"><label>Minimum score<input type="number" min="1" max="25" required name="score" value="' + esc(score) + '"></label><label>Response<select name="rule">' + options({log:'Log and alert',kick:'Kick',quarantine:'Quarantine',tempban:'Temporary ban'},action) + '</select></label></div></article>'
 }
-function protectionControls(form, section, config) {
+function protectionControls(form, section, config, paid) {
   const alerts = form.querySelector('.discord-alerts')
   const insert = html => (alerts ?? form.querySelector('fieldset')).insertAdjacentHTML(alerts ? 'beforebegin' : 'beforeend',html)
-  insert(extraControls(section,config))
+  insert(extraControls(section,config,paid))
   if (section === 'automod') {
     const list = form.querySelector('#point-rules')
     const add = form.querySelector('#add-point-rule')
@@ -401,12 +410,71 @@ async function accountMenu(me) {
 function premium() {
   shell('<h2>Blackridge Premium</h2>' + premiumPlans())
 }
-function premiumPlans() {
-  const features = ['Advanced Anti-Nuke','Advanced Anti-Raid','Advanced Auto Moderation','Server Backups']
+function premiumPlans(plan) {
+  const features = ['Server Backups','Anti-Channel Rename','Emoji, Sticker & Soundboard Deletion Protection','Ghost Mentions & Malicious Link Filters']
   return '<div class="grid pricing">' + [
     ['blue','Blackridge Premium','$2.99',features],
-    ['custom','Blackridge Custom Bot','$4.99',[...features,'Custom branding']]
-  ].map(([theme,name,price,items]) => '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + icon('premium') + '</span><h3>' + name + '</h3><strong>' + price + '</strong><ul>' + items.map(item => '<li>' + item + '</li>').join('') + '</ul><button class="button plan-purchase" type="button" disabled>Purchase</button><span class="badge">Coming soon</span></article>').join('') + '</div>'
+    ['custom','Blackridge Custom Bot','$4.99',[...features,'Your own Discord bot and profile']]
+  ].map(([theme,name,price,items]) => '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + icon('premium') + '</span><h3>' + name + '</h3><strong>' + price + '</strong><ul>' + items.map(item => '<li>' + item + '</li>').join('') + '</ul><button class="button plan-purchase" type="button" disabled>Purchase</button><span class="badge">' + ((theme === 'custom' && plan === 'custom') || (theme === 'blue' && plan === 'premium') ? 'Active Plan' : 'Coming soon') + '</span></article>').join('') + '</div>'
+}
+function planLock(title,description,href) {
+  return '<section class="card stack plan-lock"><h3>' + title + crown + '</h3><p>' + description + '</p><a class="button small" href="' + href + '">View Plans</a></section>'
+}
+async function customBotPanel(path) {
+  const panel = document.querySelector('#custom-bot-panel')
+  const url = path + '/custom-bot'
+  function render(state) {
+    const profile = state.profile ?? {}
+    panel.innerHTML = '<form class="card stack" id="bot-connection"><h3>Connect Your Discord Bot</h3><p>Install your own Discord application in this server only. Enable Server Members Intent and, if you use content filters, Message Content Intent. Keep Blackridge installed for dashboard access.</p><p class="badge">' +
+      (state.connected ? 'Connected' : state.configured ? 'Reconnecting' : 'Disconnected') + '</p><div class="fields"><label>Discord Bot Token<input type="password" name="token" required autocomplete="off" spellcheck="false" maxlength="162"></label></div><div class="actions"><button class="button primary">Connect Bot</button>' +
+      (state.configured ? '<button type="button" class="button" id="disconnect-bot">Disconnect Bot</button>' : '') + '</div></form>' +
+      (state.connected ? '<section class="card stack custom-profile"><form id="bot-profile"><h3>Profile</h3><div class="fields"><label>Bot Username<input name="username" required minlength="2" maxlength="32" value="' + esc(state.username) + '"></label>' +
+        '<label>Status<select name="status">' + options({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'},profile.status ?? 'online') + '</select></label>' +
+        '<label>Activity Type<select name="activityType">' + options({none:'Disabled',playing:'Playing',listening:'Listening',watching:'Watching',competing:'Competing'},profile.activityType ?? 'none') + '</select></label>' +
+        '<label>Activity Text<input name="activity" maxlength="100" value="' + esc(profile.activity ?? '') + '"></label></div><div class="fields stack"><label>Change Avatar<input type="file" name="avatar" accept="image/png,image/jpeg,image/webp"></label><label>Change Banner<input type="file" name="banner" accept="image/png,image/jpeg,image/webp"></label></div><p>PNG, JPEG, or WebP up to 3 MB. Verification panels posted by Blackridge should be republished after switching bots.</p><button class="button primary">Save Profile</button></form>' +
+        '<aside class="custom-preview"><div class="custom-banner">' + (state.banner ? '<img alt="" src="' + esc(state.banner) + '">' : '') + '</div><div class="custom-preview-body">' + (state.avatar ? '<img alt="" src="' + esc(state.avatar) + '">' : '') + '<h3>' + esc(state.username) + '</h3><span class="badge">' + esc(profile.status ?? 'online') + '</span></div></aside></section>' : '') +
+      '<p id="custom-status" role="status"></p>'
+    const action = async (button,run,message) => {
+      const status = panel.querySelector('#custom-status')
+      button.disabled = true
+      try { render(await run()); panel.querySelector('#custom-status').textContent = message }
+      catch (error) { status.textContent = error.message }
+      finally { button.disabled = false }
+    }
+    const json = (method,body) => ({method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    const connection = panel.querySelector('#bot-connection')
+    connection.onsubmit = event => {
+      event.preventDefault()
+      const token = connection.elements.token.value
+      connection.elements.token.value = ''
+      void action(event.submitter,() => request(url,json('POST',{token})),'Custom Bot connected.')
+    }
+    const disconnect = panel.querySelector('#disconnect-bot')
+    if (disconnect) disconnect.onclick = () => {
+      if (!confirm('Disconnect this bot and switch back to Blackridge?')) return
+      void action(disconnect,async () => { await request(url+'/disconnect',{method:'POST'}); return {} },'Custom Bot disconnected.')
+    }
+    const form = panel.querySelector('#bot-profile')
+    if (form) form.onsubmit = event => {
+      event.preventDefault()
+      const fields = new FormData(form)
+      void action(event.submitter,async () => {
+        const images = ['avatar','banner'].flatMap(field => {
+          const file = fields.get(field)
+          if (!file.size) return []
+          if (file.size > 3*1024*1024 || !['image/png','image/jpeg','image/webp'].includes(file.type))
+            throw new Error('Choose a PNG, JPEG, or WebP image up to 3 MB.')
+          return [[field,file]]
+        })
+        const body = Object.fromEntries(['username','status','activityType','activity'].map(key => [key,fields.get(key)]))
+        let next = await request(url+'/profile',json('PUT',body))
+        for (const [field,file] of images) next = await request(url+'/image/'+field,{method:'PUT',headers:{'Content-Type':file.type},body:file})
+        return next
+      },'Profile updated.')
+    }
+  }
+  try { render(await request(url)) }
+  catch (error) { panel.textContent = error.message }
 }
 function form(kind, config, owner) {
   const disabled = owner ? '' : ' disabled'
@@ -592,7 +660,10 @@ async function dashboard() {
     const path = '/api/guilds/' + encodeURIComponent(id)
     const data = await request(path)
     if (['permits','appeals'].includes(section) && !data.owner) throw new Error('Only the server owner can view this page.')
-    const recoverySection = ['lockdown','backup','moderation'].includes(section)
+    const paid = data.plan === 'premium' || data.plan === 'custom'
+    const customAllowed = data.owner && data.plan === 'custom'
+    const backupLocked = section === 'backup' && !paid
+    const recoverySection = !backupLocked && ['lockdown','backup','moderation'].includes(section)
     const needsOptions = Object.hasOwn(settingFields,section) || ['permits','verification'].includes(section) || (recoverySection && data.owner)
     const [choices,recoveryState,eventData] = await Promise.all([
       needsOptions ? request(path + '/options') : null,
@@ -600,7 +671,7 @@ async function dashboard() {
       ['logs','moderation'].includes(section) ? request(path + '/events' + (section === 'moderation' ? '?kind=moderation' : '')) : {events:[]}
     ])
     const linkedSwitch = Object.hasOwn(settingFields,section) || ['permits','verification'].includes(section)
-    const serviceSwitch = ['backup','moderation','lockdown'].includes(section)
+    const serviceSwitch = !backupLocked && ['backup','moderation','lockdown'].includes(section)
     let switchControl = ''
     if (linkedSwitch || serviceSwitch) {
       const field = '<label class="module-switch"><input type="checkbox" role="switch" name="enabled" aria-label="' + sections[section] + '"' + (linkedSwitch ? ' form="settings"' : '') + (data.config[section].enabled ? ' checked' : '') + (data.owner ? '' : ' disabled') + '><span></span></label>'
@@ -614,13 +685,14 @@ async function dashboard() {
     const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','verification'].map(key => {
       const restricted = key === 'permits' && !data.owner
       const enabled = data.config[key]?.enabled
-      const state = key === 'lockdown' ? (data.lockdownActive ? 'Active' : 'Inactive') : key === 'backup' && enabled ? (data.backupsScheduled ? 'Scheduled' : 'Manual') : restricted ? 'Owner only' : enabled ? '<i class="dot"></i> Enabled' : 'Disabled'
-      return '<article class="card compact-module"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + '</h3><span class="badge">' + state + '</span></div></div>' + (restricted ? '<span class="button module-configure" aria-disabled="true">Owner only</span>' : '<a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a>') + '</article>'
+      const state = enabled ? '<i class="dot"></i> Enabled' : '<i class="dot disabled-dot"></i> Disabled'
+      return '<article class="card compact-module"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + (key === 'backup' ? crown : '') + '</h3><span class="badge">' + state + '</span></div></div>' + (restricted ? '<span class="button module-configure" aria-disabled="true">Owner only</span>' : '<a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a>') + '</article>'
     }).join('')
     const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('verification') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + (data.owner ? navigation('appeals') : '') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('custom') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('verification') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + (data.owner ? navigation('appeals') : '') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans(data.plan) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     if (section === 'appeals') appealsPanel(path,data.config.appeals)
+    if (section === 'custom' && customAllowed) void customBotPanel(path)
     const settings = document.querySelector('#settings')
     const headerSwitch = document.querySelector('.module-switch input[form=settings]')
     headerSwitch?.addEventListener('change',() => settings.dispatchEvent(new Event('change')))
@@ -634,8 +706,8 @@ async function dashboard() {
     })
     if (settings?.elements.alertChannel && section !== 'verification') wireDiscordSelectors(settings,choices)
     if (section === 'permits') wirePermits(settings,choices.roles)
-    if (settings && settingFields[section]) protectionControls(settings,section,data.config[section])
-    if (settings && section === 'nuke') nukeControls(settings,data.config.nuke,choices)
+    if (settings && settingFields[section]) protectionControls(settings,section,data.config[section],paid)
+    if (settings && section === 'nuke') nukeControls(settings,data.config.nuke,choices,paid)
     if (settings && section === 'nuke' && data.owner) setupQuarantine(settings,path)
     if (recoverySection) await recoveryPanel(section,path,data,[choices,recoveryState])
     if (settings && data.owner) autosave(settings,settings.querySelector('#notice'),async () => {

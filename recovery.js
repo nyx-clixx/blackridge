@@ -1,5 +1,6 @@
 import { ChannelType as C, PermissionFlagsBits as P, Routes } from 'discord.js'
 import { z } from 'zod'
+import { guildPlan } from './store.js'
 
 const snowflake = z.string().regex(/^\d{17,20}$/)
 const lockdownInput = z.strictObject({
@@ -254,7 +255,7 @@ export function recoveryTools(db,bot) {
     for (const {guild:id} of db.scheduledBackups()) {
       const schedule = db.recovery(id,'backupSchedule')
       const guild = bot?.guilds.cache.get(id)
-      if (!guild?.available || !db.config(id,'backup').enabled || schedule.next > Date.now() || busy.has(id)) continue
+      if (!guild?.available || guildPlan(id) === 'free' || !db.config(id,'backup').enabled || schedule.next > Date.now() || busy.has(id)) continue
       try {
         await run(guild,async () => {
           await backup(guild,'automatic schedule')

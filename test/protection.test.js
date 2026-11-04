@@ -28,27 +28,30 @@ test('ban appeal links are single use and accept only the original ban', async t
   assert.equal(db.reviewAppeal('appeal','guild','rejected'),false)
 })
 
-test('Anti-Nuke restores a selected channel name without replacing a newer name', async t => {
+test('Anti-Nuke restores a selected role name and skips paid channel protection on Free', async t => {
   const db = createStore(':memory:')
   const client = new EventEmitter()
   client.user = {id:'bot'}
   const cleanup = attachProtection(client,db)
   t.after(() => { cleanup(); db.close() })
   const channel = {name:'edited',async setName(name) { this.name = name }}
-  const guild = {id:'guild',ownerId:'owner',channels:{fetch:async () => channel},
+  const guild = {id:'free-guild',ownerId:'owner',channels:{fetch:async () => channel},roles:{fetch:async () => channel},
     members:{fetch:async () => ({id:'actor',guild,kickable:true,kick:async () => {}})}}
-  db.save(guild.id,'nuke',{guards:{channelRename:{enabled:true,channels:['channel'],action:'kick'}}},'owner')
-  async function rename(id,targetId) {
-    client.emit(Events.GuildAuditLogEntryCreate,{id,executorId:'actor',targetId,action:A.ChannelUpdate,
+  db.save(guild.id,'nuke',{guards:{channelRename:{enabled:true,channels:['channel'],action:'kick'},
+    roleRename:{enabled:true,roles:['role'],action:'kick'}}},'owner')
+  async function rename(id,targetId,action=A.RoleUpdate) {
+    client.emit(Events.GuildAuditLogEntryCreate,{id,executorId:'actor',targetId,action,
       createdTimestamp:Date.now(),changes:[{key:'name',old:'original',new:'edited'}]},guild)
     await new Promise(resolve => setImmediate(resolve))
   }
-  await rename('1','different-channel')
+  await rename('0','channel',A.ChannelUpdate)
   assert.equal(channel.name,'edited')
-  await rename('2','channel')
+  await rename('1','different-role')
+  assert.equal(channel.name,'edited')
+  await rename('2','role')
   assert.equal(channel.name,'original')
   channel.name = 'newer'
-  await rename('3','channel')
+  await rename('3','role')
   assert.equal(channel.name,'newer')
 })
 

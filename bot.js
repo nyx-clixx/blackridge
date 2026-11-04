@@ -3,7 +3,7 @@ import { attachModeration, temporaryBan } from './moderation.js'
 import { attachVerification } from './verification.js'
 import { createHash } from 'node:crypto'
 import { hasQuarantineOverwrite, sendModuleLog, setQuarantineOverwrite } from './recovery.js'
-import { matchesPermit } from './store.js'
+import { guildPlan, matchesPermit, premiumFilters, premiumGuards } from './store.js'
 import { onDomainList, startDomainFeeds } from './domain-feeds.js'
 
 export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages | P.ManageGuild | P.ReadMessageHistory | P.EmbedLinks | P.AttachFiles
@@ -212,7 +212,8 @@ export function attachProtection(client, db) {
       if (cfg.filters && Object.values(cfg.filters).some(rule => rule.action !== 'off')) {
         const signals = messageSignals(message,repeats,now,cfg.window*1000,cfg)
         const severity = {log:0,delete:1,timeout:2}
-        const matches = Object.entries(cfg.filters).filter(([name,rule]) => rule.action !== 'off' && signals[name] >= rule.limit)
+        const matches = Object.entries(cfg.filters).filter(([name,rule]) => rule.action !== 'off' &&
+          (guildPlan(message.guild.id) !== 'free' || !premiumFilters.includes(name)) && signals[name] >= rule.limit)
         if (matches.length) {
           const [,rule] = matches.reduce((a,b) => severity[b[1].action] > severity[a[1].action] ? b : a)
           log(guild,'automod','Matched ' + matches.map(([name]) => name).join(', ') + ' · member ' + message.author.id)
@@ -245,13 +246,15 @@ export function attachProtection(client, db) {
     void run(guild,'automod',async () => {
       const cfg = db.config(guild.id,'automod')
       const rule = cfg.filters?.ghost
-      if (!cfg.enabled || rule?.action !== 'log') return
+      if (guildPlan(message.guild.id) === 'free') return
+      if (!cfg.enabled || !['log','timeout'].includes(rule?.action)) return
       const member = message.member ?? guild.members.cache.get(message.author.id)
       if (bypass(guild,'automod',message.author.id,member)) return
       const count = message.mentions.users.size + message.mentions.roles.size + (message.mentions.everyone ? 10 : 0)
       if (count >= rule.limit) {
         log(guild,'automod','Deleted message with mentions · author ' + message.author.id)
-        await escalate(message,cfg,rule.points)
+        if (!await escalate(message,cfg,rule.points) && rule.action === 'timeout' && member)
+          await enforce(member,'automod',{...cfg,action:'timeout'})
       }
     })
   })
@@ -277,11 +280,14 @@ export function attachProtection(client, db) {
     const guards = cfg.guards ?? {}
     const changed = key => entry.changes.find(change => change.key === key)
     const addedBits = key => flags(changed(key)?.new) & ~flags(changed(key)?.old)
-    const hit = (key,undo) => { if (guards[key]?.enabled) hits.push({key,rule:guards[key],undo}) }
+    const hit = (key,undo) => {
+      if (guards[key]?.enabled && (guildPlan(guild.id) !== 'free' || !premiumGuards.includes(key))) hits.push({key,rule:guards[key],undo})
+    }
     if (entry.action === A.GuildUpdate && (guards.identity?.identity ?? ['icon_hash','name','vanity_url_code']).some(changed)) hit('identity')
     if (entry.action === A.BotAdd) hit('botAdd')
     if (entry.action === A.EmojiDelete) hit('emojiDelete')
     if (entry.action === A.StickerDelete) hit('stickerDelete')
+    if (entry.action === A.SoundboardSoundDelete) hit('soundboardDelete')
     const rename = entry.action === A.ChannelUpdate ? 'channelRename' : entry.action === A.RoleUpdate ? 'roleRename' : null
     if (rename && guards[rename]?.enabled) {
       const channel = rename === 'channelRename'
@@ -525,14 +531,34 @@ export function attachProtection(client, db) {
   return () => { clearInterval(cleanup); clearInterval(quarantineSweep) }
 }
 
-export function startBot(token,db) {
-  startDomainFeeds()
+export function createBotClient() {
   const intents = [I.Guilds,I.GuildModeration,I.GuildMembers,I.GuildMessages]
   if (process.env.ENABLE_MESSAGE_CONTENT === 'true') intents.push(I.MessageContent)
-  const client = new Client({intents})
-  attachProtection(client,db)
-  attachModeration(client,db)
-  attachVerification(client,db)
+  return new Client({intents})
+}
+export function mountBot(client,db,ownsGuild) {
+  const view = new Proxy(client,{
+    get(target,property) {
+      if (property === 'guilds') return {cache:target.guilds.cache.filter(guild => ownsGuild(guild.id))}
+      if (property === 'on' || property === 'once') return (event,handler) => target[property](event,(...args) => {
+        const first = args[0]
+        const id = event === Events.GuildAuditLogEntryCreate ? args[1]?.id
+          : event === Events.GuildCreate ? first?.id : first?.guildId ?? first?.guild?.id
+        if (!id || ownsGuild(id)) handler(...args)
+      })
+      const value = Reflect.get(target,property,target)
+      return typeof value === 'function' ? value.bind(target) : value
+    }
+  })
+  const cleanup = [attachProtection(view,db),attachModeration(view,db,id => client.guilds.cache.get(id)),attachVerification(view,db)]
+  return () => cleanup.forEach(stop => stop())
+}
+export function startBot(token,db,ownsGuild = () => true) {
+  startDomainFeeds()
+  const client = createBotClient()
+  const cleanup = mountBot(client,db,ownsGuild)
+  const destroy = client.destroy.bind(client)
+  client.destroy = () => { cleanup(); return destroy() }
   client.once(Events.ClientReady,() => console.log('Discord bot connected'))
   client.on(Events.Error,error => console.error('Discord client error:',error.name))
   client.login(token).catch(error => console.error('Discord login failed:',error.name))

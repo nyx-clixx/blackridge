@@ -12,7 +12,14 @@ const rates = z.strictObject(Object.fromEntries(
   ['moderation','roleCreate','roleDelete','channelCreate','channelDelete','webhookCreate'].map(key => [key,rate.optional()])
 ))
 const snowflake = z.string().regex(/^\d{17,20}$/)
-const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles','rolePermissions','assignments','botAdd','channelRename','roleRename','emojiDelete','stickerDelete'].map(key => [key,z.strictObject({
+export const premiumGuards = ['channelRename','emojiDelete','stickerDelete','soundboardDelete']
+export const premiumFilters = ['ghost','malicious']
+const customPlans = new Set((process.env.BLACKRIDGE_CUSTOM_BOT_GUILDS ?? '').split(',').map(id => id.trim()).filter(Boolean))
+const premiumPlans = new Set((process.env.BLACKRIDGE_PREMIUM_GUILDS ?? '').split(',').map(id => id.trim()).filter(Boolean))
+export function guildPlan(id) {
+  return customPlans.has(id) ? 'custom' : premiumPlans.has(id) ? 'premium' : 'free'
+}
+const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles','rolePermissions','assignments','botAdd','roleRename',...premiumGuards].map(key => [key,z.strictObject({
   enabled:z.boolean(),...ruleResponse,
   permissions:z.array(z.enum(['Administrator','KickMembers','BanMembers','ManageGuild','ManageRoles','ManageChannels','ManageWebhooks','MentionEveryone'])).max(8).optional(),
   identity:z.array(z.enum(['icon_hash','name','vanity_url_code'])).max(3).optional(),
@@ -191,6 +198,7 @@ export function createStore(file) {
     },
     backups(guild) { return db.prepare('SELECT id,at FROM backup WHERE guild=? ORDER BY id DESC').all(guild) },
     backup(guild,id) { return JSON.parse(db.prepare('SELECT data FROM backup WHERE guild=? AND id=?').get(guild,id)?.data ?? 'null') },
+    recoveries(kind) { return db.prepare('SELECT guild FROM recovery WHERE kind=?').all(kind) },
     scheduledBackups() { return db.prepare("SELECT guild FROM recovery WHERE kind='backupSchedule'").all() },
     lock(guild,channel) { db.prepare('INSERT INTO channel_lock VALUES (?,?)').run(guild,channel) },
     hasLock(guild,channel) { return Boolean(db.prepare('SELECT 1 FROM channel_lock WHERE guild=? AND channel=?').get(guild,channel)) },

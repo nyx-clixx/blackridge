@@ -24,7 +24,7 @@ export async function hasAppealableBan(guild,row) {
   }
 }
 
-export function attachAppeals(client,db) {
+export function attachAppeals(client,db,lookupGuild = id => client.guilds.cache.get(id)) {
   client.on(Events.InteractionCreate,async interaction => {
     if (interaction.inGuild() || !(interaction.isButton() || interaction.isModalSubmit()) || !interaction.customId.startsWith(prefix)) return
     const id = interaction.customId.slice(prefix.length)
@@ -41,7 +41,7 @@ export function attachAppeals(client,db) {
         return await interaction.showModal(modal)
       }
       await interaction.deferReply()
-      const guild = client.guilds.cache.get(row.guild)
+      const guild = lookupGuild(row.guild)
       if (!guild?.available || !await hasAppealableBan(guild,row))
         return await interaction.editReply('That ban is no longer eligible for an appeal.')
       const answers = questions.map((_,index) => interaction.fields.getTextInputValue('question-'+index).trim())

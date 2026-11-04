@@ -28,10 +28,10 @@ const commands = commandNames.map(name => {
   return builder.addStringOption(option => option.setName('reason').setDescription('Reason for the action').setMaxLength(250))
 })
 const commandSync = new Map()
-export function syncModerationCommands(guild,db) {
+export function syncModerationCommands(guild,db,forceDisabled = false) {
   const previous = commandSync.get(guild.id) ?? Promise.resolve()
   const operation = previous.catch(() => {}).then(async () => {
-    const enabled = db.config(guild.id,'moderation').enabled
+    const enabled = !forceDisabled && db.config(guild.id,'moderation').enabled
     if (enabled) for (const command of commands) await guild.commands.create(command)
     const obsolete = enabled ? ['lock','unlock'] : [...commandNames,'lock','unlock']
     for (const command of (await guild.commands.fetch()).values()) {
@@ -58,8 +58,8 @@ export async function temporaryBan(member, minutes, db, reason) {
   await member.ban({reason:marker + ' · ' + reason})
 }
 
-export function attachModeration(client,db) {
-  attachAppeals(client,db)
+export function attachModeration(client,db,lookupGuild) {
+  attachAppeals(client,db,lookupGuild)
   const channelChanges = new Set()
   client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => {
     if (!db.config(guild.id,'moderation').enabled || !entry.targetId || !entry.executorId || entry.executorId === client.user.id) return
@@ -77,7 +77,7 @@ export function attachModeration(client,db) {
   })
   client.on(Events.GuildCreate,register)
   let expiring = false
-  setInterval(async () => {
+  const sweep = setInterval(async () => {
     if (expiring || !client.isReady()) return
     expiring = true
     try {
@@ -194,4 +194,5 @@ export function attachModeration(client,db) {
       if (interaction.deferred) await interaction.editReply('The action could not be completed.').catch(() => {})
     }
   })
+  return () => clearInterval(sweep)
 }

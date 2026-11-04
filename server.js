@@ -4,7 +4,8 @@ import { randomBytes, createHash, scryptSync, createCipheriv, createDecipheriv }
 import { fileURLToPath } from 'node:url'
 import { readFileSync } from 'node:fs'
 import { ChannelType, PermissionFlagsBits as P } from 'discord.js'
-import { createStore, policies } from './store.js'
+import { createStore, guildPlan, policies, premiumFilters, premiumGuards } from './store.js'
+import { customBots, profilePolicy } from './custom-bot.js'
 import { startBot, requiredPermissions } from './bot.js'
 import { publishVerification } from './verification.js'
 import { hasAppealableBan } from './appeals.js'
@@ -18,8 +19,11 @@ const redirect = base + '/auth/callback'
 const configured = Boolean(clientId && clientSecret)
 const app = express()
 const db = createStore(process.env.DB_PATH || './data/blackridge.sqlite')
-const bot = botToken && startBot(botToken,db)
-const recovery = recoveryTools(db,bot)
+let custom
+const bot = botToken && startBot(botToken,db,id => !custom?.active(id))
+custom = customBots(db,() => bot,configured ? scryptSync(clientSecret,'blackridge custom bot credentials v1',32) : null)
+const activeGuild = id => custom.active(id) ?? bot.guilds.cache.get(id)
+const recovery = recoveryTools(db,bot && {guilds:{cache:{get:activeGuild}},isReady:() => bot.isReady()})
 const states = new Map()
 const guildLists = new Map()
 const sessionKey = configured ? scryptSync(clientSecret,'blackridge web session v1',32) : null
@@ -177,7 +181,7 @@ app.use('/api/guilds/:id',async (req,res,next) => {
 })
 app.get('/api/guilds/:id',(req,res) => {
   const {id,name,owner} = req.guild
-  const guild = bot.guilds.cache.get(id)
+  const guild = activeGuild(id)
   const config = Object.fromEntries(Object.keys(policies).filter(kind => owner || !['permits','appeals'].includes(kind)).map(kind => [kind,db.config(id,kind)]))
   const me = guild.members.me
   const highest = guild.roles?.highest
@@ -188,7 +192,36 @@ app.get('/api/guilds/:id',(req,res) => {
     priority:Boolean(me && highest && me.roles.highest.id === highest.id),
     admin:Boolean(me?.permissions.has('Administrator'))
   }
-  res.json({name,owner,icon:guild.icon ?? null,config,security,lockdownActive:Boolean(db.recovery(id,'lockdown')),backupsScheduled:Boolean(db.recovery(id,'backupSchedule'))})
+  const plan = guildPlan(id)
+  if (plan === 'free') config.backup = {...config.backup,enabled:false}
+  res.json({name,owner,icon:guild.icon ?? null,config,security,plan,lockdownActive:Boolean(db.recovery(id,'lockdown')),backupsScheduled:plan !== 'free' && Boolean(db.recovery(id,'backupSchedule'))})
+})
+function customAccess(req,res,next) {
+  if (!req.guild.owner || guildPlan(req.guild.id) !== 'custom') return res.status(403).json({error:'Custom Bot requires the Custom Bot plan and server ownership.'})
+  next()
+}
+app.get('/api/guilds/:id/custom-bot',customAccess,(req,res) => res.json(custom.state(req.guild.id,req.session.user.id)))
+app.post('/api/guilds/:id/custom-bot',customAccess,async (req,res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : ''
+  if (!/^[a-zA-Z0-9_-]{15,40}\.[a-zA-Z0-9_-]{4,20}\.[a-zA-Z0-9_-]{15,100}$/.test(token)) return res.status(400).json({error:'Enter a Discord bot token.'})
+  await custom.exclusive(req.guild.id,() => custom.connect(req.guild.id,req.session.user.id,token))
+  res.json(custom.state(req.guild.id,req.session.user.id))
+})
+app.post('/api/guilds/:id/custom-bot/disconnect',customAccess,async (req,res) => {
+  await custom.exclusive(req.guild.id,() => custom.remove(req.guild.id))
+  res.json({ok:true})
+})
+app.put('/api/guilds/:id/custom-bot/profile',customAccess,async (req,res) => {
+  const parsed = profilePolicy.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({error:'Check the username, status, and activity settings.'})
+  await custom.exclusive(req.guild.id,() => custom.profile(req.guild.id,parsed.data))
+  res.json(custom.state(req.guild.id,req.session.user.id))
+})
+app.put('/api/guilds/:id/custom-bot/image/:field',customAccess,express.raw({type:['image/png','image/jpeg','image/webp'],limit:'3mb'}),async (req,res) => {
+  const {field} = req.params
+  if (!['avatar','banner'].includes(field)) return res.status(400).json({error:'Choose an avatar or banner.'})
+  await custom.exclusive(req.guild.id,() => custom.image(req.guild.id,field,req.body))
+  res.json(custom.state(req.guild.id,req.session.user.id))
 })
 app.get('/api/guilds/:id/events',async (req,res) => {
   const events = db.recent(req.guild.id,req.query.kind).map(event => {
@@ -220,7 +253,7 @@ app.post('/api/guilds/:id/appeals/:appeal',async (req,res) => {
   appealReviews.add(row.id)
   try {
     if (decision === 'accepted') {
-      const guild = bot.guilds.cache.get(id)
+      const guild = activeGuild(id)
       if (!await hasAppealableBan(guild,row)) return res.status(409).json({error:'The original ban is no longer active. This appeal cannot lift a different ban.'})
       await guild.bans.remove(row.user,'Blackridge appeal accepted by '+req.session.user.id)
     }
@@ -235,13 +268,13 @@ app.post('/api/guilds/:id/verification-panel',async (req,res) => {
   if (verificationPublishing.has(id)) return res.status(409).json({error:'A verification panel is already being published.'})
   verificationPublishing.add(id)
   try {
-    const message = await publishVerification(bot.guilds.cache.get(id),db)
+    const message = await publishVerification(activeGuild(id),db)
     if (!message) return res.status(400).json({error:'Enable Verification, select a channel, and choose roles Blackridge can manage.'})
     res.json({url:message.url})
   } finally { verificationPublishing.delete(id) }
 })
 app.get('/api/guilds/:id/options',async (req,res) => {
-  const guild = bot.guilds.cache.get(req.guild.id)
+  const guild = activeGuild(req.guild.id)
   const {channels,roles} = await recovery.scope(guild)
   res.json({
     channels:channels.filter(channel => channel?.permissionOverwrites && channel.type !== ChannelType.GuildCategory && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name,sendable:channel.isSendable()})),
@@ -252,13 +285,16 @@ app.get('/api/guilds/:id/options',async (req,res) => {
 app.get('/api/guilds/:id/recovery',(req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can access recovery.'})
   const id = req.guild.id
-  res.json({lockdown:db.recovery(id,'lockdown')?.at ?? null,backups:db.backups(id),schedule:db.recovery(id,'backupSchedule'),quarantineRole:db.recovery(id,'quarantineRole')?.role ?? '',quarantineSetup:db.recovery(id,'quarantineSetup')?.role ?? ''})
+  const premium = guildPlan(id) !== 'free'
+  res.json({lockdown:db.recovery(id,'lockdown')?.at ?? null,backups:premium ? db.backups(id) : [],schedule:premium ? db.recovery(id,'backupSchedule') : null,quarantineRole:db.recovery(id,'quarantineRole')?.role ?? '',quarantineSetup:db.recovery(id,'quarantineSetup')?.role ?? ''})
 })
 app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can run recovery operations.'})
-  const guild = bot.guilds.cache.get(req.guild.id)
+  const guild = activeGuild(req.guild.id)
   const actor = req.session.user.id
   const input = req.body ?? {}
+  if (['backup','restore','schedule'].includes(req.params.operation) && guildPlan(guild.id) === 'free')
+    return res.status(403).json({error:'Server Backups require Premium or Custom Bot.'})
   if (req.params.operation === 'enable' && !db.config(guild.id,'lockdown').enabled) {
     return res.status(400).json({error:'Turn on the Lockdown module first.'})
   }
@@ -285,14 +321,27 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can change policies.'})
   const {kind} = req.params
   if (!Object.hasOwn(policies,kind)) return res.status(404).json({error:'Unknown protection policy.'})
+  const free = guildPlan(req.guild.id) === 'free'
+  if (kind === 'backup' && free) return res.status(403).json({error:'Server Backups require Premium or Custom Bot.'})
   const parsed = policies[kind].safeParse(req.body)
   if (!parsed.success) return res.status(400).json({error:'Check your thresholds and Discord user IDs.'})
   if (kind === 'verification' && parsed.data.verifiedRole && parsed.data.verifiedRole === parsed.data.unverifiedRole)
     return res.status(400).json({error:'Verified and unverified roles must be different.'})
   const config = ['moderation','lockdown'].includes(kind) ? {...db.config(req.guild.id,kind),...parsed.data} : parsed.data
+  const restricted = kind === 'nuke' ? ['guards',premiumGuards] : kind === 'automod' ? ['filters',premiumFilters] : null
+  if (free && restricted) {
+    const [field,keys] = restricted
+    const stored = db.config(req.guild.id,kind)[field]
+    for (const key of keys) {
+      if (stored?.[key]) (config[field] ??= {})[key] = stored[key]
+      else if (field === 'filters' && config.filters) config.filters[key] = {action:'off',limit:1,points:0}
+      else if (config[field]) delete config[field][key]
+    }
+    if (kind === 'automod') config.maliciousDomains = db.config(req.guild.id,kind).maliciousDomains
+  }
   db.save(req.guild.id,kind,config,req.session.user.id)
   if (kind === 'moderation' && parsed.data.enabled !== undefined) {
-    try { await syncModerationCommands(bot.guilds.cache.get(req.guild.id),db) }
+    try { await syncModerationCommands(activeGuild(req.guild.id),db) }
     catch { return res.status(503).json({error:'Moderation changed, but Discord could not refresh the slash command list. Try toggling it again.'}) }
   }
   res.json({ok:true})
@@ -315,6 +364,7 @@ app.use((error,req,res,next) => {
 const server = app.listen(port,'0.0.0.0',() => console.log('Blackridge listening on port ' + port))
 function stop() {
   server.close(() => { db.close(); process.exit(0) })
+  custom.close()
   if (bot) bot.destroy()
   setTimeout(() => process.exit(1),5000).unref()
 }

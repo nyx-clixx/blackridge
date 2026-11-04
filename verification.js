@@ -176,4 +176,5 @@ export function attachVerification(client,db) {
       await reply('Verification could not be completed. Try again or contact a server administrator.').catch(() => {})
     } finally { busy.delete(key) }
   })
+  return () => clearInterval(cleanup)
 }
