@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs'
 import { ChannelType, PermissionFlagsBits as P } from 'discord.js'
 import { createStore, policies } from './store.js'
 import { startBot, requiredPermissions } from './bot.js'
+import { publishVerification } from './verification.js'
 import { recoveryTools } from './recovery.js'
 import { syncModerationCommands } from './moderation.js'
 
@@ -175,10 +176,21 @@ app.use('/api/guilds/:id',async (req,res,next) => {
 })
 app.get('/api/guilds/:id',(req,res) => {
   const {id,name,owner} = req.guild
-  res.json({name,owner,icon:bot.guilds.cache.get(id)?.icon ?? null,config:Object.fromEntries(Object.keys(policies).filter(kind => kind !== 'permits' || owner).map(kind => [kind,db.config(id,kind)])),events:db.recent(id),lockdownActive: Boolean(db.recovery(id,'lockdown')),backupsScheduled:Boolean(db.recovery(id,'backupSchedule'))})
+  const guild = bot.guilds.cache.get(id)
+  const config = Object.fromEntries(Object.keys(policies).filter(kind => kind !== 'permits' || owner).map(kind => [kind,db.config(id,kind)]))
+  const me = guild.members.me
+  const highest = guild.roles?.highest
+  const quarantine = db.recovery(id,'quarantineRole')?.role
+  const security = {
+    nuke:config.nuke.enabled,raid:config.raid.enabled,checkpoint:config.checkpoint.enabled,
+    quarantine:Boolean(quarantine && guild.roles?.cache.get(quarantine)?.editable),
+    priority:Boolean(me && highest && me.roles.highest.id === highest.id),
+    admin:Boolean(me?.permissions.has('Administrator'))
+  }
+  res.json({name,owner,icon:guild.icon ?? null,config,security,lockdownActive:Boolean(db.recovery(id,'lockdown')),backupsScheduled:Boolean(db.recovery(id,'backupSchedule'))})
 })
 app.get('/api/guilds/:id/events',async (req,res) => {
-  const events = db.recent(req.guild.id).map(event => {
+  const events = db.recent(req.guild.id,req.query.kind).map(event => {
     const pattern = event.kind === 'moderation' ? /\bmoderator (\d{17,20})\b/
       : /(?:\b(?:by|from|out|for|flagged|author|quarantined) |\bmember )(\d{17,20})\b/i
     return {...event,userId:event.detail.match(pattern)?.[1] ?? null}
@@ -189,6 +201,18 @@ app.get('/api/guilds/:id/events',async (req,res) => {
     const user = event.userId && bot.users.cache.get(event.userId)
     return {...event,userName:user?.username ?? null,avatar:user?.avatar ?? null}
   })})
+})
+const verificationPublishing = new Set()
+app.post('/api/guilds/:id/verification-panel',async (req,res) => {
+  if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can publish verification.'})
+  const {id} = req.guild
+  if (verificationPublishing.has(id)) return res.status(409).json({error:'A verification panel is already being published.'})
+  verificationPublishing.add(id)
+  try {
+    const message = await publishVerification(bot.guilds.cache.get(id),db)
+    if (!message) return res.status(400).json({error:'Enable Verification, select a channel, and choose roles Blackridge can manage.'})
+    res.json({url:message.url})
+  } finally { verificationPublishing.delete(id) }
 })
 app.get('/api/guilds/:id/options',async (req,res) => {
   const guild = bot.guilds.cache.get(req.guild.id)
@@ -236,6 +260,8 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   if (!Object.hasOwn(policies,kind)) return res.status(404).json({error:'Unknown protection policy.'})
   const parsed = policies[kind].safeParse(req.body)
   if (!parsed.success) return res.status(400).json({error:'Check your thresholds and Discord user IDs.'})
+  if (kind === 'verification' && parsed.data.verifiedRole && parsed.data.verifiedRole === parsed.data.unverifiedRole)
+    return res.status(400).json({error:'Verified and unverified roles must be different.'})
   const config = ['moderation','lockdown'].includes(kind) ? {...db.config(req.guild.id,kind),...parsed.data} : parsed.data
   db.save(req.guild.id,kind,config,req.session.user.id)
   if (kind === 'moderation' && parsed.data.enabled !== undefined) {

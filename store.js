@@ -20,7 +20,7 @@ const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles
   roles:z.array(snowflake).max(100).optional(),
   gates:z.array(z.strictObject({role:snowflake,required:z.array(snowflake).min(1).max(15)})).max(100).optional()
 }).optional()])))
-export const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel']
+export const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history']
 const principals = z.array(snowflake).max(15)
 export const permitBypasses = ['automod','nuke','raid','checkpoint']
 const permit = z.strictObject({
@@ -56,6 +56,12 @@ const timedResponse = {tempBanMinutes:integer(1,1440).optional(),quarantineMinut
 export const spamFilters = ['mentions','files','images','stickers','invites','links','caps','newlines','length','emoji','headers','duplicate','multiUser','badWords','scam','nsfw','malicious','ghost']
 const filter = z.strictObject({action:z.enum(['off','log','delete','timeout']),limit:integer(1,4000),points:integer(0,100).optional()})
 export const policies = {
+  verification:z.strictObject({
+    enabled:z.boolean(),mode:z.enum(['button','captcha']),channel:z.union([snowflake,z.literal('')]),
+    verifiedRole:z.union([snowflake,z.literal('')]),unverifiedRole:z.union([snowflake,z.literal('')]),
+    alertChannel:z.union([snowflake,z.literal('')]),minAge:integer(0,365),attempts:integer(1,5),
+    minutes:integer(1,10),failure:z.enum(['retry','kick'])
+  }),
   permits: z.strictObject({enabled:z.boolean().optional(),entries:z.array(permit).max(30)}),
   automod: z.strictObject({enabled:z.boolean(),threshold:integer(3,30),window:integer(2,60),action:z.enum(['log','timeout']),timeoutMinutes:integer(1,1440),filters:z.strictObject(Object.fromEntries(spamFilters.map(key => [key,key === 'malicious' ? filter.optional() : filter]))).optional(),badWords:z.string().max(500).optional(),nsfwDomains:z.string().max(500).optional(),maliciousDomains:z.string().max(500).optional(),spamPoints:integer(0,100).optional(),pointRules:z.array(z.strictObject({points:integer(1,1000),hours:integer(1,168),action:z.enum(['timeout','kick','ban'])})).max(4).optional(),...alerts}),
   moderation:z.strictObject({enabled:z.boolean().optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
@@ -66,6 +72,7 @@ export const policies = {
   raid: z.strictObject({enabled:z.boolean(),threshold:integer(3,100),window:integer(5,120),duration:integer(15,600),age:integer(0,365),action:z.enum(['log','timeout','kick','ban','tempban','quarantine']),timeoutMinutes:integer(1,1440).optional(),...alerts,...timedResponse})
 }
 const defaults = {
+  verification:{enabled:false,mode:'button',channel:'',verifiedRole:'',unverifiedRole:'',alertChannel:'',minAge:0,attempts:3,minutes:2,failure:'retry'},
   permits:{entries:[]},
   automod:{enabled:false,threshold:6,window:8,action:'log',timeoutMinutes:5,badWords:'',nsfwDomains:'',maliciousDomains:'',spamPoints:0,pointRules:[]},
   moderation:{enabled:true,alertChannel:''},
@@ -106,6 +113,21 @@ export function createStore(file) {
   ); CREATE INDEX IF NOT EXISTS automod_points_user ON automod_points(guild,user,at);
   CREATE INDEX IF NOT EXISTS automod_points_age ON automod_points(at);`)
   const awardPoints = db.prepare('INSERT OR IGNORE INTO automod_points VALUES (?,?,?,?,?)')
+  db.exec(`CREATE TABLE IF NOT EXISTS moderation_history (id INTEGER PRIMARY KEY, guild TEXT, user TEXT, action TEXT, detail TEXT, at INTEGER, audit TEXT UNIQUE);
+    CREATE INDEX IF NOT EXISTS moderation_history_target ON moderation_history(guild,user,at DESC);
+    CREATE TABLE IF NOT EXISTS blackridge_migration (name TEXT PRIMARY KEY);`)
+  const recordCase = db.prepare('INSERT OR IGNORE INTO moderation_history(guild,user,action,detail,at,audit) VALUES (?,?,?,?,?,?)')
+  const caseParts = /^(warn|kick|ban|tempban) · member (\d{17,20}) · moderator \d{17,20} · ([\s\S]*)$/
+  if (!db.prepare("SELECT 1 FROM blackridge_migration WHERE name='history'").get()) {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const row of db.prepare("SELECT guild,detail,at FROM event WHERE kind='moderation'").iterate()) {
+        const match = row.detail.match(caseParts)
+        if (match) recordCase.run(row.guild,match[2],match[1],match[3],row.at,null)
+      }
+      db.exec("INSERT INTO blackridge_migration VALUES ('history'); COMMIT")
+    } catch (error) { db.exec('ROLLBACK'); throw error }
+  }
   db.exec(`CREATE TABLE IF NOT EXISTS nuke_detection (guild TEXT, actor TEXT, rule TEXT, entry TEXT, at INTEGER, PRIMARY KEY(guild,rule,entry));
     CREATE INDEX IF NOT EXISTS nuke_detection_actor ON nuke_detection(guild,actor,rule,at);
     CREATE INDEX IF NOT EXISTS nuke_detection_age ON nuke_detection(at);`)
@@ -168,8 +190,24 @@ export function createStore(file) {
         db.exec('COMMIT')
       } catch (error) { db.exec('ROLLBACK'); throw error }
     },
-    event(guild,kind,detail) { append.run(guild,kind,detail,Date.now()) },
-    recent(guild) { return db.prepare('SELECT kind,detail,at FROM event WHERE guild=? ORDER BY at DESC,id DESC LIMIT 100').all(guild) },
+    event(guild,kind,detail) {
+      const at = Date.now()
+      const match = kind === 'moderation' && detail.match(caseParts)
+      if (!match) { append.run(guild,kind,detail,at); return }
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        append.run(guild,kind,detail,at)
+        recordCase.run(guild,match[2],match[1],match[3],at,null)
+        db.exec('COMMIT')
+      } catch (error) { db.exec('ROLLBACK'); throw error }
+    },
+    recordModeration(guild,user,action,detail,at=Date.now(),audit=null) { recordCase.run(guild,user,action,detail,at,audit) },
+    history(guild,user) { return db.prepare('SELECT action,detail,at FROM moderation_history WHERE guild=? AND user=? ORDER BY at DESC,id DESC').all(guild,user) },
+    recent(guild,kind) {
+      return kind === 'moderation'
+        ? db.prepare("SELECT kind,detail,at FROM event WHERE guild=? AND kind='moderation' ORDER BY at DESC,id DESC LIMIT 5").all(guild)
+        : db.prepare('SELECT kind,detail,at FROM event WHERE guild=? ORDER BY at DESC,id DESC LIMIT 10').all(guild)
+    },
     stats(guild) { return db.prepare("SELECT COUNT(*) total,COUNT(CASE WHEN kind='nuke' THEN 1 END) nuke,COUNT(CASE WHEN kind='raid' THEN 1 END) raid FROM event WHERE guild=? AND at>=?").get(guild,Date.now()-86400000) },
     prune() {
       db.prepare('DELETE FROM event WHERE at<?').run(Date.now()-30*86400000)

@@ -4,6 +4,8 @@ const app = document.querySelector('#app')
 const account = document.querySelector('#account')
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char])
 const iconPaths = {
+  verification:'<path d="M12 22s7-3 7-10V5l-7-3-7 3v7c0 7 7 10 7 10Z"/><path d="m9 12 2 2 4-4"/>',
+  pin:'<path d="m16 3 5 5-3 1-3 5v3l-3-3-5 5-2-2 5-5-3-3h3l5-3z"/>',
   configure:'<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.5" fill="var(--panel)"/><circle cx="15" cy="17" r="2.5" fill="var(--panel)"/>',
   lockdown:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/>',
   backup:'<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/>',
@@ -21,7 +23,7 @@ const iconPaths = {
 }
 const icon = key => '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (iconPaths[key] ?? iconPaths.nuke) + '</svg>'
 for (const tile of document.querySelectorAll('[data-icon]')) tile.innerHTML = icon(tile.dataset.icon)
-const sections = { overview:'Overview', premium:'Premium', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups' }
+const sections = { overview:'Overview', premium:'Premium', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups',verification:'Verification' }
 const request = async (url, options) => {
   const res = await fetch(url, options)
   const data = await res.json()
@@ -175,6 +177,44 @@ const filters = {
 function options(labels, selected) {
   return Object.entries(labels).map(([value,label]) => '<option value="' + value + '"' + (selected === value ? ' selected' : '') + '>' + label + '</option>').join('')
 }
+function verificationForm(config,owner,choices) {
+  const field = (name,label,items) => '<div class="discord-field"><span>' + label + '</span>' + discordSelect(name,items,[config[name]]) + '</div>'
+  const channels = choices.channels.filter(channel => channel.sendable)
+  return '<form id="settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') + '><section class="card settings-section"><h3>Verification Setup</h3><p>Give the Verified Role access to your member channels in Discord. Keep the verification channel visible to new members.</p><div class="fields"><label>Verification Mode<select name="mode">' + options({button:'One-click verification',captcha:'Image CAPTCHA'},config.mode) + '</select></label>' +
+    field('channel','Verification Channel',channels) + field('verifiedRole','Verified Role',choices.roles) +
+    field('unverifiedRole','Unverified Role (optional)',choices.roles) + '<label>Minimum Account Age (days)<input type="number" name="minAge" min="0" max="365" required value="' + config.minAge + '"></label></div>' +
+    (owner ? '<button class="button primary stack" type="button" id="publish-verification">Publish Verification Panel</button><p id="verification-publish-result" role="status"></p>' : '') +
+    '</section><section class="card settings-section" id="captcha-settings"><h3>CAPTCHA Settings</h3><div class="fields"><label>Max Attempts<input name="attempts" type="number" min="1" max="5" required value="' + config.attempts + '"></label><label>Challenge Duration (minutes)<input name="minutes" type="number" min="1" max="10" required value="' + config.minutes + '"></label><label>After Failed Attempts<select name="failure">' + options({retry:'Keep Unverified',kick:'Kick Member'},config.failure) + '</select></label></div></section><section class="card settings-section"><h3>Discord Logging</h3>' + field('alertChannel','Logging Channel',channels) + '</section></fieldset><p id="notice" role="status"></p></form>'
+}
+function securityScore(checks) {
+  const labels = {nuke:'Anti-Nuke enabled',raid:'Anti-Raid enabled',checkpoint:'Checkpoint enabled',quarantine:'Quarantine role configured',priority:'Highest role priority',admin:'Administrator permission'}
+  const passed = Object.keys(labels).filter(key => checks?.[key]).length
+  return '<section class="card security-summary"><div><h3>Security Score</h3><strong>' + Math.round(passed/6*100) + '%</strong><p>' + passed + ' of 6 checks passed</p></div><ul>' + Object.entries(labels).map(([key,label]) =>
+    '<li><span class="security-check' + (checks?.[key] ? ' passed' : '') + '">' + (checks?.[key] ? '✓' : '–') + '</span><span>' + label + '</span><span class="muted">' + (checks?.[key] ? 'Pass' : 'Needs attention') + '</span></li>').join('') + '</ul></section>'
+}
+function renderServerPicker(guilds,userId) {
+  const key = 'blackridge:pins:' + userId
+  let pinned = new Set()
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) ?? '[]')
+    if (Array.isArray(saved)) pinned = new Set(saved)
+  } catch {}
+  function render(focusId) {
+    const sorted = [...guilds].sort((a,b) => Number(pinned.has(b.id))-Number(pinned.has(a.id)))
+    shell('<h2>Select a server</h2><div class="servers">' + sorted.map(guild => '<article class="card server-card"><div class="server-card-top"><div class="server-avatar">' + (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + esc(guild.id) + '/' + esc(guild.icon) + '.png">' : esc(guild.name.slice(0,2).toUpperCase())) + '</div><button type="button" class="button small pin-server" data-pin="' + esc(guild.id) + '" aria-pressed="' + pinned.has(guild.id) + '" aria-label="Pin ' + esc(guild.name) + '">' + icon('pin') + '</button></div><h3>' + esc(guild.name) + '</h3><div class="server-access ' + (guild.owner ? 'is-owner' : '') + '">' + icon(guild.owner ? 'premium' : 'server') + (guild.owner ? 'Owner' : 'Manager') + '</div><a class="button small" href="' + (guild.installed ? base + '/' + guild.id : '/invite?guild=' + guild.id) + '">' + (guild.installed ? 'Manage' : 'Set up') + '</a></article>').join('') + '</div>' + (guilds.length ? '' : '<div class="card">No servers with management access were found.</div>'))
+    for (const button of app.querySelectorAll('[data-pin]')) {
+      if (button.dataset.pin === focusId) button.focus()
+      button.onclick = () => {
+        const id = button.dataset.pin
+        if (pinned.has(id)) pinned.delete(id)
+        else pinned.add(id)
+        try { localStorage.setItem(key,JSON.stringify([...pinned])) } catch {}
+        render(id)
+      }
+    }
+  }
+  render()
+}
 function extraControls(section,config) {
   if (section === 'automod') {
     const configFields = {badWords:['badWords','Blocked Phrases'],nsfw:['nsfwDomains','Additional NSFW Domains'],malicious:['maliciousDomains','Additional Malicious Domains']}
@@ -250,7 +290,7 @@ const actionsByKind = {
   automod:['log','timeout']
 }
 const actionLabels = {log:'Log only',timeout:'Time out',strip:'Remove dangerous roles',quarantine:'Quarantine',kick:'Kick',ban:'Ban',tempban:'Temporary ban'}
-const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel']
+const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history']
 const ids = value => value.split(',').map(id => id.trim()).filter(Boolean)
 
 const bypassLabels = {automod:'Auto Moderation',nuke:'Anti-Nuke',raid:'Anti-Raid',checkpoint:'Checkpoint'}
@@ -509,20 +549,20 @@ async function dashboard() {
     await accountMenu(me)
     if (!id) {
       const { guilds } = await request('/api/guilds')
-      shell('<h2>Select a server</h2><div class="servers">' + guilds.map(guild => '<article class="card server-card"><div class="server-avatar">' + (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + esc(guild.id) + '/' + esc(guild.icon) + '.png">' : esc(guild.name.slice(0,2).toUpperCase())) + '</div><h3>' + esc(guild.name) + '</h3><div class="muted">' + (guild.owner ? 'Owner' : 'Manager') + '</div><a class="button small" href="' + (guild.installed ? base + '/' + guild.id : '/invite?guild=' + guild.id) + '">' + (guild.installed ? 'Manage' : 'Set up') + '</a></article>').join('') + '</div>' + (guilds.length ? '' : '<div class="card">No servers with management access were found.</div>'))
+      renderServerPicker(guilds,me.user.id)
       return
     }
     const path = '/api/guilds/' + encodeURIComponent(id)
     const data = await request(path)
     if (section === 'permits' && !data.owner) throw new Error('Only the server owner can view permits.')
     const recoverySection = ['lockdown','backup','moderation'].includes(section)
-    const needsOptions = Object.hasOwn(settingFields,section) || section === 'permits' || (recoverySection && data.owner)
+    const needsOptions = Object.hasOwn(settingFields,section) || ['permits','verification'].includes(section) || (recoverySection && data.owner)
     const [choices,recoveryState,eventData] = await Promise.all([
       needsOptions ? request(path + '/options') : null,
       recoverySection && data.owner && section !== 'moderation' ? request(path + '/recovery') : {},
-      ['logs','moderation'].includes(section) ? request(path + '/events') : {events:[]}
+      ['logs','moderation'].includes(section) ? request(path + '/events' + (section === 'moderation' ? '?kind=moderation' : '')) : {events:[]}
     ])
-    const linkedSwitch = Object.hasOwn(settingFields,section) || section === 'permits'
+    const linkedSwitch = Object.hasOwn(settingFields,section) || ['permits','verification'].includes(section)
     const serviceSwitch = ['backup','moderation','lockdown'].includes(section)
     let switchControl = ''
     if (linkedSwitch || serviceSwitch) {
@@ -534,15 +574,15 @@ async function dashboard() {
     const activity = '<section class="card stack"><h3>' + 'Event History' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
-    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits'].map(key => {
+    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','verification'].map(key => {
       const restricted = key === 'permits' && !data.owner
       const enabled = data.config[key]?.enabled
       const state = key === 'lockdown' ? (data.lockdownActive ? 'Active' : 'Inactive') : key === 'backup' && enabled ? (data.backupsScheduled ? 'Scheduled' : 'Manual') : restricted ? 'Owner only' : enabled ? '<i class="dot"></i> Enabled' : 'Disabled'
       return '<article class="card compact-module"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + '</h3><span class="badge">' + state + '</span></div></div>' + (restricted ? '<span class="button module-configure" aria-disabled="true">Owner only</span>' : '<a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a>') + '</article>'
     }).join('')
-    const overview = '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
+    const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('verification') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     const settings = document.querySelector('#settings')
     const headerSwitch = document.querySelector('.module-switch input[form=settings]')
     headerSwitch?.addEventListener('change',() => settings.dispatchEvent(new Event('change')))
@@ -554,7 +594,7 @@ async function dashboard() {
       })
       data.config[section].enabled = enabled
     })
-    if (settings?.elements.alertChannel) wireDiscordSelectors(settings,choices)
+    if (settings?.elements.alertChannel && section !== 'verification') wireDiscordSelectors(settings,choices)
     if (section === 'permits') wirePermits(settings,choices.roles)
     if (settings && settingFields[section]) protectionControls(settings,section,data.config[section])
     if (settings && section === 'nuke') nukeControls(settings,data.config.nuke,choices.roles)
@@ -563,6 +603,10 @@ async function dashboard() {
     if (settings && data.owner) autosave(settings,settings.querySelector('#notice'),async () => {
       const fields = new FormData(settings)
       const payload = section === 'permits' ? {...readPermits(settings),enabled:fields.has('enabled')} : {enabled:fields.has('enabled')}
+      if (section === 'verification') {
+        for (const key of ['mode','channel','verifiedRole','unverifiedRole','alertChannel','failure']) payload[key] = fields.get(key)
+        for (const key of ['minAge','attempts','minutes']) payload[key] = Number(fields.get(key))
+      }
       if (fields.has('action')) payload.action = fields.get('action')
       if (section === 'automod') payload.filters = Object.fromEntries(Object.keys(filters).map(key => [key,{
         action:fields.get(key + '-action'),limit:Number(fields.get(key + '-limit')),points:Number(fields.get(key + '-points'))
@@ -608,12 +652,34 @@ async function dashboard() {
         }
       }
       for (const [key,,min] of (settingFields[section] ?? [])) payload[key] = min === undefined ? fields.get(key) : Number(fields.get(key))
-      if (fields.has('alertChannel')) {
+      if (fields.has('alertChannel') && section !== 'verification') {
         payload.alertChannel = payload.alertChannel.trim()
         payload.alertRoles = fields.getAll('alertRoles')
       }
       await request(path + '/' + section,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true})
     })
+    if (section === 'verification') {
+      const mode = settings.elements.mode
+      const update = () => { document.querySelector('#captcha-settings').hidden = mode.value !== 'captcha' }
+      mode.addEventListener('change',update)
+      update()
+      const publish = settings.querySelector('#publish-verification')
+      if (publish) publish.onclick = async () => {
+        const result = settings.querySelector('#verification-publish-result')
+        publish.disabled = true
+        try {
+          if (!settings.reportValidity()) return
+          await Promise.all([...pendingSettings].map(flush => flush()))
+          if (settings.querySelector('#notice').textContent) throw new Error('Correct the verification settings before publishing.')
+          const {url} = await request(path + '/verification-panel',{method:'POST'})
+          const link = document.createElement('a')
+          link.href = url
+          link.textContent = 'Open Verification Panel in Discord'
+          result.replaceChildren(link)
+        } catch (error) { result.textContent = error.message }
+        finally { publish.disabled = false }
+      }
+    }
     if (section === 'logs') {
       const refresh = async () => {
         try {

@@ -6,6 +6,62 @@ import { attachProtection, isDestructive, recordHit } from '../bot.js'
 import { createStore, policies } from '../store.js'
 import { canModerate, syncModerationCommands } from '../moderation.js'
 import { recoveryTools } from '../recovery.js'
+import { attachVerification } from '../verification.js'
+
+test('moderation history survives the dashboard log limit and stays scoped to the server', t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  const member = '123456789012345678'
+  const moderator = '123456789012345679'
+  db.event('guild','moderation','warn · member ' + member + ' · moderator ' + moderator + ' · Test warning')
+  for (let i=0;i<12;i++) db.event('guild','settings','Update '+i)
+  db.recordModeration('guild',member,'kick','Discord audit action',Date.now(),'audit')
+  db.recordModeration('guild',member,'kick','Discord audit action',Date.now(),'audit')
+  assert.equal(db.recent('guild').length,10)
+  assert.equal(db.recent('guild','moderation').length,1)
+  assert.deepEqual(db.history('guild',member).map(item => item.action),['kick','warn'])
+  assert.deepEqual(db.history('another',member),[])
+})
+
+test('verification grants the configured role only from the published panel', async t => {
+  const db = createStore(':memory:')
+  const client = new EventEmitter()
+  t.after(() => db.close())
+  attachVerification(client,db)
+  const roles = []
+  const replies = []
+  const role = {id:'verified',editable:true,permissions:{bitfield:0n}}
+  const guild = {id:'guild',roles:{fetch:async () => role},channels:{cache:[]}}
+  const user = {id:'member',createdTimestamp:Date.now()-86400000}
+  guild.members = {fetch:async () => ({
+    user,id:user.id,isCommunicationDisabled:() => false,
+    roles:{cache:new Map(),add:async selected => roles.push(selected.id)}
+  })}
+  db.save(guild.id,'verification',{enabled:true,channel:'channel',verifiedRole:role.id},'owner')
+  db.saveRecovery(guild.id,'verificationPanel',{channel:'channel',message:'panel'})
+  async function press(message) {
+    client.emit(Events.InteractionCreate,{
+      guild,user,channelId:'channel',message:{id:message},customId:'blackridge-verify:start',
+      inCachedGuild:() => true,isButton:() => true,isModalSubmit:() => false,
+      async deferReply() { this.deferred = true },editReply:async value => replies.push(value),reply:async () => {}
+    })
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  await press('another')
+  assert.deepEqual(roles,[])
+  role.permissions.bitfield = P.Administrator
+  await press('panel')
+  assert.deepEqual(roles,[])
+  role.permissions.bitfield = 0n
+  await press('panel')
+  assert.deepEqual(roles,['verified'])
+  db.save(guild.id,'verification',{enabled:true,channel:'channel',verifiedRole:role.id,mode:'captcha'},'owner')
+  await press('panel')
+  const challenge = replies.at(-1)
+  assert.equal(challenge.files[0].attachment.subarray(1,4).toString(),'PNG')
+  assert.equal(challenge.files[0].name,'verification.png')
+  assert.deepEqual(roles,['verified'])
+})
 
 test('point escalation triggers on threshold crossings and ignores repeated message IDs', t => {
   const db = createStore(':memory:')

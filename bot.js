@@ -1,11 +1,12 @@
 import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, PermissionFlagsBits as P } from 'discord.js'
 import { attachModeration, temporaryBan } from './moderation.js'
+import { attachVerification } from './verification.js'
 import { createHash } from 'node:crypto'
 import { hasQuarantineOverwrite, sendModuleLog, setQuarantineOverwrite } from './recovery.js'
 import { matchesPermit } from './store.js'
 import { onDomainList, startDomainFeeds } from './domain-feeds.js'
 
-export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages | P.ManageGuild
+export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages | P.ManageGuild | P.ReadMessageHistory | P.EmbedLinks | P.AttachFiles
 const dangerous = P.Administrator | P.ManageGuild | P.ManageRoles | P.ManageChannels | P.BanMembers | P.KickMembers | P.ManageWebhooks | P.ModerateMembers
 const tracked = new Set([A.ChannelDelete,A.RoleDelete,A.MemberBanAdd,A.MemberKick,A.BotAdd])
 const rateByAction = new Map([
@@ -153,6 +154,7 @@ export function attachProtection(client, db) {
       log(member.guild,kind,'Response blocked by Discord permissions or role hierarchy for ' + member.id)
       return
     }
+    db.recordModeration(member.guild.id,member.id,action,reason)
     log(member.guild,kind,action + ' completed for ' + member.id)
   }
   async function isolate(member,cfg,reason,kind = 'nuke') {
@@ -515,6 +517,7 @@ export function startBot(token,db) {
   const client = new Client({intents})
   attachProtection(client,db)
   attachModeration(client,db)
+  attachVerification(client,db)
   client.once(Events.ClientReady,() => console.log('Discord bot connected'))
   client.on(Events.Error,error => console.error('Discord client error:',error.name))
   client.login(token).catch(error => console.error('Discord login failed:',error.name))

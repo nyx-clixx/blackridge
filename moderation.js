@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ApplicationCommandType, ChannelType, Events, MessageFlags, PermissionFlagsBits as P, SlashCommandBuilder } from 'discord.js'
+import { ApplicationCommandType, AuditLogEvent, ChannelType, Events, MessageFlags, PermissionFlagsBits as P, SlashCommandBuilder } from 'discord.js'
 import { commandNames, matchesPermit } from './store.js'
 import { sendModuleLog } from './recovery.js'
 
@@ -7,10 +7,16 @@ const channelCommands = new Set(['lock-channel','unlock-channel'])
 const timedCommands = new Set(['timeout','tempban'])
 const permissions = {
   ban:P.BanMembers, tempban:P.BanMembers, unban:P.BanMembers, kick:P.KickMembers,
-  timeout:P.ModerateMembers, warn:P.ModerateMembers, 'lock-channel':P.ManageChannels, 'unlock-channel':P.ManageChannels
+  timeout:P.ModerateMembers, warn:P.ModerateMembers, 'lock-channel':P.ManageChannels, 'unlock-channel':P.ManageChannels,
+  purge:P.ManageMessages, history:P.ModerateMembers
 }
 const commands = commandNames.map(name => {
   const builder = new SlashCommandBuilder().setName(name).setDescription('Blackridge ' + name + ' moderation action')
+  if (name === 'purge') return builder.setDescription('Delete recent messages in this channel').addIntegerOption(option =>
+    option.setName('amount').setDescription('Number of recent messages to delete').setRequired(true).setMinValue(1).setMaxValue(100))
+  if (name === 'history') return builder.setDescription('View recorded warns, kicks, and bans for a user')
+    .addUserOption(option => option.setName('member').setDescription('Choose a member'))
+    .addStringOption(option => option.setName('user-id').setDescription('Discord ID, including users who left').setMinLength(17).setMaxLength(20))
   if (name === 'unban') {
     builder.addStringOption(option => option.setName('user-id').setDescription('Discord ID of the banned user').setRequired(true).setMinLength(17).setMaxLength(20))
   } else if (!channelCommands.has(name)) {
@@ -52,6 +58,13 @@ export async function temporaryBan(member, minutes, db, reason) {
 
 export function attachModeration(client,db) {
   const channelChanges = new Set()
+  client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => {
+    if (!db.config(guild.id,'moderation').enabled || !entry.targetId || !entry.executorId || entry.executorId === client.user.id) return
+    const action = entry.action === AuditLogEvent.MemberKick ? 'kick' : entry.action === AuditLogEvent.MemberBanAdd ? 'ban' : null
+    if (!action) return
+    try { db.recordModeration(guild.id,entry.targetId,action,entry.reason ?? 'No reason supplied',entry.createdTimestamp,entry.id) }
+    catch (error) { console.error('Could not record Discord moderation history:',error.code ?? error.name) }
+  })
   const register = async guild => {
     try { await syncModerationCommands(guild,db) }
     catch (error) { console.error('Command registration failed:',error.code ?? error.name) }
@@ -92,6 +105,29 @@ export function attachModeration(client,db) {
       const permit = permits.enabled ? permits.entries : []
       if (!canModerate(actor,guild.ownerId,name,permit,interaction.channel?.permissionsFor(actor))) {
         return await interaction.editReply('You do not have access to this command.')
+      }
+      if (name === 'purge') {
+        const channel = await guild.channels.fetch(interaction.channelId,{force:true})
+        if (!channel?.bulkDelete) return await interaction.editReply('Use this command in a server text channel.')
+        if (!canModerate(actor,guild.ownerId,name,permit,channel.permissionsFor(actor))) return await interaction.editReply('You do not have access in this channel.')
+        const amount = interaction.options.getInteger('amount',true)
+        const deleted = await channel.bulkDelete(amount,true)
+        const detail = 'purge · ' + deleted.size + ' messages · channel ' + channel.id + ' · moderator ' + actor.id
+        db.event(guild.id,'moderation',detail)
+        void sendModuleLog(guild,db,'moderation',detail)
+        return await interaction.editReply('Deleted ' + deleted.size + ' of ' + amount + ' requested messages. Messages older than 14 days are skipped.')
+      }
+      if (name === 'history') {
+        const member = interaction.options.getUser('member')
+        const supplied = interaction.options.getString('user-id')?.trim()
+        const id = member?.id ?? supplied
+        if ((member && supplied) || !/^\d{17,20}$/.test(id ?? '')) return await interaction.editReply('Choose a member or enter one Discord user ID.')
+        const cases = db.history(guild.id,id)
+        if (!cases.length) return await interaction.editReply('No warnings, kicks, or bans recorded by Blackridge for that user in this server.')
+        const rows = cases.map(item => new Date(item.at).toISOString() + ' | ' + item.action + ' | ' + item.detail.replace(/[\r\n]+/g,' '))
+        const summary = cases.slice(0,10).map(item => '• **' + item.action + '** · <t:' + Math.floor(item.at/1000) + ':f>').join('\n')
+        return await interaction.editReply({content:'**Moderation history** for `' + id + '` · ' + cases.length + ' recorded\n' + summary,
+          allowedMentions:{parse:[]},files:[{attachment:Buffer.from(rows.join('\n')),name:'moderation-history.txt'}]})
       }
       const reason = interaction.options.getString('reason') || 'No reason supplied'
       if (channelCommands.has(name)) {
@@ -150,4 +186,3 @@ export function attachModeration(client,db) {
     }
   })
 }
-
