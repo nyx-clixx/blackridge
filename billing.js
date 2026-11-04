@@ -47,11 +47,15 @@ export function stripeBilling(db,base,env = process.env) {
       }
       if (order.plan !== plan) throw billingError('A checkout for another plan is already pending.')
       const session = await stripe.checkout.sessions.create({
+        managed_payments:{enabled:false},
         mode:'subscription',billing_address_collection:'auto',client_reference_id:order.ref,
         integration_identifier:'blackridge_jmxtwqfz',line_items:[{price:order.price,quantity:1}],
         subscription_data:{billing_mode:{type:'flexible'}},
         expires_at:order.expires,success_url:back(guild)+'?billing=processing',cancel_url:back(guild)
-      },{idempotencyKey:'blackridge-checkout-'+order.ref})
+      },{idempotencyKey:'blackridge-direct-checkout-'+order.ref}).catch(error => {
+        console.error('Stripe Checkout failed:',error.type ?? error.name,error.code ?? '',error.requestId ?? '')
+        throw billingError('Stripe could not start checkout. Please try again shortly.',503)
+      })
       db.remember(order.ref,session.id)
       if (!session.url) throw billingError('Checkout is awaiting payment confirmation.')
       return session.url
