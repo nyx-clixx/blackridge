@@ -538,9 +538,9 @@ export function attachProtection(client, db) {
   return () => { clearInterval(cleanup); clearInterval(quarantineSweep) }
 }
 
-export function createBotClient() {
+export function createBotClient({messageContent = process.env.ENABLE_MESSAGE_CONTENT === 'true'} = {}) {
   const intents = [I.Guilds,I.GuildModeration,I.GuildMembers,I.GuildMessages]
-  if (process.env.ENABLE_MESSAGE_CONTENT === 'true') intents.push(I.MessageContent)
+  if (messageContent) intents.push(I.MessageContent)
   return new Client({intents})
 }
 export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {

@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
-import { ActivityType, Events } from 'discord.js'
+import { ActivityType, ApplicationFlagsBitField, Events } from 'discord.js'
 import { z } from 'zod'
 import { createBotClient, mountBot, requiredPermissions } from './bot.js'
 import { syncModerationCommands } from './moderation.js'
@@ -13,6 +13,16 @@ export const profilePolicy = z.strictObject({
   activityType:z.enum(['none',...Object.keys(activities)]),activity:z.string().trim().max(100)
 }).refine(value => value.activityType === 'none' || value.activity.length > 0)
 const error = message => Object.assign(new Error(message),{status:400})
+
+export function missingPrivilegedIntents(flags) {
+  const enabled = new ApplicationFlagsBitField(flags ?? 0)
+  const F = ApplicationFlagsBitField.Flags
+  return [
+    ['Presence Intent', F.GatewayPresence, F.GatewayPresenceLimited],
+    ['Server Members Intent', F.GatewayGuildMembers, F.GatewayGuildMembersLimited],
+    ['Message Content Intent', F.GatewayMessageContent, F.GatewayMessageContentLimited]
+  ].filter(([,full,limited]) => !enabled.any(full | limited)).map(([name]) => name)
+}
 
 export function customBots(db,shared,key) {
   const clients = new Map()
@@ -59,7 +69,7 @@ export function customBots(db,shared,key) {
     }
     await restoreShared(id)
   }
-  async function connect(id,owner,token,stored) {
+  async function check(id,owner,token) {
     if (!key || !eligible(id,owner)) throw error('Custom Bot is unavailable for this server.')
     const response = await fetch('https://discord.com/api/v10/oauth2/applications/@me',{headers:{Authorization:'Bot '+token},signal:AbortSignal.timeout(8000),redirect:'error'})
       .catch(() => { throw error('Could not verify the bot with Discord.') })
@@ -69,7 +79,18 @@ export function customBots(db,shared,key) {
     if (app.id === shared()?.user?.id) throw error('Use your own Discord application.')
     if ([...clients].some(([guild,item]) => guild !== id && item.client.user?.id === app.id))
       throw error('This application is already connected to another server.')
-    const client = createBotClient()
+    const missingIntents = missingPrivilegedIntents(app.flags)
+    const params = new URLSearchParams({client_id:app.id,guild_id:id,disable_guild_select:'true',
+      integration_type:'0',scope:'bot applications.commands',permissions:String(requiredPermissions)})
+    return {missingIntents,installUrl:missingIntents.length ? null : 'https://discord.com/oauth2/authorize?' + params}
+  }
+  async function connect(id,owner,token,stored) {
+    const {missingIntents} = await check(id,owner,token)
+    // Keep legacy installations working with their original gateway options.
+    if ((!stored || stored.intentsChecked) && missingIntents.length)
+      throw error('Enable these intents in the Discord Developer Portal: ' + missingIntents.join(', ') + '.')
+    const intentsChecked = !missingIntents.length
+    const client = createBotClient({messageContent:intentsChecked || process.env.ENABLE_MESSAGE_CONTENT === 'true'})
     client.on(Events.Error,() => console.error('Custom Discord client error'))
     let timeout,stop
     try {
@@ -92,7 +113,7 @@ export function customBots(db,shared,key) {
         if (oldGuild?.available) await syncModerationCommands(oldGuild,db,true).catch(() => {})
       }
       presence(client,profile)
-      db.saveRecovery(id,keyName,{owner,secret:stored?.secret ?? seal(id,token),profile})
+      db.saveRecovery(id,keyName,{owner,secret:stored?.secret ?? seal(id,token),profile,intentsChecked})
       clients.set(id,{owner,client,stop,sharedEnabled:false})
       if (current) { current.stop(); await current.client.destroy() }
       await syncModerationCommands(sharedGuild,db,true).catch(() => console.error('Shared command cleanup failed'))
@@ -127,7 +148,7 @@ export function customBots(db,shared,key) {
   },15000)
   timer.unref()
   return {
-    active,exclusive,
+    active,exclusive,check,
     connect:(id,owner,token) => connect(id,owner,token),
     async remove(id) { db.clearRecovery(id,keyName); await disconnect(id) },
     state(id,owner) {

@@ -128,7 +128,7 @@ app.use('/api',(req,res,next) => {
   if (session?.until > Date.now()) req.session = session
   next()
 })
-const supportInvite = /^https:\/\/(?:discord\.gg\/|discord\.com\/invite\/)[\w-]+$/.test(process.env.SUPPORT_INVITE_URL ?? '') ? process.env.SUPPORT_INVITE_URL : null
+const supportInvite = 'https://discord.gg/cVbMthkkph'
 app.get('/api/me',(req,res) => res.json({configured,supportInvite,user:req.session?.user ?? null}))
 
 async function visibleGuilds(req) {
@@ -160,7 +160,7 @@ async function visibleGuilds(req) {
 }
 app.get('/api/guilds',async (req,res) => {
   const guilds = await visibleGuilds(req)
-  res.json({guilds:guilds.map(({id,name,icon,owner}) => ({id,name,icon,owner,installed:Boolean(bot && bot.guilds.cache.has(id))}))})
+  res.json({guilds:guilds.map(({id,name,icon,owner}) => ({id,name,icon,owner,plan:guildPlan(id),installed:Boolean(bot && bot.guilds.cache.has(id))}))})
 })
 app.use('/api/guilds/:id',async (req,res,next) => {
   if (!idPattern.test(req.params.id)) return res.status(404).json({error:'Server not found.'})
@@ -194,17 +194,24 @@ app.get('/api/guilds/:id',(req,res) => {
   }
   const plan = guildPlan(id)
   if (plan === 'free') config.backup = {...config.backup,enabled:false}
-  res.json({name,owner,appealsManager:req.guild.appealsManager,icon:guild.icon ?? null,config,security,plan,lockdownActive:Boolean(db.recovery(id,'lockdown')),backupsScheduled:plan !== 'free' && Boolean(db.recovery(id,'backupSchedule'))})
+  res.json({name,owner,appealsManager:req.guild.appealsManager,appealsConfigured:req.guild.appealsManager && Boolean(db.config(id,'appeals').channel),customConnected:Boolean(custom.active(id)),icon:guild.icon ?? null,config,security,plan,lockdownActive:Boolean(db.recovery(id,'lockdown')),backupsScheduled:plan !== 'free' && Boolean(db.recovery(id,'backupSchedule'))})
 })
 function customAccess(req,res,next) {
   if (!req.guild.owner || guildPlan(req.guild.id) !== 'custom') return res.status(403).json({error:'Custom Bot requires the Custom Bot plan and server ownership.'})
   next()
 }
 app.get('/api/guilds/:id/custom-bot',customAccess,(req,res) => res.json(custom.state(req.guild.id,req.session.user.id)))
-app.post('/api/guilds/:id/custom-bot',customAccess,async (req,res) => {
+function customBotToken(req,res,next) {
   const token = typeof req.body?.token === 'string' ? req.body.token.trim() : ''
   if (!/^[a-zA-Z0-9_-]{15,40}\.[a-zA-Z0-9_-]{4,20}\.[a-zA-Z0-9_-]{15,100}$/.test(token)) return res.status(400).json({error:'Enter a Discord bot token.'})
-  await custom.exclusive(req.guild.id,() => custom.connect(req.guild.id,req.session.user.id,token))
+  req.botToken = token
+  next()
+}
+app.post('/api/guilds/:id/custom-bot/check',customAccess,customBotToken,async (req,res) => {
+  res.json(await custom.check(req.guild.id,req.session.user.id,req.botToken))
+})
+app.post('/api/guilds/:id/custom-bot',customAccess,customBotToken,async (req,res) => {
+  await custom.exclusive(req.guild.id,() => custom.connect(req.guild.id,req.session.user.id,req.botToken))
   res.json(custom.state(req.guild.id,req.session.user.id))
 })
 app.post('/api/guilds/:id/custom-bot/disconnect',customAccess,async (req,res) => {
@@ -227,7 +234,8 @@ app.get('/api/guilds/:id/events',async (req,res) => {
   const events = db.recent(req.guild.id,req.query.kind).map(event => {
     const pattern = event.kind === 'moderation' ? /\bmoderator (\d{17,20})\b/
       : /(?:\b(?:by|from|out|for|flagged|author|quarantined) |\bmember )(\d{17,20})\b/i
-    return {...event,userId:event.detail.match(pattern)?.[1] ?? null}
+    const initiator = event.kind === 'lockdown' || event.kind === 'backup' ? event.detail.match(/ · initiated by (\d{17,20})$/)?.[1] : null
+    return {...event,userId:initiator ?? event.detail.match(pattern)?.[1] ?? null}
   })
   const missing = [...new Set(events.map(event => event.userId).filter(id => id && !bot.users.cache.has(id)))].slice(0,8)
   await Promise.allSettled(missing.map(id => bot.users.fetch(id)))
@@ -341,7 +349,7 @@ const publicDir = fileURLToPath(new URL('./public/',import.meta.url))
 app.use(express.static(publicDir))
 const appShell = readFileSync(new URL('./public/index.html',import.meta.url),'utf8')
   .replace(/<main id="app">[\s\S]*?<\/main>/,'<main id="app"><div class="wrap dashboard"><p role="status">Loading…</p></div></main>')
-app.get('/support',(req,res) => supportInvite ? res.redirect(supportInvite) : res.type('html').send(appShell))
+app.get('/support',(req,res) => res.redirect(supportInvite))
 app.get(['/premium','/documentation','/terms','/privacy'],(req,res) => res.type('html').send(appShell))
 const dashboardShell = appShell.replace('<body>','<body class="dashboard-page">')
 app.get(['/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => res.type('html').send(dashboardShell))

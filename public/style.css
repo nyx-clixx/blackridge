@@ -168,7 +168,11 @@ body.has-workspace .dash-layout{height:100%;min-height:0;grid-template-rows:minm
 body.has-workspace .sidebar{overflow:auto}
 @media(max-width:760px){body.has-workspace .dash-layout{grid-template-rows:auto minmax(0,1fr)}}
 .fallback-avatar{display:inline-grid;place-items:center;background:#1c3049;color:var(--accent)}
-.module-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:10px}
+.module-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.module-wide{grid-column:span 2}
+#install-bot[hidden]{display:none}
+@media(max-width:1200px){.module-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.module-wide{grid-row:6}}
+@media(max-width:540px){.module-grid{grid-template-columns:minmax(0,1fr)}.module-wide{grid-column:auto;grid-row:auto}}
 .compact-module{padding:0;overflow:hidden;background:linear-gradient(150deg,#202023,#171719)}
 .compact-module .module-head{justify-content:flex-start;padding:16px;gap:11px;min-height:73px}
 .compact-module .icon-tile{color:var(--text)}

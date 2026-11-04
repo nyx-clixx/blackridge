@@ -93,9 +93,16 @@ function logList(entries,moderation = false) {
     const avatar = event.userId && event.avatar
       ? '<img class="event-avatar" alt="" src="https://cdn.discordapp.com/avatars/' + encodeURIComponent(event.userId) + '/' + encodeURIComponent(event.avatar) + '.png?size=32">'
       : '<span class="event-avatar fallback-avatar" aria-hidden="true">' + icon('checkpoint') + '</span>'
-    const command = event.kind === 'moderation' && event.detail.match(/^(ban|tempban|unban|kick|timeout|warn|lock-channel|unlock-channel|lock|unlock)\b/)?.[1]
-    const action = command ? '/' + command : event.detail.replace(/ · initiated by .+$/,'').replace(/\b(?:invites_disabled_until|dms_disabled_until)\b/g,key => key === 'invites_disabled_until' ? 'invite pause' : 'DM pause').trim()
-    return '<tr><td><div class="case-user">' + avatar + '<div><strong>' + esc(event.userName ?? (event.userId ? 'Unknown user' : 'System')) + '</strong><code>' + esc(event.userId ?? '—') + '</code></div></div></td><td><span title="' + esc(event.detail) + '">' + esc(action) + '</span></td><td><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></td></tr>'
+    const command = event.kind === 'moderation' && event.detail.match(/^(ban|tempban|unban|kick|timeout|warn|lock-channel|unlock-channel|lock|unlock|purge|force-verify)\b/)?.[1]
+    let detail = event.detail
+    if (/^\d{17,20}$/.test(event.userId ?? '')) {
+      const actor = event.userId
+      if (['settings','backup'].includes(event.kind)) detail = detail.replace(new RegExp(' by ' + actor + '$'),'')
+      if (event.kind === 'moderation') detail = detail.replace(new RegExp('^(\\w[\\w-]* · (?:member \\d+|channel \\d+|\\d+ messages · channel \\d+)) · moderator ' + actor + '(?= · |$)'),'$1')
+      detail = detail.replace(new RegExp(' · initiated by ' + actor + '$'),'')
+    }
+    const action = moderation && command ? '/' + command : detail.replace(/\b(?:invites_disabled_until|dms_disabled_until)\b/g,key => key === 'invites_disabled_until' ? 'invite pause' : 'DM pause').trim()
+    return '<tr><td><div class="case-user">' + avatar + '<div><strong>' + esc(event.userName ?? (event.userId ? 'Unknown user' : 'System')) + '</strong><code>' + esc(event.userId ?? '—') + '</code></div></div></td><td><span title="' + esc(detail) + '">' + esc(action) + '</span></td><td><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></td></tr>'
   }).join('')
   return '<div class="event-scroll"><table class="event-table"><thead><tr><th scope="col">' + (moderation ? 'Moderator' : 'User') + '</th><th scope="col">Action</th><th scope="col">Date and time</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
 }
@@ -420,15 +427,16 @@ async function accountMenu(me) {
     catch (error) { alert(error.message) }
   }
 }
-function premium() {
-  shell('<h2>Blackridge Premium</h2>' + premiumPlans())
+async function premium(me) {
+  const plans = me?.user ? await request('/api/guilds').then(data => data.guilds.map(guild => guild.plan)).catch(() => []) : []
+  shell('<h2>Blackridge Premium</h2>' + premiumPlans(...plans))
 }
-function premiumPlans(plan) {
+function premiumPlans(...plans) {
   const features = ['Advanced Auto Moderation','Advanced Anti-Nuke','Server Backups']
   return '<div class="grid pricing">' + [
     ['blue','Blackridge Premium','$2.99',features],
     ['custom','Blackridge Custom Bot','$4.99',[...features,'Custom Bot']]
-  ].map(([theme,name,price,items]) => '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + icon('premium') + '</span><h3>' + name + '</h3><strong>' + price + '</strong><ul>' + items.map(item => '<li>' + item + '</li>').join('') + '</ul><button class="button plan-purchase" type="button" disabled>Purchase</button><span class="badge">' + ((theme === 'custom' && plan === 'custom') || (theme === 'blue' && plan === 'premium') ? 'Active Plan' : 'Coming soon') + '</span></article>').join('') + '</div>'
+  ].map(([theme,name,price,items]) => '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + icon('premium') + '</span><h3>' + name + '</h3><strong>' + price + '</strong><ul>' + items.map(item => '<li>' + item + '</li>').join('') + '</ul><button class="button plan-purchase" type="button" disabled>Purchase</button><span class="badge">' + (plans.includes(theme === 'custom' ? 'custom' : 'premium') ? 'Your Current Active Plan' : 'Coming soon') + '</span></article>').join('') + '</div>'
 }
 function planLock(title,description,href) {
   return '<section class="card stack plan-lock"><h3>' + title + crown + '</h3><p>' + description + '</p><a class="button small" href="' + href + '">View Plans</a></section>'
@@ -438,8 +446,8 @@ async function customBotPanel(path) {
   const url = path + '/custom-bot'
   function render(state) {
     const profile = state.profile ?? {}
-    panel.innerHTML = '<form class="card stack" id="bot-connection"><h3>Connect Your Discord Bot</h3><p>Install your own Discord application in this server only. Enable Server Members Intent and, if you use content filters, Message Content Intent. Keep Blackridge installed for dashboard access.</p><p class="badge">' +
-      (state.connected ? 'Connected' : state.configured ? 'Reconnecting' : 'Disconnected') + '</p><div class="fields"><label>Discord Bot Token<input type="password" name="token" required autocomplete="off" spellcheck="false" maxlength="162"></label></div><div class="actions"><button class="button primary">Connect Bot</button>' +
+    panel.innerHTML = '<form class="card stack" id="bot-connection"><h3>Connect Your Discord Bot</h3><p>Enable Presence Intent, Server Members Intent, and Message Content Intent on the Bot page of the Discord Developer Portal. Check the token below to unlock the install link. Install your bot in this server only and keep Blackridge installed for dashboard access. <a href="/documentation#custom-bot-setup">Setup Guide</a></p><p class="badge">' +
+      (state.connected ? 'Connected' : state.configured ? 'Reconnecting' : 'Disconnected') + '</p><div class="fields"><label>Discord Bot Token<input type="password" name="token" required autocomplete="off" spellcheck="false" maxlength="162"></label></div><div class="actions"><button type="button" class="button" id="check-bot">Check Intents</button><a class="button" id="install-bot" target="_blank" rel="noopener noreferrer" hidden>Add to Discord</a><button class="button primary" id="connect-bot" disabled>Connect Bot</button>' +
       (state.configured ? '<button type="button" class="button" id="disconnect-bot">Disconnect Bot</button>' : '') + '</div></form>' +
       (state.connected ? '<section class="card stack custom-profile"><form id="bot-profile"><h3>Profile</h3><div class="fields"><label>Bot Username<input name="username" required minlength="2" maxlength="32" value="' + esc(state.username) + '"></label>' +
         '<label>Status<select name="status">' + options({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'},profile.status ?? 'online') + '</select></label>' +
@@ -456,11 +464,50 @@ async function customBotPanel(path) {
     }
     const json = (method,body) => ({method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     const connection = panel.querySelector('#bot-connection')
-    connection.onsubmit = event => {
+    const tokenField = connection.elements.token
+    const checkButton = panel.querySelector('#check-bot')
+    const install = panel.querySelector('#install-bot')
+    const connect = panel.querySelector('#connect-bot')
+    const status = panel.querySelector('#custom-status')
+    let inputVersion = 0
+    function resetCheck() {
+      inputVersion++
+      install.hidden = true
+      install.removeAttribute('href')
+      connect.disabled = true
+      status.textContent = ''
+    }
+    tokenField.oninput = resetCheck
+    checkButton.onclick = async () => {
+      if (!tokenField.reportValidity()) return
+      resetCheck()
+      const version = inputVersion
+      checkButton.disabled = true
+      try {
+        const result = await request(url+'/check',json('POST',{token:tokenField.value}))
+        if (version !== inputVersion) return
+        if (!result.installUrl) {
+          status.textContent = 'Enable these intents in Discord: ' + result.missingIntents.join(', ') + '.'
+          return
+        }
+        install.href = result.installUrl
+        install.hidden = false
+        connect.disabled = false
+        status.textContent = 'All three intents are enabled. Add the bot to Discord, then select Connect Bot.'
+      } catch (error) {
+        if (version === inputVersion) status.textContent = error.message
+      } finally { checkButton.disabled = false }
+    }
+    connection.onsubmit = async event => {
       event.preventDefault()
-      const token = connection.elements.token.value
-      connection.elements.token.value = ''
-      void action(event.submitter,() => request(url,json('POST',{token})),'Custom Bot connected.')
+      if (connect.disabled) return
+      tokenField.disabled = checkButton.disabled = connect.disabled = true
+      try {
+        const next = await request(url,json('POST',{token:tokenField.value}))
+        render(next)
+        panel.querySelector('#custom-status').textContent = 'Custom Bot connected.'
+      } catch (error) { status.textContent = error.message }
+      finally { tokenField.disabled = checkButton.disabled = connect.disabled = false }
     }
     const disconnect = panel.querySelector('#disconnect-bot')
     if (disconnect) disconnect.onclick = () => {
@@ -700,11 +747,11 @@ async function dashboard() {
     const activity = '<section class="card stack"><h3>' + 'Event History' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
-    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','verification'].map(key => {
-      const restricted = key === 'permits' && !data.owner
-      const enabled = data.config[key]?.enabled
+    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','appeals','verification','custom'].map(key => {
+      const restricted = key === 'permits' && !data.owner ? 'Owner only' : key === 'appeals' && !data.appealsManager ? 'Manager access required' : ''
+      const enabled = key === 'appeals' ? data.appealsConfigured : key === 'custom' ? data.customConnected : data.config[key]?.enabled
       const state = enabled ? '<i class="dot"></i> Enabled' : '<i class="dot disabled-dot"></i> Disabled'
-      return '<article class="card compact-module"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + (key === 'backup' ? crown : '') + '</h3><span class="badge">' + state + '</span></div></div>' + (restricted ? '<span class="button module-configure" aria-disabled="true">Owner only</span>' : '<a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a>') + '</article>'
+      return '<article class="card compact-module' + (key === 'verification' ? ' module-wide' : '') + '"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + (key === 'backup' ? crown : '') + '</h3><span class="badge">' + state + '</span></div></div>' + (restricted ? '<span class="button module-configure" aria-disabled="true">' + restricted + '</span>' : '<a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a>') + '</article>'
     }).join('')
     const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
@@ -830,7 +877,7 @@ async function dashboard() {
 if (location.pathname.startsWith(base)) dashboard()
 else {
   if (Object.hasOwn(resources,location.pathname)) shell('<div class="resource-page">' + resources[location.pathname] + '</div>')
-  if (location.pathname === '/premium') premium()
-  if (location.pathname === '/support') shell('<h2>Support Server</h2><p>The Discord support invite is currently unavailable.</p>')
-  request('/api/me').then(accountMenu).catch(() => {})
+  const me = request('/api/me').catch(() => null)
+  if (location.pathname === '/premium') void me.then(premium)
+  void me.then(data => { if (data) accountMenu(data) })
 }
