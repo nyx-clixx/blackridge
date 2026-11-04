@@ -340,7 +340,7 @@ const actionsByKind = {
   automod:['log','timeout']
 }
 const actionLabels = {log:'Log only',timeout:'Time out',strip:'Remove dangerous roles',quarantine:'Quarantine',kick:'Kick',ban:'Ban',tempban:'Temporary ban'}
-const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history']
+const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history','force-verify']
 const ids = value => value.split(',').map(id => id.trim()).filter(Boolean)
 
 const bypassLabels = {automod:'Auto Moderation',nuke:'Anti-Nuke',raid:'Anti-Raid',checkpoint:'Checkpoint'}
@@ -403,7 +403,14 @@ function readPermits(form) {
 async function accountMenu(me) {
   if (!me.user) return
   const avatar = me.user.avatar ? '<img alt="" src="https://cdn.discordapp.com/avatars/' + esc(me.user.id) + '/' + esc(me.user.avatar) + '.png?size=64">' : '<span class="initial">' + esc(me.user.username.slice(0,1)) + '</span>'
-  account.outerHTML = '<details class="account-menu"><summary class="button small">' + avatar + '<span>' + esc(me.user.username) + '</span></summary><div class="account-links">' + '<a href="/support">Support Server</a>' + '<a href="/premium">Premium</a><button type="button" id="sign-out">Log out</button></div></details>'
+  account.outerHTML = '<details class="account-menu"><summary class="button small">' + avatar + '<span>' + esc(me.user.username) + '</span></summary><div class="account-links">' + '<button type="button" id="sign-out">Log Out</button><a href="/premium">Premium</a><a href="/support">Support Server</a></div></details>'
+  const menu = document.querySelector('.account-menu')
+  document.addEventListener('click',event => { if (!menu.contains(event.target)) menu.open = false })
+  menu.addEventListener('keydown',event => {
+    if (event.key !== 'Escape' || !menu.open) return
+    menu.open = false
+    menu.querySelector('summary').focus()
+  })
   document.querySelector('#sign-out').onclick = async () => {
     try {
       await Promise.all([...pendingSettings].map(flush => flush()))
@@ -417,10 +424,10 @@ function premium() {
   shell('<h2>Blackridge Premium</h2>' + premiumPlans())
 }
 function premiumPlans(plan) {
-  const features = ['Server Backups','Anti-Channel Rename','Emoji, Sticker & Soundboard Deletion Protection','Ghost Mentions & Malicious Link Filters']
+  const features = ['Advanced Auto Moderation','Advanced Anti-Nuke','Server Backups']
   return '<div class="grid pricing">' + [
     ['blue','Blackridge Premium','$2.99',features],
-    ['custom','Blackridge Custom Bot','$4.99',[...features,'Your own Discord bot and profile']]
+    ['custom','Blackridge Custom Bot','$4.99',[...features,'Custom Bot']]
   ].map(([theme,name,price,items]) => '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + icon('premium') + '</span><h3>' + name + '</h3><strong>' + price + '</strong><ul>' + items.map(item => '<li>' + item + '</li>').join('') + '</ul><button class="button plan-purchase" type="button" disabled>Purchase</button><span class="badge">' + ((theme === 'custom' && plan === 'custom') || (theme === 'blue' && plan === 'premium') ? 'Active Plan' : 'Coming soon') + '</span></article>').join('') + '</div>'
 }
 function planLock(title,description,href) {
@@ -565,7 +572,8 @@ async function recoveryPanel(section,path,data,prepared) {
       (history ? '<form class="card stack" data-operation="restore"><h3>Backup Manager</h3><p>Restore supported settings and recreate eligible deleted roles and channels. Messages, role memberships, member overwrites, and ordering require manual recovery.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label></div><button class="button primary">Restore Backup</button></form>' : '<section class="card stack"><h3>Backup Manager</h3><p>No backups yet.</p></section>')
   }
   const logging = '<form class="card stack" data-operation="logging"><h3>Discord Logging</h3><div class="fields"><div class="discord-field"><span>Logging Channel</span>' + channel + '</div></div></form>'
-  panel.innerHTML = controls + (section === 'backup' ? '' : logging) + '<p class="stack" role="status"></p>'
+  const deleteInvites = section === 'lockdown' ? '<form class="card stack" data-operation="delete-invites"><h3>Invite Cleanup</h3><p>Enable the Lockdown module to revoke standard server invites. Lifting Lockdown cannot restore these links.</p><button class="button lockdown-submit"' + (data.config.lockdown.enabled ? '' : ' disabled') + '>Delete All Invites</button></form>' : ''
+  panel.innerHTML = controls + deleteInvites + (section === 'backup' ? '' : logging) + '<p class="stack" role="status"></p>'
   const status = panel.querySelector('[role="status"]')
   for (const form of panel.querySelectorAll('form')) {
     const operation = form.dataset.operation
@@ -594,6 +602,10 @@ async function recoveryPanel(section,path,data,prepared) {
       payload.confirm = 'ENABLE LOCKDOWN'
       payload.channels = fields.getAll('channels')
       for (const key of ['all','verification','invites','dms','strip']) payload[key] = fields.has(key)
+    }
+    if (operation === 'delete-invites') {
+      if (!window.confirm('Permanently delete all standard server invites? Existing links will stop working.')) return
+      payload.confirm = 'DELETE ALL INVITES'
     }
     if (operation === 'restore') {
       if (!window.confirm('Confirm you want to restore this backup?')) return
@@ -696,7 +708,7 @@ async function dashboard() {
     }).join('')
     const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('custom') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('verification') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans(data.plan) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('custom') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('lockdown') + navigation('checkpoint') + navigation('verification') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans(data.plan) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     if (section === 'appeals') appealsPanel(path,data.config.appeals,choices?.channels ?? [])
     if (section === 'custom' && customAllowed) void customBotPanel(path)
     const settings = document.querySelector('#settings')
@@ -709,6 +721,8 @@ async function dashboard() {
         method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled}),keepalive:true
       })
       data.config[section].enabled = enabled
+      const cleanup = document.querySelector('[data-operation="delete-invites"] button')
+      if (cleanup) cleanup.disabled = !enabled
     })
     if (settings?.elements.alertChannel && section !== 'verification') wireDiscordSelectors(settings,choices)
     if (section === 'permits') wirePermits(settings,choices.roles)

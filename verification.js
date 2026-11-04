@@ -6,6 +6,11 @@ import { mention, messageCard } from './messages.js'
 
 const prefix = 'blackridge-verify:'
 const reason = 'Blackridge member verification'
+const roleChanges = new Set()
+function quarantined(db,guild,member) {
+  const role = db.recovery(guild.id,'quarantineRole')?.role
+  return role && (member.roles.cache.has(role) || db.hasQuarantine(guild.id,member.id,role))
+}
 const forbidden = Object.entries(P).reduce((bits,[name,permission]) =>
   /^(Administrator|Manage|Moderate|Kick|Ban|MentionEveryone|ViewAuditLog)/.test(name) ? bits | permission : bits,0n)
 const digits = ['111101101101111','010110010010111','111001111100111','111001111001111',
@@ -48,6 +53,33 @@ async function memberRole(guild,id,db) {
   if (guild.channels.cache.some(channel => (channel.permissionOverwrites?.cache.get(role.id)?.allow.bitfield ?? 0n) & forbidden)) return null
   return role
 }
+export async function grantVerification(db,member,config,auditReason=reason) {
+  const {guild} = member
+  if (!config.enabled) return 'Verification is disabled in this server.'
+  if (member.user.bot || member.pending || member.isCommunicationDisabled() || quarantined(db,guild,member))
+    return 'This member cannot be verified while they are pending, timed out, or quarantined.'
+  if (member.roles.cache.has(config.verifiedRole)) return 'This member is already verified.'
+  const key = guild.id+':'+member.id
+  if (roleChanges.has(key)) return 'Verification is already in progress for this member.'
+  roleChanges.add(key)
+  try {
+    const verified = await memberRole(guild,config.verifiedRole,db)
+    const unverified = await memberRole(guild,config.unverifiedRole,db)
+    if (!verified || (config.unverifiedRole && (!unverified || unverified.id === verified.id)))
+      return 'Check the verification role configuration and Blackridge’s role permissions.'
+    if (JSON.stringify(config) !== JSON.stringify(db.config(guild.id,'verification')) || quarantined(db,guild,member))
+      return 'Verification settings changed. Try again.'
+    await member.roles.add(verified,auditReason)
+    if (unverified && member.roles.cache.has(unverified.id)) {
+      try { await member.roles.remove(unverified,auditReason) }
+      catch (error) {
+        await member.roles.remove(verified,auditReason+' rollback').catch(() => {})
+        throw error
+      }
+    }
+    return null
+  } finally { roleChanges.delete(key) }
+}
 
 export async function publishVerification(guild,db) {
   const config = db.config(guild.id,'verification')
@@ -81,10 +113,6 @@ export function attachVerification(client,db) {
     for (const [key,session] of sessions) if (session.until <= now) sessions.delete(key)
   },60000)
   cleanup.unref()
-  const quarantined = (guild,member) => {
-    const role = db.recovery(guild.id,'quarantineRole')?.role
-    return role && (member.roles.cache.has(role) || db.hasQuarantine(guild.id,member.id,role))
-  }
   const log = (guild,member,outcome) => {
     const message = 'Verification ' + outcome + ' for ' + member.id
     db.event(guild.id,'verification',message)
@@ -95,7 +123,7 @@ export function attachVerification(client,db) {
   client.on(Events.GuildMemberAdd,async member => {
     const {guild} = member
     const config = db.config(guild.id,'verification')
-    if (!config.enabled || !config.unverifiedRole || member.user.bot || quarantined(guild,member) || member.roles.cache.has(config.verifiedRole)) return
+    if (!config.enabled || !config.unverifiedRole || member.user.bot || quarantined(db,guild,member) || member.roles.cache.has(config.verifiedRole)) return
     try {
       const role = await memberRole(guild,config.unverifiedRole,db)
       if (role && role.id !== config.verifiedRole) await member.roles.add(role,reason)
@@ -136,7 +164,7 @@ export function attachVerification(client,db) {
       if (!start && !submit) return await reply('This challenge expired. Press Verify to start again.')
       await interaction.deferReply(ephemeral)
       const member = await guild.members.fetch({user:user.id,force:true})
-      if (member.user.bot || member.pending || member.isCommunicationDisabled() || quarantined(guild,member))
+      if (member.user.bot || member.pending || member.isCommunicationDisabled() || quarantined(db,guild,member))
         return await reply('Verification is unavailable for your account right now.')
       if (member.roles.cache.has(config.verifiedRole)) return await reply('You are already verified.')
       if (now-user.createdTimestamp < config.minAge*86400000) return await reply('Your Discord account is too new to verify in this server.')
@@ -161,20 +189,8 @@ export function attachVerification(client,db) {
         }
         return await reply('Verification failed. Try again in 10 minutes.')
       }
-      const verified = await memberRole(guild,config.verifiedRole,db)
-      const unverified = await memberRole(guild,config.unverifiedRole,db)
-      if (!verified || (config.unverifiedRole && (!unverified || unverified.id === verified.id)))
-        return await reply('Verification needs an administrator to check its role configuration.')
-      if (JSON.stringify(config) !== JSON.stringify(db.config(guild.id,'verification')) || quarantined(guild,member))
-        return await reply('Verification settings changed. Press Verify again.')
-      await member.roles.add(verified,reason)
-      if (unverified && member.roles.cache.has(unverified.id)) {
-        try { await member.roles.remove(unverified,reason) }
-        catch (error) {
-          await member.roles.remove(verified,reason+' rollback').catch(() => {})
-          throw error
-        }
-      }
+      const error = await grantVerification(db,member,config)
+      if (error) return await reply(error)
       sessions.delete(key)
       log(guild,member,'passed')
       await reply('Welcome to the server!',true)

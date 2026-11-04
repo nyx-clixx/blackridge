@@ -57,6 +57,23 @@ export function recoveryTools(db,bot) {
     const [channels,roles] = await Promise.all([guild.channels.fetch(),guild.roles.fetch()])
     return {channels,roles}
   }
+  async function deleteInvites(guild,actor) {
+    const invites = await guild.invites.fetch()
+    let deleted = 0
+    let failed = 0
+    for (const invite of invites.values()) {
+      try {
+        await invite.delete('Blackridge invite cleanup by '+actor)
+        deleted++
+      } catch (error) {
+        if (error.code !== 10006) failed++
+      }
+    }
+    const summary = 'Deleted '+deleted+' invite'+(deleted === 1 ? '' : 's')+'.'+
+      (failed ? ' '+failed+' could not be deleted.' : '')
+    record(guild,'lockdown',actor,summary)
+    return [summary]
+  }
   async function enable(guild,actor,input) {
     const parsed = lockdownInput.safeParse(input)
     if (!parsed.success) throw invalid('Confirm lockdown and select valid controls.')
@@ -271,5 +288,5 @@ export function recoveryTools(db,bot) {
   }
   const timer = setInterval(() => { void tick().catch(() => console.error('Backup scheduler failed')) },60000)
   timer.unref()
-  return {run,scope,enable,lift,backup,restore,quarantine}
+  return {run,scope,enable,lift,backup,restore,quarantine,deleteInvites}
 }

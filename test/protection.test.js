@@ -10,6 +10,25 @@ import { attachVerification } from '../verification.js'
 import { appealMarker, canReviewAppeals, hasAppealableBan } from '../appeals.js'
 import { actionCard, memberAction, messageCard } from '../messages.js'
 
+test('new servers have all toggleable modules disabled', t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  for (const kind of ['nuke','raid','checkpoint','lockdown','verification','permits','automod','moderation','backup'])
+    assert.equal(db.config('new',kind).enabled,false,kind)
+})
+
+test('invite cleanup reports partial deletion and tolerates an expired invite', async t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  const invalid = code => ({delete:async () => { throw Object.assign(new Error(),{code}) }})
+  const guild = {id:'guild',invites:{fetch:async () => [
+    {delete:async () => {}},invalid(10006),invalid(50013)
+  ]}}
+  const recovery = recoveryTools(db)
+  assert.deepEqual(await recovery.deleteInvites(guild,'owner'),['Deleted 1 invite. 1 could not be deleted.'])
+  assert.match(db.recent(guild.id)[0].detail,/Deleted 1 invite/)
+})
+
 test('timeout action card shows moderator, non-pinging member reference, and localizable dates', () => {
   const userId = '1567348176866902119'
   const actor = '1567267439245525202'
@@ -79,7 +98,7 @@ test('Anti-Nuke restores a selected role name and skips paid channel protection 
   const channel = {name:'edited',async setName(name) { this.name = name }}
   const guild = {id:'free-guild',ownerId:'owner',channels:{fetch:async () => channel},roles:{fetch:async () => channel},
     members:{fetch:async () => ({id:'actor',guild,kickable:true,kick:async () => {}})}}
-  db.save(guild.id,'nuke',{guards:{channelRename:{enabled:true,channels:['channel'],action:'kick'},
+  db.save(guild.id,'nuke',{enabled:true,guards:{channelRename:{enabled:true,channels:['channel'],action:'kick'},
     roleRename:{enabled:true,roles:['role'],action:'kick'}}},'owner')
   async function rename(id,targetId,action=A.RoleUpdate) {
     client.emit(Events.GuildAuditLogEntryCreate,{id,executorId:'actor',targetId,action,
@@ -123,7 +142,7 @@ test('verification grants the configured role only from the published panel', as
   const guild = {id:'guild',roles:{fetch:async () => role},channels:{cache:[]}}
   const user = {id:'member',createdTimestamp:Date.now()-86400000}
   guild.members = {fetch:async () => ({
-    user,id:user.id,isCommunicationDisabled:() => false,
+    guild,user,id:user.id,isCommunicationDisabled:() => false,
     roles:{cache:new Map(),add:async selected => roles.push(selected.id)}
   })}
   db.save(guild.id,'verification',{enabled:true,channel:'channel',verifiedRole:role.id},'owner')
@@ -232,6 +251,7 @@ test('Anti-Nuke deduplicates audit entries and logs when the actor crosses the t
   const cleanup = attachProtection(client,db)
   t.after(() => { cleanup(); db.close() })
   const guild = {id:'guild',ownerId:'owner'}
+  db.save(guild.id,'nuke',{enabled:true},'owner')
   const send = (id,executorId) => client.emit(Events.GuildAuditLogEntryCreate,{
     id,executorId,action:A.ChannelDelete,createdTimestamp:Date.now()
   },guild)
@@ -239,7 +259,7 @@ test('Anti-Nuke deduplicates audit entries and logs when the actor crosses the t
   send('1','actor')
   send('2','actor')
   send('3','owner')
-  assert.equal(db.recent('guild').length,0)
+  assert.equal(db.recent('guild').filter(event=>event.kind === 'nuke').length,0)
   send('4','actor')
   assert.match(db.recent('guild')[0].detail,/3 tracked actions/)
 })
@@ -254,7 +274,7 @@ test('Anti-Nuke enforces rolling limits and escalates repeated detections per ru
   const guild = {id:'guild',ownerId:'owner',members:{fetch:async () => ({
     id:'actor',guild,bannable:true,ban:async () => bans.push('actor')
   })}}
-  const config = db.config(guild.id,'nuke')
+  const config = {...db.config(guild.id,'nuke'),enabled:true}
   config.rates = {channelDelete:{enabled:true,threshold:3,window:20,minute:0,hour:2}}
   config.guards = {identity:{enabled:true,action:'log',escalateAfter:2,escalateTo:'ban',identity:['name']}}
   assert.equal(policies.nuke.safeParse(config).success,true)
@@ -291,7 +311,7 @@ test('Role Gate reverses an unauthorized grant and honors the required role', as
     ? {roles:{cache:new Map([[role,{}]]),remove:async id => removed.push(id)}}
     : {id:user,guild,roles:{cache:grantorRoles},kickable:true,kick:async () => kicked.push(user)}
   }}
-  db.save(guild.id,'nuke',{guards:{gate:{enabled:true,action:'kick',gates:[{role,required:[required]}]}}},'owner')
+  db.save(guild.id,'nuke',{enabled:true,guards:{gate:{enabled:true,action:'kick',gates:[{role,required:[required]}]}}},'owner')
   const send = async id => {
     client.emit(Events.GuildAuditLogEntryCreate,{
       id,executorId:'actor',targetId:'target',action:A.MemberRoleUpdate,createdTimestamp:Date.now(),
@@ -366,7 +386,7 @@ test('Anti-Nuke journals existing roles before replacing them with quarantine', 
     disableCommunicationUntil:async () => finished.emit('done')
   }
   db.saveRecovery(guild.id,'quarantineRole',{role:role.id})
-  db.save(guild.id,'nuke',{...db.config(guild.id,'nuke'),threshold:2,action:'quarantine'},'owner')
+  db.save(guild.id,'nuke',{...db.config(guild.id,'nuke'),enabled:true,threshold:2,action:'quarantine'},'owner')
   const done = once(finished,'done',{signal:AbortSignal.timeout(1000)})
   for (const id of ['one','two']) client.emit(Events.GuildAuditLogEntryCreate,{
     id,executorId:'actor',action:A.ChannelDelete,createdTimestamp:Date.now()
@@ -381,7 +401,7 @@ test('Anti-Raid times out young accounts only after the join threshold', async t
   const cleanup = attachProtection(client,db)
   t.after(() => { cleanup(); db.close() })
   const guild = {id:'guild',ownerId:'owner'}
-  db.save('guild','raid',{...db.config('guild','raid'),threshold:3,action:'timeout'},'owner')
+  db.save('guild','raid',{...db.config('guild','raid'),enabled:true,threshold:3,action:'timeout'},'owner')
   const calls = new EventEmitter()
   const join = (id,age) => client.emit(Events.GuildMemberAdd,{
     guild,id,moderatable:true,user:{createdTimestamp:Date.now()-age*86400000},

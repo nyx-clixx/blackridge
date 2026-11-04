@@ -4,16 +4,18 @@ import { commandNames, matchesPermit } from './store.js'
 import { sendModuleLog } from './recovery.js'
 import { appealMarker, attachAppeals, sendBanNotice } from './appeals.js'
 import { actionCard, memberAction, mention, messageCard, safeText } from './messages.js'
+import { grantVerification } from './verification.js'
 
 const channelCommands = new Set(['lock-channel','unlock-channel'])
 const timedCommands = new Set(['timeout','tempban'])
 const permissions = {
   ban:P.BanMembers, tempban:P.BanMembers, unban:P.BanMembers, kick:P.KickMembers,
   timeout:P.ModerateMembers, warn:P.ModerateMembers, 'lock-channel':P.ManageChannels, 'unlock-channel':P.ManageChannels,
-  purge:P.ManageMessages, history:P.ModerateMembers
+  purge:P.ManageMessages, history:P.ModerateMembers, 'force-verify':P.ManageRoles
 }
 const commands = commandNames.map(name => {
   const builder = new SlashCommandBuilder().setName(name).setDescription('Blackridge ' + name + ' moderation action')
+  if (name === 'force-verify') builder.setDescription('Verify a member without a button or CAPTCHA')
   if (name === 'purge') return builder.setDescription('Delete recent messages in this channel').addIntegerOption(option =>
     option.setName('amount').setDescription('Number of recent messages to delete').setRequired(true).setMinValue(1).setMaxValue(100))
   if (name === 'history') return builder.setDescription('View recorded warns, kicks, and bans for a user')
@@ -217,6 +219,10 @@ export function attachModeration(client,db,lookupGuild) {
         else if (name === 'timeout' && target.moderatable) {
           const timedOut = await target.timeout(minutes*60000,reason)
           until = timedOut.communicationDisabledUntilTimestamp
+        }
+        else if (name === 'force-verify') {
+          const error = await grantVerification(db,target,db.config(guild.id,'verification'),'Blackridge force verification by '+actor.id)
+          if (error) return await respond(error)
         }
         else if (name !== 'warn') return await respond('Blackridge lacks permission or role priority for this action.')
         if (name === 'tempban') until = db.pendingTempBan(guild.id,target.id)?.expires

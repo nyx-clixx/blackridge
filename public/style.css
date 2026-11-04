@@ -363,3 +363,12 @@ body.has-workspace .sidebar{overflow:auto}
 .custom-preview-body>img{display:block;position:relative;margin-top:-34px;width:68px;height:68px;object-fit:cover;border-radius:50%;border:4px solid #181a22}
 .custom-preview-body h3{margin:10px 0 4px}
 @media(max-width:700px){.custom-profile{grid-template-columns:1fr}}
+.account-links{left:50%;right:auto;transform:translateX(-50%);z-index:5}
+.account-links>*{text-align:center}
+.hero{grid-template-columns:minmax(0,1fr) minmax(0,.88fr)}
+.setup-cards{grid-template-columns:repeat(3,minmax(0,1fr));align-items:stretch}
+.setup-cards li{padding:18px}
+.setup-cards strong{margin-bottom:4px}
+@media(max-width:1280px){.account-links{left:auto;right:0;transform:none}}
+@media(max-width:760px){.hero,.setup-cards{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:480px){footer{align-items:flex-start;flex-direction:column;padding-block:16px;gap:8px}}

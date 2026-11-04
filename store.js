@@ -29,7 +29,7 @@ const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles
   channels:z.array(snowflake).max(100).optional(),
   gates:z.array(z.strictObject({role:snowflake,required:z.array(snowflake).min(1).max(15)})).max(100).optional()
 }).optional()])))
-export const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history']
+export const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history','force-verify']
 const principals = z.array(snowflake).max(15)
 export const permitBypasses = ['automod','nuke','raid','checkpoint']
 const permit = z.strictObject({
@@ -53,7 +53,7 @@ function normalizePermits(config) {
       name === 'lock' || name === 'unlock' ? name + '-channel' : name
     ))]}))}
   }
-  return {enabled:true,entries:['ban','tempban','timeout','warn','lock','unlock'].flatMap(command => {
+  return {enabled:Object.keys(config).length > 0,entries:['ban','tempban','timeout','warn','lock','unlock'].flatMap(command => {
     const entry = config[command]
     if (!entry || !(entry.users.length || entry.roles.length)) return []
     const name = command === 'lock' || command === 'unlock' ? command + '-channel' : command
@@ -87,12 +87,12 @@ const defaults = {
   verification:{enabled:false,mode:'button',channel:'',verifiedRole:'',unverifiedRole:'',alertChannel:'',minAge:0,attempts:3,minutes:2,failure:'retry'},
   permits:{entries:[]},
   automod:{enabled:false,threshold:6,window:8,action:'log',timeoutMinutes:5,badWords:'',nsfwDomains:'',maliciousDomains:'',spamPoints:0,pointRules:[]},
-  moderation:{enabled:true,alertChannel:''},
-  backup:{enabled:true},
-  lockdown:{enabled:true,alertChannel:''},
+  moderation:{enabled:false,alertChannel:''},
+  backup:{enabled:false},
+  lockdown:{enabled:false,alertChannel:''},
   checkpoint:{enabled:false,age:7,agePoints:3,avatarPoints:2,threshold:5,alertChannel:'',alertRoles:[],rejoinPoints:0,similarPoints:0,inviteNamePoints:0,quarantineMinutes:10,tempBanMinutes:60},
-  nuke:{enabled:true,threshold:3,window:20,trusted:'',action:'log',alertChannel:'',alertRoles:[],tempBanMinutes:60,quarantineMinutes:10},
-  raid:{enabled:true,threshold:8,window:15,duration:60,age:7,action:'log',timeoutMinutes:10,alertChannel:'',alertRoles:[],tempBanMinutes:60,quarantineMinutes:10}
+  nuke:{enabled:false,threshold:3,window:20,trusted:'',action:'log',alertChannel:'',alertRoles:[],tempBanMinutes:60,quarantineMinutes:10},
+  raid:{enabled:false,threshold:8,window:15,duration:60,age:7,action:'log',timeoutMinutes:10,alertChannel:'',alertRoles:[],tempBanMinutes:60,quarantineMinutes:10}
 }
 export function createStore(file) {
   if (file !== ':memory:') mkdirSync(dirname(file),{recursive:true})
@@ -134,6 +134,12 @@ export function createStore(file) {
   db.exec(`CREATE TABLE IF NOT EXISTS moderation_history (id INTEGER PRIMARY KEY, guild TEXT, user TEXT, action TEXT, detail TEXT, at INTEGER, audit TEXT UNIQUE);
     CREATE INDEX IF NOT EXISTS moderation_history_target ON moderation_history(guild,user,at DESC);
     CREATE TABLE IF NOT EXISTS blackridge_migration (name TEXT PRIMARY KEY);`)
+  db.exec(`BEGIN IMMEDIATE;
+    UPDATE policy SET config=json_set(config,'$.enabled',json('true'))
+    WHERE kind IN ('nuke','raid','moderation','lockdown','backup') AND json_type(config,'$.enabled') IS NULL
+      AND NOT EXISTS (SELECT 1 FROM blackridge_migration WHERE name='disabled-defaults');
+    INSERT OR IGNORE INTO blackridge_migration VALUES ('disabled-defaults');
+    COMMIT;`)
   const recordCase = db.prepare('INSERT OR IGNORE INTO moderation_history(guild,user,action,detail,at,audit) VALUES (?,?,?,?,?,?)')
   const caseParts = /^(warn|kick|ban|tempban) · member (\d{17,20}) · moderator \d{17,20} · ([\s\S]*)$/
   if (!db.prepare("SELECT 1 FROM blackridge_migration WHERE name='history'").get()) {

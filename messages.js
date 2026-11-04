@@ -36,7 +36,8 @@ const memberActions = {
   ban:['Member Banned','was banned','hammer'],tempban:['Member Temporarily Banned','was temporarily banned','timer'],
   kick:['Member Kicked','was kicked','hammer'],warn:['Member Warned','was warned','warning'],
   timeout:['Member Timed Out','was timed out','timer'],unban:['Member Unbanned','was unbanned','unlocked'],
-  untimeout:['Member Timeout Removed','had their timeout removed','unlocked'],quarantine:['Member Quarantined','was quarantined','locked']
+  untimeout:['Member Timeout Removed','had their timeout removed','unlocked'],quarantine:['Member Quarantined','was quarantined','locked'],
+  'force-verify':['Member Verified','was verified by a moderator','check']
 }
 export function memberAction(action,{userId,actor,reason,server,until,at=Date.now(),dm=false}) {
   const [title,verb,icon] = memberActions[action]

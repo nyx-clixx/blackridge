@@ -281,7 +281,7 @@ app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
   const input = req.body ?? {}
   if (['backup','restore','schedule'].includes(req.params.operation) && guildPlan(guild.id) === 'free')
     return res.status(403).json({error:'Server Backups require Premium or Custom Bot.'})
-  if (req.params.operation === 'enable' && !db.config(guild.id,'lockdown').enabled) {
+  if (['enable','delete-invites'].includes(req.params.operation) && !db.config(guild.id,'lockdown').enabled) {
     return res.status(400).json({error:'Turn on the Lockdown module first.'})
   }
   if (['backup','restore','schedule'].includes(req.params.operation) && !db.config(guild.id,'backup').enabled) {
@@ -289,6 +289,7 @@ app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
   }
   const result = await recovery.run(guild,async () => {
     if (req.params.operation === 'enable') return recovery.enable(guild,actor,input)
+    if (req.params.operation === 'delete-invites' && input.confirm === 'DELETE ALL INVITES') return recovery.deleteInvites(guild,actor)
     if (req.params.operation === 'lift' && input.confirm === 'LIFT LOCKDOWN') return recovery.lift(guild,actor)
     if (req.params.operation === 'backup') return recovery.backup(guild,actor)
     if (req.params.operation === 'quarantine') return recovery.quarantine(guild,actor,input.role)
