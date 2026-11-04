@@ -135,6 +135,10 @@ fieldset{border:0;padding:0;margin:14px 0 0;min-width:0}
 .discord-results label.discord-option[hidden]{display:none}
 .discord-option:hover{background:#28282c}
 .discord-option input{width:15px;height:15px;min-height:0;flex:none;accent-color:var(--accent)}
+.dashboard-page input:is([type=radio],[type=checkbox]){appearance:none;box-sizing:border-box;display:inline-grid;width:16px;height:16px;min-height:0;padding:0;flex:none;margin:0;border:1px solid #76767e;border-radius:50%;background:#29292d;vertical-align:middle;cursor:pointer}
+.dashboard-page input:is([type=radio],[type=checkbox]):checked{border-color:var(--accent);background:radial-gradient(circle,var(--accent) 0 48%,#29292d 52%)}
+.dashboard-page input:is([type=radio],[type=checkbox]):disabled{opacity:.55;cursor:default}
+@media(forced-colors:active){.dashboard-page input:is([type=radio],[type=checkbox]):checked{background:Highlight;border-color:Highlight}}
 .event-scroll{overflow:auto}
 .event-table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}
 .event-table th,.event-table td{padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
@@ -160,7 +164,7 @@ body.has-workspace .sidebar{overflow:auto}
 .fallback-avatar{display:inline-grid;place-items:center;background:#292633;color:var(--accent)}
 .module-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:10px}
 .compact-module{padding:0;overflow:hidden;background:linear-gradient(150deg,#202023,#171719)}
-.compact-module .module-head{justify-content:flex-start;padding:11px 12px;gap:9px}
+.compact-module .module-head{justify-content:flex-start;padding:16px;gap:11px;min-height:73px}
 .compact-module .icon-tile{color:var(--text)}
 .module-configure.button{width:100%;border:0;border-top:1px solid var(--line);border-radius:0;background:#151517;padding:7px 10px;font-size:13px}
 .module-configure.button:hover{transform:none;background:#28282c}
@@ -168,7 +172,8 @@ body.has-workspace .sidebar{overflow:auto}
 .overview-metrics .score-card{margin:0}
 .overview-metrics .stats{gap:8px}
 @media(max-width:950px){.overview-metrics{grid-template-columns:1fr}}
-.pricing .plan{--plan-rgb:97,153,255;border:1px solid rgba(var(--plan-rgb),.43);padding:25px;background:linear-gradient(155deg,rgba(var(--plan-rgb),.16),#17171c 64%);box-shadow:0 0 24px rgba(var(--plan-rgb),.1)}
+.pricing .plan{--plan-rgb:97,153,255;display:flex;flex-direction:column;align-items:flex-start;border:1px solid rgba(var(--plan-rgb),.43);padding:25px;background:linear-gradient(155deg,rgba(var(--plan-rgb),.16),#17171c 64%);box-shadow:0 0 24px rgba(var(--plan-rgb),.1)}
+.pricing .plan-purchase{margin-top:auto}
 .pricing .plan-purple{--plan-rgb:176,112,255}
 .plan h3{margin-top:12px;font-size:19px}
 .plan ul{padding-left:18px;margin:15px 0 20px}

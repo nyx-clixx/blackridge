@@ -141,10 +141,10 @@ function premium() {
   shell('<h2>Blackridge Premium</h2>' + premiumPlans())
 }
 function premiumPlans() {
-  const features = ['Advanced Anti-Nuke','Advanced Anti-Raid','Advanced Auto Moderation']
+  const features = ['Advanced Anti-Nuke','Advanced Anti-Raid','Advanced Auto Moderation','Server Backups']
   return '<div class="grid pricing">' + [
     ['blue','Blackridge Premium','$2.99',features],
-    ['purple','Blackridge White Label','$4.99',[...features,'Custom branding']]
+    ['purple','Blackridge Custom Bot','$4.99',[...features,'Custom branding']]
   ].map(([theme,name,price,items]) => '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + icon('premium') + '</span><h3>' + name + '</h3><strong>' + price + '</strong><ul>' + items.map(item => '<li>' + item + '</li>').join('') + '</ul><button class="button plan-purchase" type="button" disabled>Purchase</button><span class="badge">Coming soon</span></article>').join('') + '</div>'
 }
 function form(kind, config, owner) {
@@ -202,8 +202,7 @@ document.addEventListener('keydown',event => {
     picker.querySelector('summary').focus()
   }
 })
-async function wireDiscordSelectors(form,path,section) {
-  const choices = await request(path + '/options')
+function wireDiscordSelectors(form,choices,section) {
   const channel = form.elements.alertChannel
   if (channel) replaceDiscordInput(channel,discordSelect('alertChannel',choices.channels.filter(item => item.sendable),[channel.value]))
   const roleFields = section === 'permits' ? commandNames.map(name => name + '-roles') : ['alertRoles']
@@ -212,14 +211,15 @@ async function wireDiscordSelectors(form,path,section) {
     if (input) replaceDiscordInput(input,discordSelect(name,choices.roles,ids(input.value),true))
   }
 }
-async function recoveryPanel(section,path,data) {
+async function recoveryPanel(section,path,data,prepared) {
   const panel = document.querySelector('#recovery')
   if (!data.owner) {
     if (section !== 'moderation') panel.innerHTML = '<p>Only the server owner can manage recovery operations.</p>'
     return
   }
-  const {channels} = await request(path + '/options')
-  const state = section === 'moderation' ? {} : await request(path + '/recovery')
+  const [{channels},state] = prepared ?? await Promise.all([
+    request(path + '/options'),section === 'moderation' ? {} : request(path + '/recovery')
+  ])
   const channel = discordSelect('alertChannel',channels.filter(item => item.sendable),[data.config[section]?.alertChannel])
   let controls = ''
   if (section === 'lockdown') {
@@ -254,7 +254,8 @@ async function recoveryPanel(section,path,data) {
       const result = await request(operation === 'logging' ? path + '/' + section : path + '/recovery/' + operation,{
         method:operation === 'logging' ? 'PUT' : 'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)
       })
-      if (operation !== 'logging') await recoveryPanel(section,path,data)
+      if (operation === 'logging') data.config[section].alertChannel = payload.alertChannel
+      else await recoveryPanel(section,path,data)
       panel.querySelector('[role="status"]').textContent = result.notices?.join(' ') || 'Saved.'
     } catch (error) { status.textContent = error.message }
     finally { button.disabled = false }
@@ -295,7 +296,6 @@ function setupQuarantine(settings,path) {
 }
 async function dashboard() {
   document.body.classList.add('dashboard-page')
-  shell('<p role="status">Loading dashboard…</p>')
   const [, , id, rawSection] = location.pathname.split('/')
   const section = Object.hasOwn(sections, rawSection) ? rawSection : 'overview'
   try {
@@ -313,19 +313,15 @@ async function dashboard() {
     const path = '/api/guilds/' + encodeURIComponent(id)
     const data = await request(path)
     if (section === 'permits' && !data.owner) throw new Error('Only the server owner can view permits.')
-    const descriptions = {
-      premium:'Explore Blackridge plans for your server.',
-      checkpoint:'Score new accounts by age and avatar to flag risky joins.',
-      automod:'Detect repeated messages by rate without inspecting message content.',
-      moderation:'Review recorded moderation actions and available slash commands.',
-      permits:'Delegate specific commands to roles or individual members.',
-      overview:'Review security activity and manage your protection modules.',
-      nuke:'Set limits for destructive actions and choose how Blackridge responds.',
-      raid:'Detect join surges and configure alerts and automatic responses.',
-      logs:'Review recent detections, responses, and policy changes.'
-    }
+    const recoverySection = ['lockdown','backup','moderation'].includes(section)
+    const needsOptions = Object.hasOwn(settingFields,section) || section === 'permits' || (recoverySection && data.owner)
+    const [choices,recoveryState,eventData] = await Promise.all([
+      needsOptions ? request(path + '/options') : null,
+      recoverySection && data.owner && section !== 'moderation' ? request(path + '/recovery') : {},
+      ['logs','moderation'].includes(section) ? request(path + '/events') : {events:[]}
+    ])
     const heading = '<div class="page-heading"><span class="icon-tile">' + icon(section) + '</span><div><h2 class="dash-title">' + sections[section] + '</h2></div></div>'
-    const events = ['logs','moderation'].includes(section) ? (await request(path + '/events')).events : []
+    const {events} = eventData
     const activity = '<section class="card stack"><h3>' + 'Event history' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
@@ -338,13 +334,13 @@ async function dashboard() {
     const overview = '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
     shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(events.filter(event => event.kind === 'moderation'),true) + '</section><div id="recovery"></div>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
-    if (['lockdown','backup','moderation'].includes(section)) await recoveryPanel(section,path,data)
     const settings = document.querySelector('#settings')
     if (settings && (settings.elements.alertChannel || section === 'permits')) {
-      await wireDiscordSelectors(settings,path,section)
+      wireDiscordSelectors(settings,choices,section)
     }
     if (settings && settingFields[section]) protectionControls(settings,section,data.config[section])
     if (settings && section === 'nuke' && data.owner) setupQuarantine(settings,path)
+    if (recoverySection) await recoveryPanel(section,path,data,[choices,recoveryState])
     if (settings) settings.onsubmit = async event => {
       event.preventDefault()
       const fields = new FormData(settings)

@@ -238,7 +238,9 @@ app.use(express.static(publicDir))
 const appShell = readFileSync(new URL('./public/index.html',import.meta.url),'utf8')
   .replace(/<main id="app">[\s\S]*?<\/main>/,'<main id="app"><div class="wrap dashboard"><p role="status">Loading…</p></div></main>')
 app.get('/support',(req,res) => supportInvite ? res.redirect(supportInvite) : res.type('html').send(appShell))
-app.get(['/premium','/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => res.type('html').send(appShell))
+app.get('/premium',(req,res) => res.type('html').send(appShell))
+const dashboardShell = appShell.replace('<body>','<body class="dashboard-page">')
+app.get(['/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => res.type('html').send(dashboardShell))
 app.use((error,req,res,next) => {
   if (res.headersSent) return next(error)
   const status = error.status || 500
