@@ -295,13 +295,3 @@ body.has-workspace .sidebar{overflow:auto}
 .nuke-gate button,.nuke-dialog-fields>button{justify-self:start}
 @media(max-width:540px){.nuke-row{align-items:flex-start;flex-direction:column}.nuke-row-actions{align-self:flex-end}}
 @media(prefers-reduced-motion:reduce){.nuke-switch span,.nuke-switch span::before{transition:none}}
-.single-setting > .setting-row{border-top:0}
-.setting-list:not(:empty){border:1px solid var(--line);border-radius:12px}
-.setting-list > .setting-row:first-child{border-top:0}
-.setting-row .setting-name{overflow-wrap:anywhere}
-.setting-row > div:first-child{min-width:0}
-.setting-row.permit-card{border:1px solid var(--line)}
-.setting-row .nuke-dialog-fields textarea{width:100%}
-.backup-controls .single-setting > .setting-row{padding:0}
-.backup-controls .setting-row button{margin-top:0}
-[data-operation=enable] > .setting-row{margin-top:12px;padding-left:0;padding-right:0}

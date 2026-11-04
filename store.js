@@ -51,10 +51,10 @@ function normalizePermits(config) {
   })}
 }
 const alerts = {alertChannel:z.union([snowflake,z.literal('')]).optional(),alertRoles:z.array(snowflake).max(5).optional()}
-const botRule = z.strictObject({action:z.enum(['off','kick','ban']),quarantine:z.boolean(),resumeAction:z.enum(['kick','ban']).optional()})
+const botRule = z.strictObject({action:z.enum(['off','kick','ban']),quarantine:z.boolean()})
 const timedResponse = {tempBanMinutes:integer(1,1440).optional(),quarantineMinutes:integer(1,1440).optional()}
 export const spamFilters = ['mentions','files','images','stickers','invites','links','caps','newlines','length','emoji','headers','duplicate','multiUser','badWords','scam','nsfw','malicious','ghost']
-const filter = z.strictObject({action:z.enum(['off','log','delete','timeout']),limit:integer(1,4000),points:integer(0,100).optional(),resumeAction:z.enum(['log','delete','timeout']).optional()})
+const filter = z.strictObject({action:z.enum(['off','log','delete','timeout']),limit:integer(1,4000),points:integer(0,100).optional()})
 export const policies = {
   permits: z.strictObject({enabled:z.boolean().optional(),entries:z.array(permit).max(30)}),
   automod: z.strictObject({enabled:z.boolean(),threshold:integer(3,30),window:integer(2,60),action:z.enum(['log','timeout']),timeoutMinutes:integer(1,1440),filters:z.strictObject(Object.fromEntries(spamFilters.map(key => [key,key === 'malicious' ? filter.optional() : filter]))).optional(),badWords:z.string().max(500).optional(),nsfwDomains:z.string().max(500).optional(),maliciousDomains:z.string().max(500).optional(),spamPoints:integer(0,100).optional(),pointRules:z.array(z.strictObject({points:integer(1,1000),hours:integer(1,168),action:z.enum(['timeout','kick','ban'])})).max(4).optional(),...alerts}),
