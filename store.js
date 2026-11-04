@@ -4,11 +4,22 @@ import { dirname } from 'node:path'
 import { z } from 'zod'
 
 const integer = (min,max) => z.number().int().min(min).max(max)
-const rate = z.strictObject({enabled:z.boolean(),threshold:integer(2,30),window:integer(5,120)})
+const nukeAction = z.enum(['log','strip','kick','ban','tempban','quarantine'])
+const ruleResponse = {action:nukeAction.optional(),escalateAfter:integer(0,100).optional(),escalateTo:nukeAction.optional()}
+const rate = z.strictObject({enabled:z.boolean(),threshold:integer(2,30),window:integer(5,120),
+  minute:integer(0,500).optional(),hour:integer(0,500).optional(),...ruleResponse})
 const rates = z.strictObject(Object.fromEntries(
-  ['moderation','roleCreate','roleDelete','channelCreate','channelDelete','webhookCreate'].map(key => [key,rate])
+  ['moderation','roleCreate','roleDelete','channelCreate','channelDelete','webhookCreate'].map(key => [key,rate.optional()])
 ))
 const snowflake = z.string().regex(/^\d{17,20}$/)
+const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles','rolePermissions','assignments','botAdd'].map(key => [key,z.strictObject({
+  enabled:z.boolean(),...ruleResponse,
+  permissions:z.array(z.enum(['Administrator','KickMembers','BanMembers','ManageGuild','ManageRoles','ManageChannels','ManageWebhooks','MentionEveryone'])).max(8).optional(),
+  identity:z.array(z.enum(['icon_hash','name','vanity_url_code'])).max(3).optional(),
+  onboarding:z.boolean().optional(),
+  roles:z.array(snowflake).max(100).optional(),
+  gates:z.array(z.strictObject({role:snowflake,required:z.array(snowflake).min(1).max(15)})).max(100).optional()
+}).optional()])))
 export const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel']
 const principals = z.array(snowflake).max(15)
 export const permitBypasses = ['automod','nuke','raid','checkpoint']
@@ -51,7 +62,7 @@ export const policies = {
   lockdown:z.strictObject({enabled:z.boolean().optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
   backup:z.strictObject({enabled:z.boolean()}),
   checkpoint: z.strictObject({enabled:z.boolean(),age:integer(1,365),agePoints:integer(0,5),avatarPoints:integer(0,5),threshold:integer(1,25),alertChannel:z.union([snowflake,z.literal('')]),alertRoles:z.array(snowflake).max(5),rejoinPoints:integer(0,5).optional(),similarPoints:integer(0,5).optional(),inviteNamePoints:integer(0,5).optional(),verifiedBot:botRule.optional(),unverifiedBot:botRule.optional(),rules:z.array(z.strictObject({score:integer(1,25),action:z.enum(['log','kick','quarantine','tempban'])})).max(4).optional(),...timedResponse}),
-  nuke: z.strictObject({enabled:z.boolean(),threshold:integer(2,30),window:integer(5,120),trusted:z.string().max(500).regex(/^\s*(?:\d{17,20}(?:\s*,\s*\d{17,20})*)?\s*$/),action:z.enum(['log','strip','kick','ban','tempban','quarantine']),rates:rates.optional(),...alerts,...timedResponse}),
+  nuke: z.strictObject({enabled:z.boolean(),threshold:integer(2,30),window:integer(5,120),trusted:z.string().max(500).regex(/^\s*(?:\d{17,20}(?:\s*,\s*\d{17,20})*)?\s*$/),action:nukeAction,rates:rates.optional(),guards:guards.optional(),...alerts,...timedResponse}),
   raid: z.strictObject({enabled:z.boolean(),threshold:integer(3,100),window:integer(5,120),duration:integer(15,600),age:integer(0,365),action:z.enum(['log','timeout','kick','ban','tempban','quarantine']),timeoutMinutes:integer(1,1440).optional(),...alerts,...timedResponse})
 }
 const defaults = {
@@ -95,8 +106,17 @@ export function createStore(file) {
   ); CREATE INDEX IF NOT EXISTS automod_points_user ON automod_points(guild,user,at);
   CREATE INDEX IF NOT EXISTS automod_points_age ON automod_points(at);`)
   const awardPoints = db.prepare('INSERT OR IGNORE INTO automod_points VALUES (?,?,?,?,?)')
+  db.exec(`CREATE TABLE IF NOT EXISTS nuke_detection (guild TEXT, actor TEXT, rule TEXT, entry TEXT, at INTEGER, PRIMARY KEY(guild,rule,entry));
+    CREATE INDEX IF NOT EXISTS nuke_detection_actor ON nuke_detection(guild,actor,rule,at);
+    CREATE INDEX IF NOT EXISTS nuke_detection_age ON nuke_detection(at);`)
+  const addDetection = db.prepare('INSERT OR IGNORE INTO nuke_detection VALUES (?,?,?,?,?)')
+  const countDetections = db.prepare('SELECT COUNT(*) AS total FROM nuke_detection WHERE guild=? AND actor=? AND rule=? AND at>?')
   const sumPoints = db.prepare('SELECT coalesce(sum(points),0) AS total FROM automod_points WHERE guild=? AND user=? AND at>?')
   return {
+    nukeDetection(guild,actor,rule,entry,now) {
+      if (!addDetection.run(guild,actor,rule,entry,now).changes) return 0
+      return countDetections.get(guild,actor,rule,now-86400000).total
+    },
     escalation(guild,user,event,points,rules,now=Date.now()) {
       if (!points || !awardPoints.run(guild,user,event,points,now).changes) return null
       const matched = rules.filter(rule => {
@@ -153,6 +173,7 @@ export function createStore(file) {
     stats(guild) { return db.prepare("SELECT COUNT(*) total,COUNT(CASE WHEN kind='nuke' THEN 1 END) nuke,COUNT(CASE WHEN kind='raid' THEN 1 END) raid FROM event WHERE guild=? AND at>=?").get(guild,Date.now()-86400000) },
     prune() {
       db.prepare('DELETE FROM event WHERE at<?').run(Date.now()-30*86400000)
+      db.prepare('DELETE FROM nuke_detection WHERE at<=?').run(Date.now()-86400000)
       db.prepare('DELETE FROM web_session WHERE expires<=?').run(Date.now())
       db.prepare('DELETE FROM automod_points WHERE at<=?').run(Date.now()-168*3600000)
     },

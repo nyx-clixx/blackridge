@@ -99,6 +99,70 @@ test('Anti-Nuke deduplicates audit entries and logs when the actor crosses the t
   assert.match(db.recent('guild')[0].detail,/3 tracked actions/)
 })
 
+test('Anti-Nuke enforces rolling limits and escalates repeated detections per rule', async t => {
+  const db = createStore(':memory:')
+  const client = new EventEmitter()
+  client.user = {id:'bot'}
+  const cleanup = attachProtection(client,db)
+  t.after(() => { cleanup(); db.close() })
+  const bans = []
+  const guild = {id:'guild',ownerId:'owner',members:{fetch:async () => ({
+    id:'actor',guild,bannable:true,ban:async () => bans.push('actor')
+  })}}
+  const config = db.config(guild.id,'nuke')
+  config.rates = {channelDelete:{enabled:true,threshold:3,window:20,minute:0,hour:2}}
+  config.guards = {identity:{enabled:true,action:'log',escalateAfter:2,escalateTo:'ban',identity:['name']}}
+  assert.equal(policies.nuke.safeParse(config).success,true)
+  db.save(guild.id,'nuke',config,'owner')
+  const send = async (id,action,field) => {
+    client.emit(Events.GuildAuditLogEntryCreate,{
+      id,executorId:'actor',action,createdTimestamp:Date.now(),changes:field ? [{key:field}] : []
+    },guild)
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  await send('first',A.ChannelDelete)
+  await send('first',A.ChannelDelete)
+  await send('second',A.ChannelDelete)
+  assert.equal(db.recent(guild.id).filter(event => event.kind === 'nuke').length,1)
+  await send('ignored',A.GuildUpdate,'icon_hash')
+  await send('third',A.GuildUpdate,'name')
+  assert.deepEqual(bans,[])
+  await send('fourth',A.GuildUpdate,'name')
+  assert.deepEqual(bans,['actor'])
+})
+
+test('Role Gate reverses an unauthorized grant and honors the required role', async t => {
+  const db = createStore(':memory:')
+  const client = new EventEmitter()
+  client.user = {id:'bot'}
+  const cleanup = attachProtection(client,db)
+  t.after(() => { cleanup(); db.close() })
+  const role = '123456789012345678'
+  const required = '123456789012345679'
+  const grantorRoles = new Map()
+  const removed = []
+  const kicked = []
+  const guild = {id:'guild',ownerId:'owner',roles:{cache:new Map()},members:{fetch:async ({user}) => user === 'target'
+    ? {roles:{cache:new Map([[role,{}]]),remove:async id => removed.push(id)}}
+    : {id:user,guild,roles:{cache:grantorRoles},kickable:true,kick:async () => kicked.push(user)}
+  }}
+  db.save(guild.id,'nuke',{guards:{gate:{enabled:true,action:'kick',gates:[{role,required:[required]}]}}},'owner')
+  const send = async id => {
+    client.emit(Events.GuildAuditLogEntryCreate,{
+      id,executorId:'actor',targetId:'target',action:A.MemberRoleUpdate,createdTimestamp:Date.now(),
+      changes:[{key:'$add',new:[{id:role}]}]
+    },guild)
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  grantorRoles.set(required,{})
+  await send('allowed')
+  assert.deepEqual(removed,[])
+  grantorRoles.clear()
+  await send('blocked')
+  assert.deepEqual(removed,[role])
+  assert.deepEqual(kicked,['actor'])
+})
+
 test('legacy command permits become named grants and bypasses stay scoped to their selected module', t => {
   const db = createStore(':memory:')
   t.after(() => db.close())
@@ -195,4 +259,3 @@ test('policies reject extra fields and invalid actions', () => {
   assert.equal(policies.nuke.safeParse({...config,action:'unknown'}).success,false)
   db.close()
 })
-

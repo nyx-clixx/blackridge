@@ -15,6 +15,9 @@ const rateByAction = new Map([
   [A.WebhookCreate,'webhookCreate']
 ])
 const flags = value => typeof value === 'string' && /^\d+$/.test(value) ? BigInt(value) : 0n
+const watchedPermissions = ['Administrator','KickMembers','BanMembers','ManageGuild','ManageRoles','ManageChannels','ManageWebhooks','MentionEveryone']
+const permissionMask = rule => (rule.permissions ?? watchedPermissions).reduce((bits,key) => bits | P[key],0n)
+const responsePriority = ['log','strip','quarantine','kick','tempban','ban']
 const invitePattern = /(?:discord\.gg\/|discord(?:app)?\.com\/invite\/)[\w-]+/i
 
 function messageSignals(message, repeats, now, window, cfg) {
@@ -79,6 +82,8 @@ export function recordHit(history, key, now, window, threshold) {
 
 export function attachProtection(client, db) {
   const audits = new Map()
+  const longAudits = new Map()
+  const onboarding = new Map()
   const joins = new Map()
   const messages = new Map()
   const repeats = new Map()
@@ -86,7 +91,7 @@ export function attachProtection(client, db) {
   const recentAccounts = new Map()
   const raids = new Map()
   const seen = new Map()
-  const responses = new Set()
+  const responses = new Map()
   const quarantineChanges = new Set()
   const bypasses = (guild,kind) => {
     const config = db.config(guild.id,'permits')
@@ -96,6 +101,8 @@ export function attachProtection(client, db) {
   const cleanup = setInterval(() => {
     const now = Date.now()
     for (const history of [audits,joins,messages]) for (const [key,hits] of history) if (hits.at(-1) <= now-120000) history.delete(key)
+    for (const [key,hits] of longAudits) if (hits.at(-1) <= now-3600000) longAudits.delete(key)
+    for (const [key,cached] of onboarding) if (cached.until <= now) onboarding.delete(key)
     for (const active of [raids,seen]) for (const [key,until] of active) if (until <= now) active.delete(key)
     for (const [key,hits] of repeats) if (hits.at(-1).at <= now-60000) repeats.delete(key)
     for (const [key,hits] of checkpointJoins) if (hits.at(-1) <= now-3600000) checkpointJoins.delete(key)
@@ -246,6 +253,75 @@ export function attachProtection(client, db) {
       }
     })
   })
+  async function publicRole(guild,id,rule) {
+    if (id === guild.id || rule.roles?.includes(id)) return true
+    if (rule.onboarding === false) return false
+    let cached = onboarding.get(guild.id)
+    if (!cached || cached.until <= Date.now()) {
+      const pending = guild.fetchOnboarding().then(data => new Set(data.enabled
+        ? [...data.prompts.values()].flatMap(prompt => [...prompt.options.values()].flatMap(option => [...option.roles.keys()]))
+        : [])).catch(error => {
+        if (error.status === 404) return new Set()
+        log(guild,'nuke','Could not read Discord Onboarding roles')
+        return new Set()
+      })
+      cached = {until:Date.now()+30000,pending}
+      onboarding.set(guild.id,cached)
+    }
+    return (await cached.pending).has(id)
+  }
+  async function guardHits(entry,guild,cfg,actor) {
+    const hits = []
+    const guards = cfg.guards ?? {}
+    const changed = key => entry.changes.find(change => change.key === key)
+    const addedBits = key => flags(changed(key)?.new) & ~flags(changed(key)?.old)
+    const hit = (key,undo) => { if (guards[key]?.enabled) hits.push({key,rule:guards[key],undo}) }
+    if (entry.action === A.GuildUpdate && (guards.identity?.identity ?? ['icon_hash','name','vanity_url_code']).some(changed)) hit('identity')
+    if (entry.action === A.BotAdd) hit('botAdd')
+    if (entry.action === A.MemberRoleUpdate && (guards.gate?.enabled || guards.assignments?.enabled)) {
+      const added = changed('$add')?.new
+      if (Array.isArray(added) && added.length) {
+        const gates = (guards.gate?.gates ?? []).filter(gate => added.some(role => role.id === gate.role))
+        if (guards.gate?.enabled && gates.length) {
+          const grantor = await guild.members.fetch({user:actor,force:true})
+          const unauthorized = gates.filter(gate => !gate.required.some(id => id !== guild.id && id !== gate.role &&
+            grantor.roles.cache.has(id) && (actor !== entry.targetId || !added.some(role => role.id === id))))
+          if (unauthorized.length) hit('gate',async () => {
+            const target = await guild.members.fetch({user:entry.targetId,force:true})
+            for (const id of new Set(unauthorized.map(gate => gate.role))) {
+              if (target.roles.cache.has(id)) await target.roles.remove(id,'Blackridge Role Gate')
+            }
+          })
+        }
+        if (guards.assignments?.enabled && added.some(({id}) =>
+          (guild.roles.cache.get(id)?.permissions.bitfield ?? 0n) & permissionMask(guards.assignments))) hit('assignments')
+      }
+    }
+    if (entry.action === A.RoleUpdate || entry.action === A.RoleCreate) {
+      const bits = addedBits('permissions')
+      if (entry.action === A.RoleUpdate && guards.rolePermissions?.enabled && (bits & permissionMask(guards.rolePermissions))) hit('rolePermissions')
+      const rule = guards.publicRoles
+      if (rule?.enabled && (bits & permissionMask(rule)) && await publicRole(guild,entry.targetId,rule)) hit('publicRoles',async () => {
+        const role = await guild.roles.fetch(entry.targetId,{force:true})
+        if (!role || (!role.editable && role.id !== guild.id)) throw new Error('Role is not manageable')
+        await role.setPermissions(role.permissions.bitfield & ~(bits & permissionMask(rule)),'Blackridge Public Role Permissions')
+      })
+    }
+    if ([A.ChannelOverwriteCreate,A.ChannelOverwriteUpdate].includes(entry.action)) {
+      const rule = guards.publicRoles
+      const roleId = entry.extra?.id
+      const bits = rule?.enabled ? addedBits('allow') & permissionMask(rule) : 0n
+      if (bits && roleId && (roleId === guild.id || guild.roles.cache.has(roleId)) && await publicRole(guild,roleId,rule)) hit('publicRoles',async () => {
+        const channel = await guild.channels.fetch(entry.targetId,{force:true})
+        const overwrite = channel?.permissionOverwrites?.cache.get(roleId)
+        if (!overwrite) return
+        const restore = Object.fromEntries(watchedPermissions.filter(key => bits & P[key] & overwrite.allow.bitfield)
+          .map(key => [key,flags(changed('deny')?.old) & P[key] ? false : null]))
+        if (Object.keys(restore).length) await channel.permissionOverwrites.edit(roleId,restore,{reason:'Blackridge Public Role Permissions'})
+      })
+    }
+    return hits
+  }
   client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => void run(guild,'nuke',async () => {
     const cfg = db.config(guild.id,'nuke')
     const actor = entry.executorId
@@ -255,28 +331,57 @@ export function attachProtection(client, db) {
     const policy = rate ?? cfg
     if (!cfg.enabled || !actor || actor === guild.ownerId || actor === client.user.id ||
         cfg.trusted.split(',').some(id => id.trim() === actor) || seen.has(entry.id) ||
-        !policy.enabled || now - entry.createdTimestamp > policy.window*1000 ||
-        (!rate && !isDestructive(entry,guild))) return
-    if (bypass(guild,'nuke',actor,guild.members?.cache?.get(actor))) return
+        now - entry.createdTimestamp > 120000) return
+    if (bypass(guild,'nuke',actor,null)) return
     seen.set(entry.id,now+120000)
     const key = guild.id + ':' + actor
     const bucket = rate ? key + ':' + category : key
-    const count = recordHit(audits,bucket,now,policy.window*1000,policy.threshold)
-    if (count < policy.threshold || responses.has(key)) return
-    audits.delete(bucket)
-    const detail = A[entry.action] + ' by ' + actor + ' · ' + count + ' tracked actions'
-    responses.add(key)
+    let rateHit
+    if (policy.enabled && (rate || isDestructive(entry,guild))) {
+      if (rate && rate.minute !== undefined) {
+        const minute = rate.minute && recordHit(longAudits,bucket + ':minute',now,60000,rate.minute)
+        const hour = rate.hour && recordHit(longAudits,bucket + ':hour',now,3600000,rate.hour)
+        if ((minute && minute === rate.minute) || (hour && hour === rate.hour)) rateHit = {key:category,rule:rate}
+      } else if (now - entry.createdTimestamp <= policy.window*1000) {
+        const count = recordHit(audits,bucket,now,policy.window*1000,policy.threshold)
+        if (count >= policy.threshold) {
+          audits.delete(bucket)
+          rateHit = {key:category ?? 'general',rule:policy,count}
+        }
+      }
+    }
+    const hits = Object.values(cfg.guards ?? {}).some(rule => rule.enabled) ? await guardHits(entry,guild,cfg,actor) : []
+    if (rateHit) hits.push(rateHit)
+    if (!hits.length) return
+    const detail = A[entry.action] + ' by ' + actor + ' · ' + (rateHit?.count ? rateHit.count + ' tracked actions · ' : '') + hits.map(hit => hit.key).join(', ')
+    const previous = responses.get(key)
+    let release
+    const response = new Promise(resolve => { release = resolve })
+    responses.set(key,response)
     try {
-      const needsMember = cfg.action !== 'log' || bypasses(guild,'nuke').some(permit => permit.roles.length)
+      if (previous) await previous
+      const needsMember = hits.some(({rule}) => (rule.action ?? cfg.action) !== 'log' || rule.escalateAfter) ||
+        bypasses(guild,'nuke').some(permit => permit.roles.length)
       const member = needsMember ? await guild.members.fetch({user:actor,force:true}) : null
       const current = db.config(guild.id,'nuke')
-      if (!current.enabled || current.action !== cfg.action || current.trusted.split(',').some(id => id.trim() === actor) ||
+      if (!current.enabled || current.action !== cfg.action || JSON.stringify(current.guards) !== JSON.stringify(cfg.guards) ||
+          JSON.stringify(current.rates) !== JSON.stringify(cfg.rates) || current.trusted.split(',').some(id => id.trim() === actor) ||
           bypass(guild,'nuke',actor,member)) return
+      let action = 'log'
+      for (const hit of hits) {
+        const rule = hit.rule
+        const count = rule.escalateAfter ? db.nukeDetection(guild.id,actor,hit.key,entry.id,now) : 0
+        const response = count && count >= rule.escalateAfter ? rule.escalateTo ?? 'ban' : rule.action ?? cfg.action
+        if (responsePriority.indexOf(response) > responsePriority.indexOf(action)) action = response
+        if (response !== 'log' && hit.undo) {
+          try { await hit.undo() } catch { log(guild,'nuke','Could not reverse ' + hit.key + ' for ' + actor) }
+        }
+      }
       log(guild,'nuke',detail + ' · threshold reached')
       alert(guild,'nuke',cfg,'Blackridge Anti-Nuke: ' + detail)
-      if (cfg.action === 'log') return
-      if (cfg.action !== 'strip') {
-        await enforce(member,'nuke',current)
+      if (action === 'log') return
+      if (action !== 'strip') {
+        await enforce(member,'nuke',{...current,action})
         return
       }
       const roles = member.roles.cache.filter(role => role.id !== guild.id && role.editable && Boolean(role.permissions.bitfield & dangerous))
@@ -288,7 +393,10 @@ export function attachProtection(client, db) {
       }
       const remaining = member.roles.cache.some(role => !roles.has(role.id) && Boolean(role.permissions.bitfield & dangerous))
       if (!removed || remaining) log(guild,'nuke','Some or all dangerous permissions could not be removed from ' + actor)
-    } finally { responses.delete(key) }
+    } finally {
+      release()
+      if (responses.get(key) === response) responses.delete(key)
+    }
   }))
   client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => {
     if (entry.action !== A.BotAdd || !entry.executorId || !entry.targetId ||

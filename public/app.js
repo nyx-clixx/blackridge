@@ -94,8 +94,75 @@ function logList(entries,moderation = false) {
 }
 const base = '/dashboard'
 const rateLabels = {
-  moderation:'Kicks and bans', roleCreate:'Role creations', roleDelete:'Role deletions',
-  channelCreate:'Channel creations', channelDelete:'Channel deletions', webhookCreate:'Webhook creations'
+  moderation:'Kicks & Bans', roleCreate:'Role Creations', roleDelete:'Role Deletions',
+  channelCreate:'Channel Creations', channelDelete:'Channel Deletions', webhookCreate:'Webhook Creations'
+}
+const nukeGuards = {
+  assignments:['Dangerous Role Assignments','Detect when a member is given a role with a watched permission.'],
+  rolePermissions:['Dangerous Permission Updates','Detect new dangerous permissions on a server role.'],
+  publicRoles:['Public Role Permissions','Watch public roles for dangerous permission grants in the server, channels, and categories.'],
+  gate:['Role Gate','Require a grantor to hold an approved role before assigning a gated role.'],
+  botAdd:['Bot Additions','Detect when someone adds a bot to the server.'],
+  identity:['Server Identity Changes','Watch for changes to the server name, icon, or vanity invite link.']
+}
+const nukePermissions = {
+  Administrator:'Administrator',KickMembers:'Kick Members',BanMembers:'Ban Members',ManageGuild:'Manage Server',
+  ManageRoles:'Manage Roles',ManageChannels:'Manage Channels',ManageWebhooks:'Manage Webhooks',MentionEveryone:'Mention Everyone'
+}
+function nukeControls(form,config,roles) {
+  const check = (name,label,checked) => '<label class="toggle"><input type="checkbox" name="' + name + '"' + (checked ? ' checked' : '') + '>' + label + '</label>'
+  const number = (name,label,value,max) => '<label>' + label + '<span class="nuke-stepper"><button type="button" data-step="-1" aria-label="Decrease ' + label + '">−</button><input required type="number" name="' + name + '" min="0" max="' + max + '" value="' + value + '"><button type="button" data-step="1" aria-label="Increase ' + label + '">+</button></span></label>'
+  const gateRow = (gate = {role:'',required:[]}) => '<div class="nuke-gate"><div class="discord-field"><span>Gated Role</span>' + discordSelect('gate-role-' + gateIndex++,roles,[gate.role]) + '</div><div class="discord-field"><span>Required Roles</span>' + discordSelect('gate-required',roles,gate.required,true) + '</div><button class="button small" type="button" data-remove-gate>Remove</button></div>'
+  let gateIndex = 0
+  function row(key,label,description,saved,isRate) {
+    const rule = saved ?? {}
+    const actionOptions = actionsByKind.nuke.map(action => [action,actionLabels[action]])
+    const select = (name,label,items,value) => '<label>' + label + '<select name="' + key + '-' + name + '">' + items.map(([id,text]) => '<option value="' + id + '"' + (id === value ? ' selected' : '') + '>' + text + '</option>').join('') + '</select></label>'
+    const choices = (name,items,selected) => Object.entries(items).map(([value,text]) => check(key + '-' + name + '-' + value,text,selected.includes(value))).join('')
+    const permissions = ['publicRoles','assignments','rolePermissions'].includes(key)
+      ? '<div class="nuke-choices"><strong>Dangerous Permissions</strong>' + choices('permission',nukePermissions,rule.permissions ?? Object.keys(nukePermissions)) + '</div>' : ''
+    const extras = key === 'publicRoles' ? check('publicRoles-onboarding','Protect Self-Assignable Onboarding Roles',rule.onboarding !== false) +
+      '<div class="discord-field"><span>Additional Protected Roles</span>' + discordSelect('publicRoles-roles',roles,rule.roles ?? [],true) + '</div>'
+      : key === 'identity' ? '<div class="nuke-choices"><strong>Identity Changes to Watch</strong>' + choices('identity',{icon_hash:'Server Icon',name:'Server Name',vanity_url_code:'Vanity Invite Link'},rule.identity ?? ['icon_hash','name','vanity_url_code']) + '</div>'
+      : key === 'gate' ? '<p>Members need at least one required role. With an enforcement response, Blackridge also removes unauthorized grants where it can.</p><div class="nuke-gates">' + (rule.gates ?? []).map(gateRow).join('') + '</div><button type="button" class="button small" data-add-gate>Add Gated Role</button>' : ''
+    const time = isRate ? '<div class="fields">' + number(key + '-minute','Per Minute',rule.minute ?? 5,500) + number(key + '-hour','Per Hour',rule.hour ?? 15,500) + '</div><p>Set either limit to 0 to turn off that window.' +
+      (saved && rule.minute === undefined ? ' This rule currently uses its previous ' + rule.threshold + ' in ' + rule.window + 's limit. Edit either limit to switch to rolling windows.' : '') + '</p>' : ''
+    return '<article class="nuke-row" data-nuke="' + key + '" data-configured="' + Boolean(saved) + '" data-rolling="' + (rule.minute !== undefined) + '"><div><h4>' + label + '</h4><p>' + description + '</p></div><div class="nuke-row-actions"><button type="button" class="button small" data-nuke-config aria-label="Configure ' + label + '">' + icon('automod') + ' Configure</button><label class="nuke-switch"><input type="checkbox" role="switch" aria-label="Enable ' + label + '" name="' + key + '-enabled"' + (rule.enabled ? ' checked' : '') + '><span aria-hidden="true"></span></label></div><dialog class="nuke-dialog" aria-labelledby="nuke-title-' + key + '"><header><h3 id="nuke-title-' + key + '">' + label + '</h3><button type="button" class="button small" data-close-nuke aria-label="Close settings">×</button></header><div class="nuke-dialog-fields">' +
+      select('action','Response',[['','Use Default Response'],...actionOptions],rule.action ?? '') + '<div class="fields">' +
+      number(key + '-escalate','Escalate After',rule.escalateAfter ?? 0,100) + select('escalateTo','Escalate To',actionOptions,rule.escalateTo ?? 'ban') + '</div><p>Detections by the same actor within 24 hours. Use 0 to disable escalation.</p>' + time + permissions + extras + '</div></dialog></article>'
+  }
+  const guards = Object.entries(nukeGuards).map(([key,[label,description]]) => row(key,label,description,config.guards?.[key],false)).join('')
+  const rates = Object.entries(rateLabels).map(([key,label]) => row(key,label,'Track repeated actions by the same actor.',config.rates?.[key],true)).join('')
+  form.querySelector('fieldset').insertAdjacentHTML('afterbegin','<section class="card nuke-rules"><h3>Permissions & Identity</h3>' + guards + '</section><section class="card nuke-rules"><h3>Per-Action Rate Limits</h3><p>Rules without their own limits use the default policy where applicable.</p>' + rates + '</section>')
+  const trackRule = event => {
+    const row = event.target.closest('[data-nuke]')
+    if (!row || !event.target.name) return
+    const key = row.dataset.nuke
+    if ((!config.rates?.[key] && Object.hasOwn(rateLabels,key)) || /-(minute|hour)$/.test(event.target.name)) row.dataset.rolling = 'true'
+    row.dataset.configured = 'true'
+  }
+  form.addEventListener('change',trackRule)
+  form.addEventListener('input',trackRule)
+  form.addEventListener('click',event => {
+    const button = event.target.closest('button')
+    const row = button?.closest('[data-nuke]')
+    if (!row) return
+    const dialog = row.querySelector('dialog')
+    if (button.hasAttribute('data-nuke-config')) dialog.showModal()
+    if (button.hasAttribute('data-close-nuke')) dialog.close()
+    if (button.dataset.step) {
+      const input = button.parentElement.querySelector('input')
+      if (button.dataset.step === '1') input.stepUp()
+      else input.stepDown()
+      input.dispatchEvent(new Event('change',{bubbles:true}))
+    }
+    if (button.hasAttribute('data-add-gate') && dialog.querySelectorAll('.nuke-gate').length < 100)
+      dialog.querySelector('.nuke-gates').insertAdjacentHTML('beforeend',gateRow())
+    if (button.hasAttribute('data-remove-gate')) {
+      button.closest('.nuke-gate').remove()
+      form.dispatchEvent(new Event('change'))
+    }
+  })
 }
 const sensitivity = [['Low',20],['Medium',10],['High',5],['Custom',0]]
 const filters = {
@@ -157,14 +224,6 @@ function protectionControls(form, section, config) {
       if (event.target.matches('.remove-rule')) { event.target.closest('.checkpoint-rule').remove(); refresh(); add.focus(); form.dispatchEvent(new Event('change')) }
     }
     refresh()
-  }
-  if (section === 'nuke') {
-    const rows = Object.entries(rateLabels).map(([key,label]) => {
-      const rule = config.rates?.[key] ?? config
-      return '<div class="rate-row"><label class="toggle"><input type="checkbox" name="' + key + '-enabled"' + ((!config.rates || rule.enabled) ? ' checked' : '') + '> ' + label + '</label><div class="fields"><label>Actions<input required type="number" min="2" max="30" name="' + key + '-threshold" value="' + rule.threshold + '"></label><label>Window in seconds<input required type="number" min="5" max="120" name="' + key + '-window" value="' + rule.window + '"></label></div></div>'
-    }).join('')
-    insert('<section class="card settings-section"><h3>Per-Action Rate Limits</h3><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></section>')
-    return
   }
   if (section !== 'raid') return
   const matched = sensitivity.find(([,count]) => count && config.window === 10 && config.threshold === count)?.[1] ?? 0
@@ -498,6 +557,7 @@ async function dashboard() {
     if (settings?.elements.alertChannel) wireDiscordSelectors(settings,choices)
     if (section === 'permits') wirePermits(settings,choices.roles)
     if (settings && settingFields[section]) protectionControls(settings,section,data.config[section])
+    if (settings && section === 'nuke') nukeControls(settings,data.config.nuke,choices.roles)
     if (settings && section === 'nuke' && data.owner) setupQuarantine(settings,path)
     if (recoverySection) await recoveryPanel(section,path,data,[choices,recoveryState])
     if (settings && data.owner) autosave(settings,settings.querySelector('#notice'),async () => {
@@ -521,12 +581,31 @@ async function dashboard() {
           action:fields.get(key + '-action'),quarantine:fields.has(key + '-quarantine')
         }
       }
-      if (fields.has('custom-rates')) {
-        payload.rates = Object.fromEntries(Object.keys(rateLabels).map(key => [key,{
-          enabled:fields.has(key + '-enabled'),
-          threshold:Number(fields.get(key + '-threshold')),
-          window:Number(fields.get(key + '-window'))
-        }]))
+      if (section === 'nuke') {
+        payload.rates = {}
+        payload.guards = {}
+        for (const row of settings.querySelectorAll('[data-nuke][data-configured=true]')) {
+          const key = row.dataset.nuke
+          const rule = {enabled:fields.has(key + '-enabled'),escalateAfter:Number(fields.get(key + '-escalate')),
+            escalateTo:fields.get(key + '-escalateTo')}
+          if (fields.get(key + '-action')) rule.action = fields.get(key + '-action')
+          if (Object.hasOwn(rateLabels,key)) {
+            const saved = data.config.nuke.rates?.[key] ?? data.config.nuke
+            payload.rates[key] = {...rule,threshold:saved.threshold,window:saved.window}
+            if (row.dataset.rolling === 'true') Object.assign(payload.rates[key],{minute:Number(fields.get(key + '-minute')),hour:Number(fields.get(key + '-hour'))})
+            continue
+          }
+          if (['publicRoles','assignments','rolePermissions'].includes(key))
+            rule.permissions = Object.keys(nukePermissions).filter(permission => fields.has(key + '-permission-' + permission))
+          if (key === 'identity') rule.identity = ['icon_hash','name','vanity_url_code'].filter(field => fields.has(key + '-identity-' + field))
+          if (key === 'publicRoles') Object.assign(rule,{onboarding:fields.has('publicRoles-onboarding'),roles:fields.getAll('publicRoles-roles')})
+          if (key === 'gate') rule.gates = [...row.querySelectorAll('.nuke-gate')].flatMap(gate => {
+            const role = gate.querySelector('input[type=radio]:checked')?.value
+            const required = [...gate.querySelectorAll('input[name=gate-required]:checked')].map(input => input.value).filter(id => id !== role)
+            return role && required.length ? [{role,required}] : []
+          })
+          payload.guards[key] = rule
+        }
       }
       for (const [key,,min] of (settingFields[section] ?? [])) payload[key] = min === undefined ? fields.get(key) : Number(fields.get(key))
       if (fields.has('alertChannel')) {

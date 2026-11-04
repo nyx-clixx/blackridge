@@ -260,3 +260,38 @@ body.has-workspace .sidebar{overflow:auto}
 .resource-page a{color:var(--accent);text-decoration:underline}
 .resource-page li+li{margin-top:8px}
 @media(max-width:600px){.backup-controls{grid-template-columns:1fr}.backup-controls form+form{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:14px}}
+.nuke-rules{padding:0;overflow:hidden}
+.nuke-rules>h3,.nuke-rules>p{margin:0;padding:16px 20px 0}
+.nuke-rules>h3:last-of-type{padding-bottom:12px}
+.nuke-rules>p{padding-top:0;padding-bottom:14px}
+.nuke-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 20px;border-top:1px solid #ffffff14}
+.nuke-row h4,.nuke-row p{margin:0}
+.nuke-row p{margin-top:4px}
+.nuke-row-actions{display:flex;align-items:center;gap:12px;flex-shrink:0}
+.nuke-row-actions button{display:inline-flex;align-items:center;gap:6px}
+.nuke-switch{position:relative;display:inline-flex}
+.nuke-switch input{position:absolute;inset:0;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+.nuke-switch span{width:40px;height:23px;border-radius:99px;background:#3a3b41;pointer-events:none;transition:background .18s}
+.nuke-switch span::before{content:'';display:block;width:17px;height:17px;margin:3px;background:white;border-radius:50%;transition:transform .18s}
+.nuke-switch input:checked+span{background:#3977d5}
+.nuke-switch input:checked+span::before{transform:translateX(17px)}
+.nuke-switch input:focus-visible+span{outline:2px solid #8ebaff;outline-offset:3px}
+.nuke-dialog{width:min(540px,calc(100% - 28px));max-height:min(84dvh,780px);padding:0;border:1px solid #ffffff26;border-radius:16px;background:#1b1c20;color:inherit;box-shadow:0 24px 90px #0009}
+.nuke-dialog::backdrop{background:#0009;backdrop-filter:blur(3px)}
+.nuke-dialog header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid #ffffff14}
+.nuke-dialog header h3{margin:0}
+.nuke-dialog-fields{display:grid;gap:16px;padding:20px}
+.nuke-dialog-fields>label,.nuke-dialog-fields .fields>label{display:grid;gap:6px}
+.nuke-dialog-fields>.toggle{display:flex}
+.nuke-dialog-fields p{margin:0}
+.nuke-dialog .discord-options{position:relative;top:4px}
+.nuke-stepper{display:grid;grid-template-columns:36px minmax(0,1fr) 36px;border:1px solid #ffffff26;border-radius:9px;overflow:hidden}
+.nuke-stepper input{text-align:center;border:0;border-radius:0;appearance:textfield;min-width:0}
+.nuke-stepper input::-webkit-inner-spin-button{appearance:none}
+.nuke-stepper button{background:#ffffff08;border:0;color:inherit;font-size:1.15rem;cursor:pointer}
+.nuke-stepper button:hover{background:#ffffff17}
+.nuke-choices,.nuke-gates,.nuke-gate{display:grid;gap:10px}
+.nuke-gate{border:1px solid #ffffff19;border-radius:10px;padding:12px}
+.nuke-gate button,.nuke-dialog-fields>button{justify-self:start}
+@media(max-width:540px){.nuke-row{align-items:flex-start;flex-direction:column}.nuke-row-actions{align-self:flex-end}}
+@media(prefers-reduced-motion:reduce){.nuke-switch span,.nuke-switch span::before{transition:none}}
