@@ -2,6 +2,7 @@ import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, PermissionF
 import { attachModeration, temporaryBan } from './moderation.js'
 import { createHash } from 'node:crypto'
 import { hasQuarantineOverwrite, sendModuleLog, setQuarantineOverwrite } from './recovery.js'
+import { matchesPermit } from './store.js'
 
 export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages | P.ManageGuild
 const dangerous = P.Administrator | P.ManageGuild | P.ManageRoles | P.ManageChannels | P.BanMembers | P.KickMembers | P.ManageWebhooks | P.ModerateMembers
@@ -84,6 +85,8 @@ export function attachProtection(client, db) {
   const seen = new Map()
   const responses = new Set()
   const quarantineChanges = new Set()
+  const bypasses = (guild,kind) => db.config(guild.id,'permits').entries.filter(permit => permit.bypasses.includes(kind))
+  const bypass = (guild,kind,id,member) => bypasses(guild,kind).some(permit => matchesPermit(permit,id,guild.id,member?.roles.cache))
   const cleanup = setInterval(() => {
     const now = Date.now()
     for (const history of [audits,joins,messages]) for (const [key,hits] of history) if (hits.at(-1) <= now-120000) history.delete(key)
@@ -180,6 +183,7 @@ export function attachProtection(client, db) {
     void run(guild,'automod',async () => {
       const cfg = db.config(guild.id,'automod')
       if (!cfg.enabled) return
+      if (bypass(guild,'automod',message.author.id,message.member)) return
       const key = guild.id + ':' + message.author.id
       const now = Date.now()
       if (cfg.filters && Object.values(cfg.filters).some(rule => rule.action !== 'off')) {
@@ -218,6 +222,8 @@ export function attachProtection(client, db) {
       const cfg = db.config(guild.id,'automod')
       const rule = cfg.filters?.ghost
       if (!cfg.enabled || rule?.action !== 'log') return
+      const member = message.member ?? guild.members.cache.get(message.author.id)
+      if (bypass(guild,'automod',message.author.id,member)) return
       const count = message.mentions.users.size + message.mentions.roles.size + (message.mentions.everyone ? 10 : 0)
       if (count >= rule.limit) log(guild,'automod','Deleted message with mentions · author ' + message.author.id)
     })
@@ -233,6 +239,7 @@ export function attachProtection(client, db) {
         cfg.trusted.split(',').some(id => id.trim() === actor) || seen.has(entry.id) ||
         !policy.enabled || now - entry.createdTimestamp > policy.window*1000 ||
         (!rate && !isDestructive(entry,guild))) return
+    if (bypass(guild,'nuke',actor,guild.members?.cache?.get(actor))) return
     seen.set(entry.id,now+120000)
     const key = guild.id + ':' + actor
     const bucket = rate ? key + ':' + category : key
@@ -240,17 +247,16 @@ export function attachProtection(client, db) {
     if (count < policy.threshold || responses.has(key)) return
     audits.delete(bucket)
     const detail = A[entry.action] + ' by ' + actor + ' · ' + count + ' tracked actions'
-    log(guild,'nuke',detail + ' · threshold reached')
-    alert(guild,'nuke',cfg,'Blackridge Anti-Nuke: ' + detail)
-    if (cfg.action === 'log') return
     responses.add(key)
     try {
-      const member = await guild.members.fetch({user:actor,force:true})
+      const needsMember = cfg.action !== 'log' || bypasses(guild,'nuke').some(permit => permit.roles.length)
+      const member = needsMember ? await guild.members.fetch({user:actor,force:true}) : null
       const current = db.config(guild.id,'nuke')
-      if (!current.enabled || current.action !== cfg.action || current.trusted.split(',').some(id => id.trim() === actor)) {
-        log(guild,'nuke','Response skipped after a policy change for ' + actor)
-        return
-      }
+      if (!current.enabled || current.action !== cfg.action || current.trusted.split(',').some(id => id.trim() === actor) ||
+          bypass(guild,'nuke',actor,member)) return
+      log(guild,'nuke',detail + ' · threshold reached')
+      alert(guild,'nuke',cfg,'Blackridge Anti-Nuke: ' + detail)
+      if (cfg.action === 'log') return
       if (cfg.action !== 'strip') {
         await enforce(member,'nuke',current)
         return
@@ -269,7 +275,7 @@ export function attachProtection(client, db) {
   client.on(Events.GuildMemberAdd,member => void run(member.guild,'raid',async () => {
     const guild = member.guild
     const cfg = db.config(guild.id,'raid')
-    if (!cfg.enabled || member.user.bot || member.id === guild.ownerId) return
+    if (!cfg.enabled || member.user.bot || member.id === guild.ownerId || bypass(guild,'raid',member.id,member)) return
     const now = Date.now()
     const count = recordHit(joins,guild.id,now,cfg.window*1000,cfg.threshold)
     const active = (raids.get(guild.id) ?? 0) > now
@@ -287,7 +293,7 @@ export function attachProtection(client, db) {
   client.on(Events.GuildMemberAdd,member => void run(member.guild,'checkpoint',async () => {
     if (member.user.bot) return
     const cfg = db.config(member.guild.id,'checkpoint')
-    if (!cfg.enabled) return
+    if (!cfg.enabled || bypass(member.guild,'checkpoint',member.id,member)) return
     const now = Date.now()
     const joined = recordHit(checkpointJoins,member.guild.id + ':' + member.id,now,3600000,3)
     const accounts = (recentAccounts.get(member.guild.id) ?? []).filter(hit => hit.at > now-60000 && hit.id !== member.id)

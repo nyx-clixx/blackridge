@@ -149,6 +149,10 @@ fieldset{border:0;padding:0;margin:14px 0 0;min-width:0}
 .case-user code{display:block;color:var(--muted);font-size:11px;margin-top:2px}
 .case-user .event-avatar{flex:none}
 .settings-panels{display:grid;gap:14px;min-width:0}
+.permit-card>summary{cursor:pointer;font-weight:650;overflow-wrap:anywhere}
+.permit-access fieldset{margin:0}
+.permit-access legend{margin-bottom:8px;font-weight:650}
+.permit-access .toggle+.toggle{margin-top:6px}
 fieldset.settings-panels{margin:0}
 .quarantine-panel{margin-bottom:14px}
 .settings-section .fields:last-child{margin-bottom:0}

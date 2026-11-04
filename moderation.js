@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { ChannelType, Events, MessageFlags, PermissionFlagsBits as P, SlashCommandBuilder } from 'discord.js'
-import { commandNames } from './store.js'
+import { commandNames, matchesPermit } from './store.js'
 import { sendModuleLog } from './recovery.js'
 
 const channelCommands = new Set(['lock','unlock'])
@@ -21,7 +21,9 @@ const commands = commandNames.map(name => {
 export function canModerate(actor, ownerId, name, permit, channelPermissions) {
   if (!Object.hasOwn(permissions,name)) return false
   if (actor.id === ownerId) return true
-  const delegated = permit.users.includes(actor.id) || actor.roles.cache.some(role => role.id !== actor.guild.id && permit.roles.includes(role.id))
+  const delegated = Array.isArray(permit)
+    ? permit.some(entry => entry.commands.includes(name) && matchesPermit(entry,actor.id,actor.guild.id,actor.roles.cache))
+    : permit.users.includes(actor.id) || actor.roles.cache.some(role => role.id !== actor.guild.id && permit.roles.includes(role.id))
   return Boolean(delegated && actor.permissions.has(permissions[name]) && channelPermissions?.has(permissions[name]))
 }
 
@@ -69,7 +71,7 @@ export function attachModeration(client,db) {
       await interaction.deferReply({flags:MessageFlags.Ephemeral})
       const actor = await guild.members.fetch({user:interaction.user.id,force:true})
       const owner = guild.ownerId === actor.id
-      const permit = db.config(guild.id,'permits')[name]
+      const permit = db.config(guild.id,'permits').entries
       if (!canModerate(actor,guild.ownerId,name,permit,interaction.channel?.permissionsFor(actor))) {
         return await interaction.editReply('You do not have access to this command.')
       }

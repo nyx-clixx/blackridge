@@ -57,7 +57,7 @@ function autosave(form,errorOutput,write) {
   }
   const changed = event => {
     if (event.target !== form && !event.target.name) return
-    if (event.type === 'input' && !event.target.matches('input:not([type=radio]):not([type=checkbox])')) return
+    if (event.type === 'input' && !event.target.matches('input:not([type=radio]):not([type=checkbox]):not([data-commit-on-change])')) return
     dirty = true
     pendingSettings.add(flush)
     clearTimeout(timer)
@@ -174,9 +174,53 @@ const actionLabels = {log:'Log only',timeout:'Time out',strip:'Remove dangerous 
 const commandNames = ['ban','kick','timeout','warn','tempban','lock','unlock']
 const ids = value => value.split(',').map(id => id.trim()).filter(Boolean)
 
-function permitsForm(config) {
-  const rows = commandNames.map(name => '<section class="card settings-section"><h3>/' + name + '</h3><div class="fields"><label>User IDs<input name="' + name + '-users" maxlength="330" value="' + esc(config[name].users.join(', ')) + '"></label><label>Roles<input name="' + name + '-roles" maxlength="330" value="' + esc(config[name].roles.join(', ')) + '"></label></div></section>').join('')
-  return '<form class="settings-panels" id="settings"><section class="card settings-section"><h3>Command access</h3><p>Enter up to 15 comma-separated user IDs and select up to 15 roles per command. Delegates also need the corresponding Discord permission.</p></section>' + rows + '<p id="notice" role="status"></p></form>'
+const bypassLabels = {automod:'Auto Moderation',nuke:'Anti-Nuke',raid:'Anti-Raid',checkpoint:'Checkpoint'}
+function permitCard(entry,roles) {
+  const choices = (name,labels,selected) => Object.entries(labels).map(([id,label]) =>
+    '<label class="toggle"><input type="checkbox" name="' + name + '" value="' + esc(id) + '"' + (selected.includes(id) ? ' checked' : '') + '> ' + esc(label) + '</label>'
+  ).join('')
+  return '<details class="card permit-card"><summary>' + esc(entry.name) + '</summary><div class="fields"><label>Name<input name="permit-name" maxlength="60" required value="' + esc(entry.name) + '"></label><label>Discord user IDs<input name="permit-users" data-commit-on-change maxlength="330" value="' + esc(entry.users.join(', ')) + '" placeholder="Comma-separated user IDs"></label><div class="discord-field"><span>Discord roles</span>' + discordSelect('permit-roles',roles,entry.roles,true) + '</div></div><div class="fields permit-access"><fieldset><legend>Commands</legend>' + choices('permit-commands',Object.fromEntries(commandNames.map(name => [name,'/' + name])),entry.commands) + '</fieldset><fieldset><legend>Protection bypasses</legend>' + choices('permit-bypasses',bypassLabels,entry.bypasses) + '</fieldset></div><button type="button" class="button small remove-permit">Remove Permit</button></details>'
+}
+function permitsForm(config,roles) {
+  return '<form class="settings-panels" id="settings"><section class="card settings-section"><div class="module-head"><h3>Named permits</h3><button type="button" class="button small" id="add-permit">Add Permit</button></div><p>Grant commands and protection bypasses to selected Discord users or roles. Command users also need the corresponding Discord permissions.</p></section><div class="settings-panels" id="permit-list">' + config.entries.map(entry => permitCard(entry,roles)).join('') + '</div><p id="notice" role="status"></p></form>'
+}
+function wirePermits(form,roles) {
+  const list = form.querySelector('#permit-list')
+  const add = form.querySelector('#add-permit')
+  const refresh = () => { add.disabled = list.children.length >= 30 }
+  add.onclick = () => {
+    if (list.children.length >= 30) return
+    list.insertAdjacentHTML('beforeend',permitCard({name:'New Permit',users:[],roles:[],commands:[],bypasses:[]},roles))
+    list.lastElementChild.open = true
+    const name = list.lastElementChild.querySelector('[name=permit-name]')
+    name.focus()
+    name.select()
+    refresh()
+    form.dispatchEvent(new Event('change'))
+  }
+  list.addEventListener('input',event => {
+    if (event.target.name === 'permit-name') event.target.closest('.permit-card').querySelector('summary').textContent = event.target.value.trim() || 'New Permit'
+  })
+  list.addEventListener('click',event => {
+    if (!event.target.matches('.remove-permit')) return
+    event.target.closest('.permit-card').remove()
+    refresh()
+    add.focus()
+    form.dispatchEvent(new Event('change'))
+  })
+  refresh()
+}
+function readPermits(form) {
+  return {entries:[...form.querySelectorAll('.permit-card')].map(card => {
+    const selected = name => [...card.querySelectorAll('input[name=' + name + ']:checked')].map(input => input.value)
+    return {
+      name:card.querySelector('[name=permit-name]').value.trim(),
+      users:ids(card.querySelector('[name=permit-users]').value),
+      roles:selected('permit-roles'),
+      commands:selected('permit-commands'),
+      bypasses:selected('permit-bypasses')
+    }
+  })}
 }
 
 async function accountMenu(me) {
@@ -257,14 +301,11 @@ document.addEventListener('keydown',event => {
     picker.querySelector('summary').focus()
   }
 })
-function wireDiscordSelectors(form,choices,section) {
+function wireDiscordSelectors(form,choices) {
   const channel = form.elements.alertChannel
   if (channel) replaceDiscordInput(channel,discordSelect('alertChannel',choices.channels.filter(item => item.sendable),[channel.value]))
-  const roleFields = section === 'permits' ? commandNames.map(name => name + '-roles') : ['alertRoles']
-  for (const name of roleFields) {
-    const input = form.elements[name]
-    if (input) replaceDiscordInput(input,discordSelect(name,choices.roles,ids(input.value),true))
-  }
+  const roles = form.elements.alertRoles
+  if (roles) replaceDiscordInput(roles,discordSelect('alertRoles',choices.roles,ids(roles.value),true))
 }
 async function recoveryPanel(section,path,data,prepared) {
   const panel = document.querySelector('#recovery')
@@ -401,17 +442,16 @@ async function dashboard() {
     }).join('')
     const overview = '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(events.filter(event => event.kind === 'moderation'),true) + '</section><div id="recovery"></div>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(events.filter(event => event.kind === 'moderation'),true) + '</section><div id="recovery"></div>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     const settings = document.querySelector('#settings')
-    if (settings && (settings.elements.alertChannel || section === 'permits')) {
-      wireDiscordSelectors(settings,choices,section)
-    }
+    if (settings?.elements.alertChannel) wireDiscordSelectors(settings,choices)
+    if (section === 'permits') wirePermits(settings,choices.roles)
     if (settings && settingFields[section]) protectionControls(settings,section,data.config[section])
     if (settings && section === 'nuke' && data.owner) setupQuarantine(settings,path)
     if (recoverySection) await recoveryPanel(section,path,data,[choices,recoveryState])
     if (settings && data.owner) autosave(settings,settings.querySelector('#notice'),async () => {
       const fields = new FormData(settings)
-      const payload = section === 'permits' ? Object.fromEntries(commandNames.map(name => [name,{users:ids(fields.get(name + '-users')),roles:fields.getAll(name + '-roles')}])) : {enabled:fields.has('enabled')}
+      const payload = section === 'permits' ? readPermits(settings) : {enabled:fields.has('enabled')}
       if (fields.has('action')) payload.action = fields.get('action')
       if (section === 'automod') payload.filters = Object.fromEntries(Object.keys(filters).map(key => [key,{
         action:fields.get(key + '-action'),limit:Number(fields.get(key + '-limit'))

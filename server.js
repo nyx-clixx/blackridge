@@ -61,7 +61,7 @@ app.use(['/api','/auth'], (req,res,next) => {
   if (['PUT','POST'].includes(req.method) && req.get('origin') !== base) return res.status(403).json({error:'Invalid request origin.'})
   next()
 })
-app.use(express.json({limit:'8kb'}))
+app.use(express.json({limit:'32kb'}))
 async function discord(path,options = {}) {
   const response = await fetch('https://discord.com/api/v10' + path,{...options,signal:AbortSignal.timeout(8000)})
   if (response.status === 401) throw Object.assign(new Error('Discord session expired. Sign in again.'),{status:401})

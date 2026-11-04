@@ -11,13 +11,33 @@ const rates = z.strictObject(Object.fromEntries(
 const snowflake = z.string().regex(/^\d{17,20}$/)
 export const commandNames = ['ban','kick','timeout','warn','tempban','lock','unlock']
 const principals = z.array(snowflake).max(15)
-const permit = z.strictObject({users:principals,roles:principals})
+export const permitBypasses = ['automod','nuke','raid','checkpoint']
+const permit = z.strictObject({
+  name:z.string().trim().min(1).max(60),
+  users:principals,
+  roles:principals,
+  commands:z.array(z.enum(commandNames)).max(commandNames.length),
+  bypasses:z.array(z.enum(permitBypasses)).max(permitBypasses.length)
+})
+
+export function matchesPermit(permit,userId,guildId,roles) {
+  return permit.users.includes(userId) || permit.roles.some(id => id !== guildId && roles?.has(id))
+}
+
+function normalizePermits(config) {
+  if (Array.isArray(config.entries)) return config
+  return {entries:commandNames.flatMap(command => {
+    const entry = config[command]
+    if (!entry || !(entry.users.length || entry.roles.length)) return []
+    return [{name:'/' + command,users:entry.users,roles:entry.roles,commands:[command],bypasses:[]}]
+  })}
+}
 const alerts = {alertChannel:z.union([snowflake,z.literal('')]).optional(),alertRoles:z.array(snowflake).max(5).optional()}
 const timedResponse = {tempBanMinutes:integer(1,1440).optional(),quarantineMinutes:integer(1,1440).optional()}
 export const spamFilters = ['mentions','files','images','stickers','invites','links','caps','newlines','length','emoji','headers','duplicate','multiUser','badWords','scam','nsfw','ghost']
 const filter = z.strictObject({action:z.enum(['off','log','delete','timeout']),limit:integer(1,4000)})
 export const policies = {
-  permits: z.strictObject(Object.fromEntries(commandNames.map(name => [name,permit]))),
+  permits: z.strictObject({entries:z.array(permit).max(30)}),
   automod: z.strictObject({enabled:z.boolean(),threshold:integer(3,30),window:integer(2,60),action:z.enum(['log','timeout']),timeoutMinutes:integer(1,1440),filters:z.strictObject(Object.fromEntries(spamFilters.map(key => [key,filter]))).optional(),badWords:z.string().max(500).optional(),nsfwDomains:z.string().max(500).optional(),...alerts}),
   moderation:z.strictObject({alertChannel:z.union([snowflake,z.literal('')])}),
   lockdown:z.strictObject({alertChannel:z.union([snowflake,z.literal('')])}),
@@ -27,7 +47,7 @@ export const policies = {
   raid: z.strictObject({enabled:z.boolean(),threshold:integer(3,100),window:integer(5,120),duration:integer(15,600),age:integer(0,365),action:z.enum(['log','timeout','kick','ban','tempban','quarantine']),timeoutMinutes:integer(1,1440).optional(),...alerts,...timedResponse})
 }
 const defaults = {
-  permits:Object.fromEntries(commandNames.map(name => [name,{users:[],roles:[]}])),
+  permits:{entries:[]},
   automod:{enabled:false,threshold:6,window:8,action:'log',timeoutMinutes:5,badWords:'',nsfwDomains:''},
   checkpoint:{enabled:false,age:7,agePoints:3,avatarPoints:2,threshold:5,alertChannel:'',alertRoles:[],rejoinPoints:0,similarPoints:0,inviteNamePoints:0,quarantineMinutes:10,tempBanMinutes:60},
   nuke:{enabled:true,threshold:3,window:20,trusted:'',action:'log',alertChannel:'',alertRoles:[],tempBanMinutes:60,quarantineMinutes:10},
@@ -87,7 +107,10 @@ export function createStore(file) {
     tempBan(guild,user,marker,expires) { db.prepare('INSERT INTO temp_ban VALUES (?,?,?,?)').run(guild,user,marker,expires) },
     dueBans() { return db.prepare('SELECT * FROM temp_ban WHERE expires<=? ORDER BY expires LIMIT 100').all(Date.now()) },
     removeTempBan(guild,user,marker) { db.prepare('DELETE FROM temp_ban WHERE guild=? AND user=? AND marker=?').run(guild,user,marker) },
-    config(guild,kind) { return {...defaults[kind], ...JSON.parse(read.get(guild,kind)?.config ?? '{}')} },
+    config(guild,kind) {
+      const saved = JSON.parse(read.get(guild,kind)?.config ?? '{}')
+      return kind === 'permits' ? normalizePermits(saved) : {...defaults[kind],...saved}
+    },
     save(guild,kind,config,actor) {
       db.exec('BEGIN IMMEDIATE')
       try {

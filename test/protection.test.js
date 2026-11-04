@@ -74,6 +74,30 @@ test('Anti-Nuke deduplicates audit entries and logs when the actor crosses the t
   assert.match(db.recent('guild')[0].detail,/3 tracked actions/)
 })
 
+test('legacy command permits become named grants and bypasses stay scoped to their selected module', t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  const user = '123456789012345678'
+  db.save('guild','permits',{ban:{users:[user],roles:[]}},'owner')
+  const migrated = db.config('guild','permits')
+  assert.deepEqual(migrated.entries,[{name:'/ban',users:[user],roles:[],commands:['ban'],bypasses:[]}])
+  const actor = {id:user,guild:{id:'guild'},roles:{cache:new Map()},permissions:{has:() => true}}
+  assert.equal(canModerate(actor,'owner','ban',migrated.entries,{has:() => true}),true)
+  assert.equal(canModerate(actor,'owner','kick',migrated.entries,{has:() => true}),false)
+  migrated.entries[0].bypasses.push('nuke')
+  db.save('guild','permits',policies.permits.parse(migrated),'owner')
+  const client = new EventEmitter()
+  client.user = {id:'bot'}
+  const cleanup = attachProtection(client,db)
+  t.after(cleanup)
+  const guild = {id:'guild',ownerId:'owner'}
+  const count = db.recent(guild.id).length
+  for (const id of ['1','2','3']) client.emit(Events.GuildAuditLogEntryCreate,{
+    id,executorId:user,action:A.ChannelDelete,createdTimestamp:Date.now()
+  },guild)
+  assert.equal(db.recent(guild.id).length,count)
+})
+
 test('Anti-Nuke journals existing roles before replacing them with quarantine', async t => {
   const db = createStore(':memory:')
   const client = new EventEmitter()
