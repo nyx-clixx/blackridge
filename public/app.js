@@ -27,19 +27,17 @@ const request = async (url, options) => {
   return data
 }
 const shell = html => { app.innerHTML = '<div class="wrap dashboard">' + html + '</div>' }
-function logList(entries,compact = false) {
+function logList(entries,moderation = false) {
   if (!entries.length) return '<p class="empty">' + icon('logs') + ' No security events in this view.</p>'
   const rows = entries.map(event => {
     const avatar = event.userId && event.avatar
       ? '<img class="event-avatar" alt="" src="https://cdn.discordapp.com/avatars/' + encodeURIComponent(event.userId) + '/' + encodeURIComponent(event.avatar) + '.png?size=32">'
       : '<span class="event-avatar fallback-avatar" aria-hidden="true">' + icon('checkpoint') + '</span>'
-    if (compact) {
-      const action = event.detail.match(/^(ban|kick|timeout|warn|tempban|lock|unlock)\b/)?.[1] ?? 'Moderation'
-      return '<tr><td><div class="case-user">' + avatar + '<div><strong>' + esc(event.userName ?? 'Unknown user') + '</strong><code>' + esc(event.userId ?? '—') + '</code></div></div></td><td><span title="' + esc(event.detail) + '">' + esc(action === 'Moderation' ? action : '/' + action) + '</span></td><td><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></td></tr>'
-    }
-    return '<tr><td>' + avatar + '</td><td>' + esc(event.userName ?? (event.userId ? 'Unknown user' : 'System')) + '</td><td><code>' + esc(event.userId ?? '—') + '</code></td><td><span class="badge">' + esc(sections[event.kind] ?? 'Settings') + '</span><div>' + esc(event.detail) + '</div></td><td><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></td></tr>'
+    const command = event.kind === 'moderation' && event.detail.match(/^(ban|kick|timeout|warn|tempban|lock|unlock)\b/)?.[1]
+    const action = command ? '/' + command : event.detail.replace(/ · initiated by .+$/,'').replace(/\b(?:invites_disabled_until|dms_disabled_until)\b/g,key => key === 'invites_disabled_until' ? 'invite pause' : 'DM pause').trim()
+    return '<tr><td><div class="case-user">' + avatar + '<div><strong>' + esc(event.userName ?? (event.userId ? 'Unknown user' : 'System')) + '</strong><code>' + esc(event.userId ?? '—') + '</code></div></div></td><td><span title="' + esc(event.detail) + '">' + esc(action) + '</span></td><td><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></td></tr>'
   }).join('')
-  return '<div class="event-scroll"><table class="event-table"><thead><tr>' + (compact ? '<th scope="col">Moderator</th>' : '<th scope="col">Icon</th><th scope="col">User Name</th><th scope="col">User ID</th>') + '<th scope="col">Action</th><th scope="col">Date and time</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+  return '<div class="event-scroll"><table class="event-table"><thead><tr><th scope="col">' + (moderation ? 'Moderator' : 'User') + '</th><th scope="col">Action</th><th scope="col">Date and time</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
 }
 const base = '/dashboard'
 const rateLabels = {
@@ -64,11 +62,11 @@ function extraControls(section,config) {
       const actions = {off:'Disabled',log:'Log',...(key === 'ghost' ? {} : {delete:'Delete message',timeout:'Timeout'})}
       return '<article class="filter-card"><h3>' + label + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options(actions,rule?.action ?? 'off') + '</select></label><label>Threshold<input type="number" required min="1" max="4000" name="' + key + '-limit" value="' + esc(rule?.limit ?? limit) + '"></label></div></article>'
     }).join('')
-    return '<section class="policy-group"><h3>Message filters</h3><p>Text and attachment filters require Message Content access. Domain checks use your list and do not open URLs.</p><div class="grid filter-grid">' + cards + '</div></section>'
+    return '<section class="card settings-section"><h3>Message filters</h3><p>Text and attachment filters require Message Content access. Domain checks use your list and do not open URLs.</p><div class="grid filter-grid">' + cards + '</div></section>'
   }
   if (section === 'checkpoint') {
     const rows = (config.rules ?? []).map(rule => checkpointRule(rule.score,rule.action)).join('')
-    return '<section class="policy-group"><h3>Risk score rules</h3><p>The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.</p><div class="grid filter-grid" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section>'
+    return '<section class="card settings-section"><h3>Risk score rules</h3><p>The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.</p><div class="grid filter-grid" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section>'
   }
   return ''
 }
@@ -76,7 +74,7 @@ function checkpointRule(score,action = 'log') {
   return '<article class="filter-card checkpoint-rule"><div class="module-head"><h3>Risk rule</h3><button type="button" class="button small remove-rule">Remove</button></div><div class="fields"><label>Minimum score<input type="number" min="1" max="25" required name="score" value="' + esc(score) + '"></label><label>Response<select name="rule">' + options({log:'Log and alert',kick:'Kick',quarantine:'Quarantine',tempban:'Temporary ban'},action) + '</select></label></div></article>'
 }
 function protectionControls(form, section, config) {
-  const button = form.querySelector('button')
+  const button = form.querySelector('button[type=submit]')
   button.insertAdjacentHTML('beforebegin',extraControls(section,config))
   if (section === 'checkpoint') {
     const list = form.querySelector('#checkpoint-rules')
@@ -93,7 +91,7 @@ function protectionControls(form, section, config) {
       const rule = config.rates?.[key] ?? config
       return '<div class="rate-row"><label class="toggle"><input type="checkbox" name="' + key + '-enabled"' + ((!config.rates || rule.enabled) ? ' checked' : '') + '> ' + label + '</label><div class="fields"><label>Actions<input required type="number" min="2" max="30" name="' + key + '-threshold" value="' + rule.threshold + '"></label><label>Window in seconds<input required type="number" min="5" max="120" name="' + key + '-window" value="' + rule.window + '"></label></div></div>'
     }).join('')
-    button.insertAdjacentHTML('beforebegin','<section class="rate-settings"><h3>Per-action rate limits</h3><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></section>')
+    button.insertAdjacentHTML('beforebegin','<section class="card settings-section"><h3>Per-action rate limits</h3><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></section>')
     return
   }
   if (section !== 'raid') return
@@ -120,13 +118,13 @@ const actionsByKind = {
   raid:['log','timeout','quarantine','kick','ban','tempban'],
   automod:['log','timeout']
 }
-const actionLabels = {log:'Log only',timeout:'Time out',strip:'Remove dangerous roles',quarantine:'Quarantine (Discord timeout)',kick:'Kick',ban:'Ban',tempban:'Temporary ban'}
+const actionLabels = {log:'Log only',timeout:'Time out',strip:'Remove dangerous roles',quarantine:'Quarantine',kick:'Kick',ban:'Ban',tempban:'Temporary ban'}
 const commandNames = ['ban','kick','timeout','warn','tempban','lock','unlock']
 const ids = value => value.split(',').map(id => id.trim()).filter(Boolean)
 
 function permitsForm(config) {
-  const rows = commandNames.map(name => '<section class="policy-group"><h3>/' + name + '</h3><div class="fields"><label>User IDs<input name="' + name + '-users" maxlength="330" value="' + esc(config[name].users.join(', ')) + '"></label><label>Roles<input name="' + name + '-roles" maxlength="330" value="' + esc(config[name].roles.join(', ')) + '"></label></div></section>').join('')
-  return '<form class="card" id="settings"><h3>Command access</h3><p>Enter up to 15 comma-separated user IDs and select up to 15 roles per command. Delegates also need the corresponding Discord permission.</p>' + rows + '<button class="button primary">Save permits</button><p id="notice" role="status"></p></form>'
+  const rows = commandNames.map(name => '<section class="card settings-section"><h3>/' + name + '</h3><div class="fields"><label>User IDs<input name="' + name + '-users" maxlength="330" value="' + esc(config[name].users.join(', ')) + '"></label><label>Roles<input name="' + name + '-roles" maxlength="330" value="' + esc(config[name].roles.join(', ')) + '"></label></div></section>').join('')
+  return '<form class="settings-panels" id="settings"><section class="card settings-section"><h3>Command access</h3><p>Enter up to 15 comma-separated user IDs and select up to 15 roles per command. Delegates also need the corresponding Discord permission.</p></section>' + rows + '<button class="button primary settings-save" type="submit">Save permits</button><p id="notice" role="status"></p></form>'
 }
 
 async function accountMenu(me) {
@@ -154,7 +152,7 @@ function form(kind, config, owner) {
   const response = actionsByKind[kind] ? '<label>Response<select name="action">' + actionsByKind[kind].map(action => '<option value="' + action + '"' + (config.action === action ? ' selected' : '') + '>' + actionLabels[action] + '</option>').join('') + '</select></label>' : ''
   const alertFields = settingFields[kind].filter(([key]) => key.startsWith('alert'))
   const baseFields = settingFields[kind].filter(([key]) => !key.startsWith('alert'))
-  return '<form class="card" id="settings"><h3>' + (kind === 'automod' ? 'Anti-Spam' : sections[kind] + ' policy') + '</h3><p>' + (owner ? 'Set detection thresholds and how Blackridge responds.' : 'Only the server owner can change this policy.') + '</p><fieldset' + disabled + '><label class="toggle"><input type="checkbox" name="enabled"' + (config.enabled ? ' checked' : '') + '> Enable detection</label><div class="fields">' + fields(baseFields) + response + '</div>' + (alertFields.length ? '<section class="policy-group"><h3>Discord alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '<button class="button primary">Save settings</button></fieldset><p role="status" id="notice"></p></form>'
+  return '<form id="settings"><fieldset class="settings-panels"' + disabled + '><section class="card settings-section"><h3>' + (kind === 'automod' ? 'Anti-Spam' : sections[kind] + ' policy') + '</h3><p>' + (owner ? 'Set detection thresholds and how Blackridge responds.' : 'Only the server owner can change this policy.') + '</p><label class="toggle stack"><input type="checkbox" name="enabled"' + (config.enabled ? ' checked' : '') + '> Enable detection</label><div class="fields">' + fields(baseFields) + response + '</div></section>' + (alertFields.length ? '<section class="card settings-section"><h3>Discord alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '<button class="button primary settings-save" type="submit">Save settings</button></fieldset><p role="status" id="notice"></p></form>'
 }
 function discordSelect(name,items,values,multiple = false) {
   const selected = new Set(values.filter(Boolean))
@@ -225,8 +223,8 @@ async function recoveryPanel(section,path,data) {
   let controls = ''
   if (section === 'lockdown') {
     controls = state.lockdown
-      ? '<form class="card stack" data-operation="lift"><h3>Lockdown Controls</h3><p class="badge">Active</p><p>Started ' + esc(new Date(state.lockdown).toLocaleString()) + '</p><button class="button primary">Lift Lockdown</button></form>'
-      : '<form class="card stack" data-operation="enable"><h3>Lockdown Controls</h3><p>Channel locks modify @everyone. Invite and DM pauses are applied for one hour where Discord exposes the current state.</p><div class="fields"><div class="discord-field"><span>Channels</span>' + discordSelect('channels',channels,[],true) + '</div></div><label class="toggle"><input type="checkbox" name="all"> Lock all supported channels</label><label class="toggle"><input type="checkbox" name="verification"> Raise verification to highest</label><label class="toggle"><input type="checkbox" name="invites"> Pause invites</label><label class="toggle"><input type="checkbox" name="dms"> Pause direct messages</label><button class="button primary">Enable Lockdown</button></form>'
+      ? '<form class="card stack" data-operation="lift"><h3>Lockdown Controls</h3><p class="badge">Active</p><p>Started ' + esc(new Date(state.lockdown).toLocaleString()) + '</p><button class="button primary lockdown-submit">Lift Lockdown</button></form>'
+      : '<form class="card stack" data-operation="enable"><h3>Lockdown Controls</h3><p>Channel locks modify @everyone. Invite and DM pauses are applied for one hour where Discord exposes the current state.</p><div class="fields"><div class="discord-field"><span>Channels</span>' + discordSelect('channels',channels,[],true) + '</div></div><label class="toggle"><input type="checkbox" name="all"> Lock all supported channels</label><label class="toggle"><input type="checkbox" name="verification"> Raise verification to highest</label><label class="toggle"><input type="checkbox" name="invites"> Pause invites</label><label class="toggle"><input type="checkbox" name="dms"> Pause direct messages</label><button class="button primary lockdown-submit">Enable Lockdown</button></form>'
   }
   if (section === 'backup') {
     const history = (state.backups ?? []).map(item => '<option value="' + item.id + '">' + esc(new Date(item.at).toLocaleString()) + '</option>').join('')
@@ -264,7 +262,7 @@ async function recoveryPanel(section,path,data) {
 function setupQuarantine(settings,path) {
   const panel = document.createElement('section')
   panel.className = 'card stack'
-  panel.innerHTML = '<h3>Quarantine role</h3><p>Configure a permission-free role across channels and categories. Anti-Nuke pairs it with a Discord timeout.</p><button type="button" class="button stack">Configure Quarantine Role</button>'
+  panel.innerHTML = '<h3>Quarantine role</h3><p>Apply view and chat denies across channels and categories. Anti-Nuke removes manageable roles and restores eligible roles when quarantine ends.</p><button type="button" class="button stack">Configure Quarantine Role</button>'
   settings.after(panel)
   panel.querySelector('button').onclick = async event => {
     const button = event.currentTarget
@@ -370,7 +368,7 @@ async function dashboard() {
         payload.alertRoles = fields.getAll('alertRoles')
       }
       const notice = document.querySelector('#notice')
-      const button = settings.querySelector('button')
+      const button = settings.querySelector('button[type=submit]')
       button.disabled = true
       try { await request(path + '/' + section,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); notice.textContent = 'Settings saved.' }
       catch (error) { notice.textContent = error.message }

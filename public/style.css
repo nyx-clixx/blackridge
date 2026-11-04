@@ -144,6 +144,12 @@ fieldset{border:0;padding:0;margin:14px 0 0;min-width:0}
 .case-user{display:flex;align-items:center;gap:9px;min-width:175px}
 .case-user code{display:block;color:var(--muted);font-size:11px;margin-top:2px}
 .case-user .event-avatar{flex:none}
+.settings-panels{display:grid;gap:14px;min-width:0}
+fieldset.settings-panels{margin:0}
+.settings-save{justify-self:start}
+.settings-section .fields:last-child{margin-bottom:0}
+.settings-section>h3+.toggle{margin-top:12px}
+.lockdown-submit{margin-top:16px}
 body.has-workspace{height:100dvh;display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden}
 body.has-workspace #app,body.has-workspace .dashboard{min-height:0;height:100%}
 body.has-workspace .dash-layout{height:100%;min-height:0;grid-template-rows:minmax(0,1fr)}

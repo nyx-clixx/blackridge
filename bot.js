@@ -1,7 +1,7 @@
 import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, PermissionFlagsBits as P } from 'discord.js'
 import { attachModeration, temporaryBan } from './moderation.js'
 import { createHash } from 'node:crypto'
-import { sendModuleLog, setQuarantineOverwrite } from './recovery.js'
+import { hasQuarantineOverwrite, sendModuleLog, setQuarantineOverwrite } from './recovery.js'
 
 export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages | P.ManageGuild
 const dangerous = P.Administrator | P.ManageGuild | P.ManageRoles | P.ManageChannels | P.BanMembers | P.KickMembers | P.ManageWebhooks | P.ModerateMembers
@@ -124,33 +124,55 @@ export function attachProtection(client, db) {
     if (action === 'kick' && member.kickable) await member.kick(reason)
     else if (action === 'ban' && member.bannable) await member.ban({reason})
     else if (action === 'tempban' && member.bannable) await temporaryBan(member,cfg.tempBanMinutes,db,reason)
-    else if (['timeout','quarantine'].includes(action) && member.moderatable) {
+    else if (action === 'quarantine' && kind === 'nuke') {
+      await isolate(member,cfg,reason)
+      return
+    } else if (['timeout','quarantine'].includes(action) && member.moderatable) {
       const minutes = action === 'timeout' ? cfg.timeoutMinutes : cfg.quarantineMinutes
       const until = Math.max(Date.now()+minutes*60000,member.communicationDisabledUntilTimestamp ?? 0)
       await member.disableCommunicationUntil(until,reason)
       log(member.guild,kind,'Timed out ' + member.id + ' for ' + minutes + ' minute(s) or longer')
-      if (action === 'quarantine' && kind === 'nuke') {
-        const guild = member.guild
-        const id = db.recovery(guild.id,'quarantineRole')?.role
-        const role = id && guild.roles.cache.get(id)
-        const key = guild.id + ':' + member.id
-        if (role?.editable && role.permissions.bitfield === 0n && !quarantineChanges.has(key) &&
-            !guild.channels.cache.some(channel => channel.permissionOverwrites?.cache.get(role.id)?.allow.bitfield)) {
-          quarantineChanges.add(key)
-          try {
-            if (!member.roles.cache.has(id) || db.hasQuarantine(guild.id,member.id,id)) {
-              db.quarantineMember(guild.id,member.id,id,until)
-              await member.roles.add(role,reason)
-            }
-          } finally { quarantineChanges.delete(key) }
-        }
-      }
       return
     } else {
       log(member.guild,kind,'Response blocked by Discord permissions or role hierarchy for ' + member.id)
       return
     }
     log(member.guild,kind,action + ' completed for ' + member.id)
+  }
+  async function isolate(member,cfg,reason) {
+    const guild = member.guild
+    const key = guild.id + ':' + member.id
+    const journalKey = 'quarantine:' + member.id
+    if (quarantineChanges.has(key)) return
+    quarantineChanges.add(key)
+    try {
+      const previous = db.recovery(guild.id,journalKey)
+      const roleId = previous?.role ?? db.recovery(guild.id,'quarantineRole')?.role
+      const role = roleId && guild.roles.cache.get(roleId)
+      const held = member.roles.cache.filter(item => item.id !== guild.id && item.id !== roleId)
+      const channels = guild.channels.cache.filter(channel => channel.permissionOverwrites)
+      const hasChannelBypass = channels.some(channel => {
+        const memberOverride = channel.permissionOverwrites.cache.get(member.id)
+        return memberOverride?.allow.has(P.ViewChannel,false)
+      })
+      if (!member.manageable || !role?.editable || role.permissions.bitfield !== 0n ||
+          held.some(item => !item.editable) || hasChannelBypass ||
+          guild.roles.everyone.permissions.has(P.Administrator,false) ||
+          channels.some(channel => !hasQuarantineOverwrite(channel,role))) {
+        log(guild,'nuke','Response blocked for ' + member.id + ' · quarantine role, channel overrides, or role hierarchy need attention')
+        return
+      }
+      const originals = {...previous?.originals}
+      for (const item of held.values()) originals[item.id] ??= String(item.permissions.bitfield)
+      const until = Math.max(Date.now()+cfg.quarantineMinutes*60000,member.communicationDisabledUntilTimestamp ?? 0)
+      db.saveRecovery(guild.id,journalKey,{role:role.id,originals,removeRole:previous?.removeRole ?? !member.roles.cache.has(role.id)})
+      db.quarantineMember(guild.id,member.id,role.id,until)
+      await member.roles.add(role,reason)
+      for (const item of held.values()) await member.roles.remove(item,reason)
+      log(guild,'nuke','Quarantined ' + member.id + ' · removed ' + held.size + ' role(s)')
+      const isolated = await guild.members.fetch({user:member.id,force:true})
+      if (isolated.moderatable) await isolated.disableCommunicationUntil(until,reason)
+    } finally { quarantineChanges.delete(key) }
   }
   client.on(Events.MessageCreate,message => {
     if (!message.inGuild() || !message.member || message.author.bot || message.webhookId || message.member.permissions.has(P.ManageMessages)) return
@@ -298,10 +320,25 @@ export function attachProtection(client, db) {
         quarantineChanges.add(key)
         try {
           const member = await guild.members.fetch({user:row.user,force:true})
-          if (member.roles.cache.has(row.role)) await member.roles.remove(row.role,'Blackridge quarantine expired')
+          const journalKey = 'quarantine:' + row.user
+          const journal = db.recovery(guild.id,journalKey)
+          if (journal?.role === row.role) {
+            for (const [id,permissions] of Object.entries(journal.originals)) {
+              const role = guild.roles.cache.get(id)
+              if (member.roles.cache.has(id)) continue
+              if (role?.editable && String(role.permissions.bitfield) === permissions) {
+                await member.roles.add(role,'Blackridge quarantine expired')
+              } else log(guild,'nuke','Skipped restoring role ' + id + ' for ' + row.user)
+            }
+            if (journal.removeRole && member.roles.cache.has(row.role)) await member.roles.remove(row.role,'Blackridge quarantine expired')
+            db.clearRecovery(guild.id,journalKey)
+          } else if (!journal && member.roles.cache.has(row.role)) await member.roles.remove(row.role,'Blackridge quarantine expired')
           db.removeQuarantine(row)
         } catch (error) {
-          if (error.code === 10007) db.removeQuarantine(row)
+          if (error.code === 10007) {
+            if (db.recovery(guild.id,'quarantine:' + row.user)?.role === row.role) db.clearRecovery(guild.id,'quarantine:' + row.user)
+            db.removeQuarantine(row)
+          }
         } finally { quarantineChanges.delete(key) }
       }
     } catch { console.error('Quarantine expiry check failed') }

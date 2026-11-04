@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter, once } from 'node:events'
-import { AuditLogEvent as A, Events, PermissionFlagsBits as P } from 'discord.js'
+import { AuditLogEvent as A, Collection, Events, PermissionFlagsBits as P } from 'discord.js'
 import { attachProtection, isDestructive, recordHit } from '../bot.js'
 import { createStore, policies } from '../store.js'
 import { canModerate } from '../moderation.js'
@@ -72,6 +72,36 @@ test('Anti-Nuke deduplicates audit entries and logs when the actor crosses the t
   assert.equal(db.recent('guild').length,0)
   send('4','actor')
   assert.match(db.recent('guild')[0].detail,/3 tracked actions/)
+})
+
+test('Anti-Nuke journals existing roles before replacing them with quarantine', async t => {
+  const db = createStore(':memory:')
+  const client = new EventEmitter()
+  client.user = {id:'bot'}
+  const cleanup = attachProtection(client,db)
+  t.after(() => { cleanup(); db.close() })
+  const role = {id:'quarantine',editable:true,permissions:{bitfield:0n}}
+  const admin = {id:'admin',editable:true,permissions:{bitfield:P.Administrator}}
+  const finished = new EventEmitter()
+  const guild = {id:'guild',ownerId:'owner',channels:{cache:new Collection()},
+    roles:{cache:new Collection([[role.id,role]]),everyone:{permissions:{has:() => false}}},
+    members:{fetch:async () => member}}
+  const held = new Collection([[admin.id,admin]])
+  const member = {id:'actor',guild,manageable:true,moderatable:true,
+    roles:{cache:held,add:async item => held.set(item.id,item),remove:async item => {
+      assert.equal(db.recovery(guild.id,'quarantine:actor').originals.admin,String(P.Administrator))
+      held.delete(item.id)
+    }},
+    disableCommunicationUntil:async () => finished.emit('done')
+  }
+  db.saveRecovery(guild.id,'quarantineRole',{role:role.id})
+  db.save(guild.id,'nuke',{...db.config(guild.id,'nuke'),threshold:2,action:'quarantine'},'owner')
+  const done = once(finished,'done',{signal:AbortSignal.timeout(1000)})
+  for (const id of ['one','two']) client.emit(Events.GuildAuditLogEntryCreate,{
+    id,executorId:'actor',action:A.ChannelDelete,createdTimestamp:Date.now()
+  },guild)
+  await done
+  assert.deepEqual([...held.keys()],['quarantine'])
 })
 
 test('Anti-Raid times out young accounts only after the join threshold', async t => {

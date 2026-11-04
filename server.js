@@ -179,7 +179,7 @@ app.get('/api/guilds/:id',(req,res) => {
 app.get('/api/guilds/:id/events',async (req,res) => {
   const events = db.recent(req.guild.id).map(event => {
     const pattern = event.kind === 'moderation' ? /\bmoderator (\d{17,20})\b/
-      : /(?:\b(?:by|from|out|for|flagged|author) |\bmember )(\d{17,20})\b/i
+      : /(?:\b(?:by|from|out|for|flagged|author|quarantined) |\bmember )(\d{17,20})\b/i
     return {...event,userId:event.detail.match(pattern)?.[1] ?? null}
   })
   const missing = [...new Set(events.map(event => event.userId).filter(id => id && !bot.users.cache.has(id)))].slice(0,8)

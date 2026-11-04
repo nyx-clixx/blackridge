@@ -10,7 +10,12 @@ const textTypes = new Set([C.GuildText,C.GuildAnnouncement,C.GuildForum,C.GuildM
 const voiceTypes = new Set([C.GuildVoice,C.GuildStageVoice])
 const restorableTypes = new Set([...textTypes,...voiceTypes,C.GuildCategory])
 const textBits = ['SendMessages','AddReactions','CreatePublicThreads','CreatePrivateThreads','SendMessagesInThreads']
-const quarantineBits = Object.fromEntries([...textBits,'Speak'].map(key => [key,false]))
+const quarantineBits = Object.fromEntries(['ViewChannel',...textBits,'Speak'].map(key => [key,false]))
+const quarantineMask = Object.keys(quarantineBits).reduce((mask,key) => mask | P[key],0n)
+export function hasQuarantineOverwrite(channel,role) {
+  const overwrite = channel.permissionOverwrites.cache.get(role.id)
+  return Boolean(overwrite && overwrite.allow.bitfield === 0n && overwrite.deny.has(quarantineMask,false))
+}
 export function setQuarantineOverwrite(channel,role) {
   return channel.permissionOverwrites.edit(role,quarantineBits,{reason:'Blackridge quarantine role'})
 }
