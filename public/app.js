@@ -27,15 +27,19 @@ const request = async (url, options) => {
   return data
 }
 const shell = html => { app.innerHTML = '<div class="wrap dashboard">' + html + '</div>' }
-function logList(entries) {
+function logList(entries,compact = false) {
   if (!entries.length) return '<p class="empty">' + icon('logs') + ' No security events in this view.</p>'
   const rows = entries.map(event => {
     const avatar = event.userId && event.avatar
       ? '<img class="event-avatar" alt="" src="https://cdn.discordapp.com/avatars/' + encodeURIComponent(event.userId) + '/' + encodeURIComponent(event.avatar) + '.png?size=32">'
       : '<span class="event-avatar fallback-avatar" aria-hidden="true">' + icon('checkpoint') + '</span>'
+    if (compact) {
+      const action = event.detail.match(/^(ban|kick|timeout|warn|tempban|lock|unlock)\b/)?.[1] ?? 'Moderation'
+      return '<tr><td><div class="case-user">' + avatar + '<div><strong>' + esc(event.userName ?? 'Unknown user') + '</strong><code>' + esc(event.userId ?? '—') + '</code></div></div></td><td><span title="' + esc(event.detail) + '">' + esc(action === 'Moderation' ? action : '/' + action) + '</span></td><td><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></td></tr>'
+    }
     return '<tr><td>' + avatar + '</td><td>' + esc(event.userName ?? (event.userId ? 'Unknown user' : 'System')) + '</td><td><code>' + esc(event.userId ?? '—') + '</code></td><td><span class="badge">' + esc(sections[event.kind] ?? 'Settings') + '</span><div>' + esc(event.detail) + '</div></td><td><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></td></tr>'
   }).join('')
-  return '<div class="event-scroll"><table class="event-table"><thead><tr><th scope="col">Icon</th><th scope="col">User Name</th><th scope="col">User ID</th><th scope="col">Action</th><th scope="col">Date and time</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+  return '<div class="event-scroll"><table class="event-table"><thead><tr>' + (compact ? '<th scope="col">Moderator</th>' : '<th scope="col">Icon</th><th scope="col">User Name</th><th scope="col">User ID</th>') + '<th scope="col">Action</th><th scope="col">Date and time</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
 }
 const base = '/dashboard'
 const rateLabels = {
@@ -63,17 +67,27 @@ function extraControls(section,config) {
     return '<section class="policy-group"><h3>Message filters</h3><p>Text and attachment filters require Message Content access. Domain checks use your list and do not open URLs.</p><div class="grid filter-grid">' + cards + '</div></section>'
   }
   if (section === 'checkpoint') {
-    const rows = Array.from({length:3},(_,index) => {
-      const rule = config.rules?.[index]
-      return '<article class="filter-card"><h3>Rule ' + (index+1) + '</h3><div class="fields"><label>Minimum score<input type="number" min="1" max="25" required name="score-' + index + '" value="' + esc(rule?.score ?? config.threshold) + '"></label><label>Response<select name="rule-' + index + '">' + options({off:'Disabled',log:'Log and alert',kick:'Kick',quarantine:'Quarantine',tempban:'Temporary ban'},rule?.action ?? 'off') + '</select></label></div></article>'
-    }).join('')
-    return '<section class="policy-group"><h3>Risk score rules</h3><p>The highest matching threshold wins. If all rules are disabled, the minimum score above controls logging and alerts.</p><div class="grid filter-grid">' + rows + '</div></section>'
+    const rows = (config.rules ?? []).map(rule => checkpointRule(rule.score,rule.action)).join('')
+    return '<section class="policy-group"><h3>Risk score rules</h3><p>The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.</p><div class="grid filter-grid" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section>'
   }
   return ''
+}
+function checkpointRule(score,action = 'log') {
+  return '<article class="filter-card checkpoint-rule"><div class="module-head"><h3>Risk rule</h3><button type="button" class="button small remove-rule">Remove</button></div><div class="fields"><label>Minimum score<input type="number" min="1" max="25" required name="score" value="' + esc(score) + '"></label><label>Response<select name="rule">' + options({log:'Log and alert',kick:'Kick',quarantine:'Quarantine',tempban:'Temporary ban'},action) + '</select></label></div></article>'
 }
 function protectionControls(form, section, config) {
   const button = form.querySelector('button')
   button.insertAdjacentHTML('beforebegin',extraControls(section,config))
+  if (section === 'checkpoint') {
+    const list = form.querySelector('#checkpoint-rules')
+    const add = form.querySelector('#add-checkpoint-rule')
+    const refresh = () => { add.disabled = list.children.length >= 4 }
+    add.onclick = () => { if (list.children.length < 4) list.insertAdjacentHTML('beforeend',checkpointRule(config.threshold)); refresh() }
+    list.onclick = event => {
+      if (event.target.matches('.remove-rule')) { event.target.closest('.checkpoint-rule').remove(); refresh(); add.focus() }
+    }
+    refresh()
+  }
   if (section === 'nuke') {
     const rows = Object.entries(rateLabels).map(([key,label]) => {
       const rule = config.rates?.[key] ?? config
@@ -211,22 +225,25 @@ async function recoveryPanel(section,path,data) {
   let controls = ''
   if (section === 'lockdown') {
     controls = state.lockdown
-      ? '<form class="card stack" data-operation="lift"><h3>Lockdown active</h3><p>Started ' + esc(new Date(state.lockdown).toLocaleString()) + '</p><div class="fields"><label>Type LIFT LOCKDOWN<input name="confirm" required></label></div><button class="button primary">Lift Lockdown</button></form>'
-      : '<form class="card stack" data-operation="enable"><h3>Lockdown controls</h3><p>Channel locks modify @everyone. Invite and DM pauses are applied for one hour where Discord exposes the current state.</p><div class="fields"><div class="discord-field"><span>Channels</span>' + discordSelect('channels',channels,[],true) + '</div></div><label class="toggle"><input type="checkbox" name="all"> Lock all supported channels</label><label class="toggle"><input type="checkbox" name="verification"> Raise verification to highest</label><label class="toggle"><input type="checkbox" name="invites"> Pause invites</label><label class="toggle"><input type="checkbox" name="dms"> Pause direct messages</label><div class="fields"><label>Type ENABLE LOCKDOWN<input name="confirm" required></label></div><button class="button primary">Enable Lockdown</button></form>'
+      ? '<form class="card stack" data-operation="lift"><h3>Lockdown Controls</h3><p class="badge">Active</p><p>Started ' + esc(new Date(state.lockdown).toLocaleString()) + '</p><button class="button primary">Lift Lockdown</button></form>'
+      : '<form class="card stack" data-operation="enable"><h3>Lockdown Controls</h3><p>Channel locks modify @everyone. Invite and DM pauses are applied for one hour where Discord exposes the current state.</p><div class="fields"><div class="discord-field"><span>Channels</span>' + discordSelect('channels',channels,[],true) + '</div></div><label class="toggle"><input type="checkbox" name="all"> Lock all supported channels</label><label class="toggle"><input type="checkbox" name="verification"> Raise verification to highest</label><label class="toggle"><input type="checkbox" name="invites"> Pause invites</label><label class="toggle"><input type="checkbox" name="dms"> Pause direct messages</label><button class="button primary">Enable Lockdown</button></form>'
   }
   if (section === 'backup') {
     const history = (state.backups ?? []).map(item => '<option value="' + item.id + '">' + esc(new Date(item.at).toLocaleString()) + '</option>').join('')
-    controls = '<form class="card stack" data-operation="backup"><h3>Manual backup</h3><p>Save server settings, roles, channels and overwrites. The latest 20 backups are retained.</p><button class="button">Create Backup</button></form><form class="card stack" data-operation="schedule"><h3>Automatic backups</h3><div class="fields"><label>Frequency<select name="hours">' + options({0:'Disabled',6:'Every 6 hours',12:'Every 12 hours',24:'Daily',168:'Weekly'},String(state.schedule?.hours ?? 0)) + '</select></label></div><button class="button">Save Schedule</button></form>' +
+    controls = '<form class="card stack" data-operation="backup"><h3>Manual backup</h3><p>Save server settings, roles, channels and overwrites. The latest three backups are retained.</p><button class="button">Create Backup</button></form><form class="card stack" data-operation="schedule"><h3>Automatic backups</h3><div class="fields"><label>Frequency<select name="hours">' + options({0:'Disabled',6:'Every 6 hours',12:'Every 12 hours',24:'Daily',168:'Weekly'},String(state.schedule?.hours ?? 0)) + '</select></label></div><button class="button">Save Schedule</button></form>' +
       (history ? '<form class="card stack" data-operation="restore"><h3>Backup history</h3><p>Restore supported settings and recreate eligible deleted roles and channels. Messages, role memberships, member overwrites, and ordering require manual recovery.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label><label>Type RESTORE BACKUP<input name="confirm" required></label></div><button class="button primary">Restore Backup</button></form>' : '<p class="stack">No backups yet.</p>')
   }
-  panel.innerHTML = '<form class="card stack" data-operation="logging"><h3>Discord logging</h3><div class="fields"><div class="discord-field"><span>Logging channel</span>' + channel + '</div></div><button class="button">Save Logging</button></form>' + controls + '<p class="stack" role="status"></p>'
+  const logging = '<form class="card stack" data-operation="logging"><h3>Discord logging</h3><div class="fields"><div class="discord-field"><span>Logging channel</span>' + channel + '</div></div><button class="button">Save Logging</button></form>'
+  panel.innerHTML = (section === 'lockdown' ? controls + logging : logging + controls) + '<p class="stack" role="status"></p>'
   const status = panel.querySelector('[role="status"]')
   for (const form of panel.querySelectorAll('form')) form.onsubmit = async event => {
     event.preventDefault()
     const operation = form.dataset.operation
     const fields = new FormData(form)
     const payload = Object.fromEntries(fields)
+    if (operation === 'lift') payload.confirm = 'LIFT LOCKDOWN'
     if (operation === 'enable') {
+      payload.confirm = 'ENABLE LOCKDOWN'
       payload.channels = fields.getAll('channels')
       for (const key of ['all','verification','invites','dms']) payload[key] = fields.has(key)
     }
@@ -242,6 +259,39 @@ async function recoveryPanel(section,path,data) {
       panel.querySelector('[role="status"]').textContent = result.notices?.join(' ') || 'Saved.'
     } catch (error) { status.textContent = error.message }
     finally { button.disabled = false }
+  }
+}
+function setupQuarantine(settings,path) {
+  const panel = document.createElement('section')
+  panel.className = 'card stack'
+  panel.innerHTML = '<h3>Quarantine role</h3><p>Configure a permission-free role across channels and categories. Anti-Nuke pairs it with a Discord timeout.</p><button type="button" class="button stack">Configure Quarantine Role</button>'
+  settings.after(panel)
+  panel.querySelector('button').onclick = async event => {
+    const button = event.currentTarget
+    button.disabled = true
+    try {
+      const [state,choices] = await Promise.all([request(path + '/recovery'),request(path + '/options')])
+      panel.innerHTML = '<h3>Quarantine role</h3><p>Select an existing permission-free role, or leave it unselected to create one.</p><form><div class="fields"><div class="discord-field"><span>Role</span>' + discordSelect('role',choices.roles,[state.quarantineSetup || state.quarantineRole]) + '</div></div><button class="button primary">Apply to Channels and Categories</button><p role="status"></p></form>'
+      const form = panel.querySelector('form')
+      form.onsubmit = async submit => {
+        submit.preventDefault()
+        const action = form.querySelector('button')
+        const status = form.querySelector('[role="status"]')
+        action.disabled = true
+        try {
+          const result = await request(path + '/recovery/quarantine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role:new FormData(form).get('role')})})
+          status.textContent = result.notices.length ? result.notices.join(' · ') : 'Quarantine role configured.'
+          if (!new FormData(form).get('role')) {
+            const [updated,options] = await Promise.all([request(path + '/recovery'),request(path + '/options')])
+            form.querySelector('.discord-select').outerHTML = discordSelect('role',options.roles,[updated.quarantineSetup])
+          }
+        } catch (error) { status.textContent = error.message }
+        finally { action.disabled = false }
+      }
+    } catch (error) {
+      panel.querySelector('p').textContent = error.message
+      button.disabled = false
+    }
   }
 }
 async function dashboard() {
@@ -288,13 +338,14 @@ async function dashboard() {
     }).join('')
     const overview = '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<div id="recovery"></div><section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(events.filter(event => event.kind === 'moderation')) + '</section>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<div id="recovery"></div><section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(events.filter(event => event.kind === 'moderation'),true) + '</section>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     if (['lockdown','backup','moderation'].includes(section)) await recoveryPanel(section,path,data)
     const settings = document.querySelector('#settings')
     if (settings && (settings.elements.alertChannel || section === 'permits')) {
       await wireDiscordSelectors(settings,path,section)
     }
     if (settings && settingFields[section]) protectionControls(settings,section,data.config[section])
+    if (settings && section === 'nuke' && data.owner) setupQuarantine(settings,path)
     if (settings) settings.onsubmit = async event => {
       event.preventDefault()
       const fields = new FormData(settings)
@@ -303,9 +354,9 @@ async function dashboard() {
       if (section === 'automod') payload.filters = Object.fromEntries(Object.keys(filters).map(key => [key,{
         action:fields.get(key + '-action'),limit:Number(fields.get(key + '-limit'))
       }]))
-      if (section === 'checkpoint') payload.rules = Array.from({length:3},(_,index) => ({
-        score:Number(fields.get('score-' + index)),action:fields.get('rule-' + index)
-      })).filter(rule => rule.action !== 'off')
+      if (section === 'checkpoint') payload.rules = fields.getAll('score').map((score,index) => ({
+        score:Number(score),action:fields.getAll('rule')[index]
+      }))
       if (fields.has('custom-rates')) {
         payload.rates = Object.fromEntries(Object.keys(rateLabels).map(key => [key,{
           enabled:fields.has(key + '-enabled'),

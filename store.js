@@ -22,7 +22,7 @@ export const policies = {
   moderation:z.strictObject({alertChannel:z.union([snowflake,z.literal('')])}),
   lockdown:z.strictObject({alertChannel:z.union([snowflake,z.literal('')])}),
   backup:z.strictObject({alertChannel:z.union([snowflake,z.literal('')])}),
-  checkpoint: z.strictObject({enabled:z.boolean(),age:integer(1,365),agePoints:integer(0,5),avatarPoints:integer(0,5),threshold:integer(1,25),alertChannel:z.union([snowflake,z.literal('')]),alertRoles:z.array(snowflake).max(5),rejoinPoints:integer(0,5).optional(),similarPoints:integer(0,5).optional(),inviteNamePoints:integer(0,5).optional(),rules:z.array(z.strictObject({score:integer(1,25),action:z.enum(['log','kick','quarantine','tempban'])})).max(3).optional(),...timedResponse}),
+  checkpoint: z.strictObject({enabled:z.boolean(),age:integer(1,365),agePoints:integer(0,5),avatarPoints:integer(0,5),threshold:integer(1,25),alertChannel:z.union([snowflake,z.literal('')]),alertRoles:z.array(snowflake).max(5),rejoinPoints:integer(0,5).optional(),similarPoints:integer(0,5).optional(),inviteNamePoints:integer(0,5).optional(),rules:z.array(z.strictObject({score:integer(1,25),action:z.enum(['log','kick','quarantine','tempban'])})).max(4).optional(),...timedResponse}),
   nuke: z.strictObject({enabled:z.boolean(),threshold:integer(2,30),window:integer(5,120),trusted:z.string().max(500).regex(/^\s*(?:\d{17,20}(?:\s*,\s*\d{17,20})*)?\s*$/),action:z.enum(['log','strip','kick','ban','tempban','quarantine']),rates:rates.optional(),...alerts,...timedResponse}),
   raid: z.strictObject({enabled:z.boolean(),threshold:integer(3,100),window:integer(5,120),duration:integer(15,600),age:integer(0,365),action:z.enum(['log','timeout','kick','ban','tempban','quarantine']),timeoutMinutes:integer(1,1440).optional(),...alerts,...timedResponse})
 }
@@ -47,10 +47,25 @@ export function createStore(file) {
     CREATE TABLE IF NOT EXISTS recovery (guild TEXT, kind TEXT, data TEXT, PRIMARY KEY(guild,kind));
     CREATE TABLE IF NOT EXISTS backup (id INTEGER PRIMARY KEY, guild TEXT, at INTEGER, data TEXT);
     CREATE INDEX IF NOT EXISTS backup_guild ON backup(guild,id DESC);`)
+  db.exec(`DELETE FROM backup WHERE id IN (
+    SELECT id FROM (SELECT id,row_number() OVER (PARTITION BY guild ORDER BY id DESC) AS rank FROM backup) WHERE rank>3
+  );
+  DELETE FROM recovery WHERE kind LIKE 'restore:%' AND NOT EXISTS (
+    SELECT 1 FROM backup WHERE backup.guild=recovery.guild AND backup.id=CAST(substr(recovery.kind,9) AS INTEGER)
+  );
+  CREATE TABLE IF NOT EXISTS quarantine_member (
+    guild TEXT, user TEXT, role TEXT, expires INTEGER, PRIMARY KEY(guild,user,role)
+  );`)
   const append = db.prepare('INSERT INTO event (guild,kind,detail,at) VALUES (?,?,?,?)')
   const read = db.prepare('SELECT config FROM policy WHERE guild=? AND kind=?')
   const write = db.prepare('INSERT INTO policy VALUES (?,?,?) ON CONFLICT(guild,kind) DO UPDATE SET config=excluded.config')
   return {
+    quarantineMember(guild,user,role,expires) {
+      db.prepare('INSERT INTO quarantine_member VALUES (?,?,?,?) ON CONFLICT(guild,user,role) DO UPDATE SET expires=max(expires,excluded.expires)').run(guild,user,role,expires)
+    },
+    hasQuarantine(guild,user,role) { return Boolean(db.prepare('SELECT 1 FROM quarantine_member WHERE guild=? AND user=? AND role=?').get(guild,user,role)) },
+    dueQuarantines() { return db.prepare('SELECT * FROM quarantine_member WHERE expires<=? ORDER BY expires LIMIT 100').all(Date.now()) },
+    removeQuarantine(row) { db.prepare('DELETE FROM quarantine_member WHERE guild=? AND user=? AND role=? AND expires=?').run(row.guild,row.user,row.role,row.expires) },
     session(id) { return db.prepare('SELECT data FROM web_session WHERE id=? AND expires>?').get(id,Date.now())?.data },
     sessionCount() { return db.prepare('SELECT count(*) AS count FROM web_session WHERE expires>?').get(Date.now()).count },
     saveSession(id,data,expires) { db.prepare('INSERT INTO web_session VALUES (?,?,?)').run(id,data,expires) },
@@ -60,7 +75,7 @@ export function createStore(file) {
     clearRecovery(guild,kind) { db.prepare('DELETE FROM recovery WHERE guild=? AND kind=?').run(guild,kind) },
     saveBackup(guild,data) {
       db.prepare('INSERT INTO backup (guild,at,data) VALUES (?,?,?)').run(guild,Date.now(),JSON.stringify(data))
-      db.prepare('DELETE FROM backup WHERE guild=? AND id NOT IN (SELECT id FROM backup WHERE guild=? ORDER BY id DESC LIMIT 20)').run(guild,guild)
+      db.prepare('DELETE FROM backup WHERE guild=? AND id NOT IN (SELECT id FROM backup WHERE guild=? ORDER BY id DESC LIMIT 3)').run(guild,guild)
       db.prepare("DELETE FROM recovery WHERE guild=? AND kind LIKE 'restore:%' AND CAST(substr(kind,9) AS INTEGER) NOT IN (SELECT id FROM backup WHERE guild=?)").run(guild,guild)
     },
     backups(guild) { return db.prepare('SELECT id,at FROM backup WHERE guild=? ORDER BY id DESC').all(guild) },

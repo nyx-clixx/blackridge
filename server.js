@@ -200,7 +200,7 @@ app.get('/api/guilds/:id/options',async (req,res) => {
 app.get('/api/guilds/:id/recovery',(req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can access recovery.'})
   const id = req.guild.id
-  res.json({lockdown:db.recovery(id,'lockdown')?.at ?? null,backups:db.backups(id),schedule:db.recovery(id,'backupSchedule')})
+  res.json({lockdown:db.recovery(id,'lockdown')?.at ?? null,backups:db.backups(id),schedule:db.recovery(id,'backupSchedule'),quarantineRole:db.recovery(id,'quarantineRole')?.role ?? '',quarantineSetup:db.recovery(id,'quarantineSetup')?.role ?? ''})
 })
 app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can run recovery operations.'})
@@ -211,6 +211,7 @@ app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
     if (req.params.operation === 'enable') return recovery.enable(guild,actor,input)
     if (req.params.operation === 'lift' && input.confirm === 'LIFT LOCKDOWN') return recovery.lift(guild,actor)
     if (req.params.operation === 'backup') return recovery.backup(guild,actor)
+    if (req.params.operation === 'quarantine') return recovery.quarantine(guild,actor,input.role)
     if (req.params.operation === 'restore' && input.confirm === 'RESTORE BACKUP' && Number.isSafeInteger(input.id)) return recovery.restore(guild,actor,input.id)
     if (req.params.operation === 'schedule' && [0,6,12,24,168].includes(input.hours)) {
       if (input.hours) db.saveRecovery(guild.id,'backupSchedule',{hours:input.hours,next:Date.now()+input.hours*3600000})

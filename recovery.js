@@ -10,6 +10,10 @@ const textTypes = new Set([C.GuildText,C.GuildAnnouncement,C.GuildForum,C.GuildM
 const voiceTypes = new Set([C.GuildVoice,C.GuildStageVoice])
 const restorableTypes = new Set([...textTypes,...voiceTypes,C.GuildCategory])
 const textBits = ['SendMessages','AddReactions','CreatePublicThreads','CreatePrivateThreads','SendMessagesInThreads']
+const quarantineBits = Object.fromEntries([...textBits,'Speak'].map(key => [key,false]))
+export function setQuarantineOverwrite(channel,role) {
+  return channel.permissionOverwrites.edit(role,quarantineBits,{reason:'Blackridge quarantine role'})
+}
 const invalid = message => Object.assign(new Error(message),{status:400})
 const incidentPath = guild => '/guilds/' + guild.id + '/incident-actions'
 const guildRaw = guild => guild.client.rest.get(Routes.guild(guild.id))
@@ -136,6 +140,25 @@ export function recoveryTools(db,bot) {
     })
     record(guild,'backup',actor,'Backup saved')
   }
+  async function quarantine(guild,actor,id) {
+    if (id !== '' && !snowflake.safeParse(id).success) throw invalid('Select a valid quarantine role.')
+    const {channels,roles} = await scope(guild)
+    const role = id ? roles.get(id) : await guild.roles.create({name:'Blackridge Quarantine',permissions:0n,reason:'Blackridge quarantine setup'})
+    if (!role?.editable || role.id === guild.id || role.permissions.bitfield !== 0n) throw invalid('Use a manageable role with no server permissions.')
+    const targets = channels.filter(channel => channel?.permissionOverwrites)
+    if (targets.some(channel => channel.permissionOverwrites.cache.get(role.id)?.allow.bitfield)) {
+      throw invalid('The quarantine role must have no channel permission grants.')
+    }
+    const notices = []
+    db.saveRecovery(guild.id,'quarantineSetup',{role:role.id})
+    for (const channel of targets.values()) {
+      try { await setQuarantineOverwrite(channel,role) }
+      catch { notices.push('Could not configure #' + channel.name) }
+    }
+    if (!notices.length) db.saveRecovery(guild.id,'quarantineRole',{role:role.id})
+    record(guild,'nuke',actor,notices.length ? 'Quarantine role setup incomplete' : 'Quarantine role configured')
+    return notices
+  }
   async function restore(guild,actor,id) {
     const snapshot = db.backup(guild.id,id)
     if (!snapshot) throw invalid('Backup not found.')
@@ -214,6 +237,6 @@ export function recoveryTools(db,bot) {
   }
   const timer = setInterval(() => { void tick().catch(() => console.error('Backup scheduler failed')) },60000)
   timer.unref()
-  return {run,scope,enable,lift,backup,restore}
+  return {run,scope,enable,lift,backup,restore,quarantine}
 }
 

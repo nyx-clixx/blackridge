@@ -1,7 +1,7 @@
 import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, PermissionFlagsBits as P } from 'discord.js'
 import { attachModeration, temporaryBan } from './moderation.js'
 import { createHash } from 'node:crypto'
-import { sendModuleLog } from './recovery.js'
+import { sendModuleLog, setQuarantineOverwrite } from './recovery.js'
 
 export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages | P.ManageGuild
 const dangerous = P.Administrator | P.ManageGuild | P.ManageRoles | P.ManageChannels | P.BanMembers | P.KickMembers | P.ManageWebhooks | P.ModerateMembers
@@ -83,6 +83,7 @@ export function attachProtection(client, db) {
   const raids = new Map()
   const seen = new Map()
   const responses = new Set()
+  const quarantineChanges = new Set()
   const cleanup = setInterval(() => {
     const now = Date.now()
     for (const history of [audits,joins,messages]) for (const [key,hits] of history) if (hits.at(-1) <= now-120000) history.delete(key)
@@ -128,6 +129,22 @@ export function attachProtection(client, db) {
       const until = Math.max(Date.now()+minutes*60000,member.communicationDisabledUntilTimestamp ?? 0)
       await member.disableCommunicationUntil(until,reason)
       log(member.guild,kind,'Timed out ' + member.id + ' for ' + minutes + ' minute(s) or longer')
+      if (action === 'quarantine' && kind === 'nuke') {
+        const guild = member.guild
+        const id = db.recovery(guild.id,'quarantineRole')?.role
+        const role = id && guild.roles.cache.get(id)
+        const key = guild.id + ':' + member.id
+        if (role?.editable && role.permissions.bitfield === 0n && !quarantineChanges.has(key) &&
+            !guild.channels.cache.some(channel => channel.permissionOverwrites?.cache.get(role.id)?.allow.bitfield)) {
+          quarantineChanges.add(key)
+          try {
+            if (!member.roles.cache.has(id) || db.hasQuarantine(guild.id,member.id,id)) {
+              db.quarantineMember(guild.id,member.id,id,until)
+              await member.roles.add(role,reason)
+            }
+          } finally { quarantineChanges.delete(key) }
+        }
+      }
       return
     } else {
       log(member.guild,kind,'Response blocked by Discord permissions or role hierarchy for ' + member.id)
@@ -163,6 +180,14 @@ export function attachProtection(client, db) {
       log(guild,'automod','Message rate exceeded by ' + message.author.id)
       if (cfg.action !== 'log') await enforce(message.member,'automod',cfg)
     })
+  })
+  client.on(Events.ChannelCreate,channel => {
+    if (!channel.guild || !channel.permissionOverwrites) return
+    const id = db.recovery(channel.guild.id,'quarantineRole')?.role
+    const role = id && channel.guild.roles.cache.get(id)
+    if (role?.editable && role.permissions.bitfield === 0n) {
+      void run(channel.guild,'nuke',() => setQuarantineOverwrite(channel,role))
+    }
   })
   client.on(Events.MessageDelete,message => {
     if (!message.inGuild() || message.partial || message.author?.bot || message.webhookId) return
@@ -261,7 +286,29 @@ export function attachProtection(client, db) {
     alert(member.guild,'checkpoint',cfg,detail)
     if (rule.action !== 'log' && member.id !== member.guild.ownerId) await enforce(member,'checkpoint',{...cfg,action:rule.action})
   }))
-  return () => clearInterval(cleanup)
+  let sweeping = false
+  const quarantineSweep = setInterval(async () => {
+    if (sweeping || !client.isReady()) return
+    sweeping = true
+    try {
+      for (const row of db.dueQuarantines()) {
+        const guild = client.guilds.cache.get(row.guild)
+        const key = row.guild + ':' + row.user
+        if (!guild?.available || quarantineChanges.has(key)) continue
+        quarantineChanges.add(key)
+        try {
+          const member = await guild.members.fetch({user:row.user,force:true})
+          if (member.roles.cache.has(row.role)) await member.roles.remove(row.role,'Blackridge quarantine expired')
+          db.removeQuarantine(row)
+        } catch (error) {
+          if (error.code === 10007) db.removeQuarantine(row)
+        } finally { quarantineChanges.delete(key) }
+      }
+    } catch { console.error('Quarantine expiry check failed') }
+    finally { sweeping = false }
+  },30000)
+  quarantineSweep.unref()
+  return () => { clearInterval(cleanup); clearInterval(quarantineSweep) }
 }
 
 export function startBot(token,db) {
