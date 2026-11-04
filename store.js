@@ -218,7 +218,7 @@ export function createStore(file) {
     unlock(guild,channel) { db.prepare('DELETE FROM channel_lock WHERE guild=? AND channel=?').run(guild,channel) },
     tempBan(guild,user,marker,expires) { db.prepare('INSERT INTO temp_ban VALUES (?,?,?,?)').run(guild,user,marker,expires) },
     dueBans() { return db.prepare('SELECT * FROM temp_ban WHERE expires<=? ORDER BY expires LIMIT 100').all(Date.now()) },
-    pendingTempBan(guild,user) { return db.prepare('SELECT marker FROM temp_ban WHERE guild=? AND user=?').get(guild,user) },
+    pendingTempBan(guild,user) { return db.prepare('SELECT marker,expires FROM temp_ban WHERE guild=? AND user=?').get(guild,user) },
     removeTempBan(guild,user,marker) { db.prepare('DELETE FROM temp_ban WHERE guild=? AND user=? AND marker=?').run(guild,user,marker) },
     config(guild,kind) {
       const saved = JSON.parse(read.get(guild,kind)?.config ?? '{}')

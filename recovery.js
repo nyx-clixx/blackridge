@@ -1,7 +1,7 @@
 import { ChannelType as C, PermissionFlagsBits as P, Routes } from 'discord.js'
 import { z } from 'zod'
 import { guildPlan } from './store.js'
-import { logCard } from './messages.js'
+import { logCard, mention, safeText } from './messages.js'
 
 const snowflake = z.string().regex(/^\d{17,20}$/)
 const lockdownInput = z.strictObject({
@@ -47,7 +47,11 @@ export function recoveryTools(db,bot) {
   const record = (guild,kind,actor,detail) => {
     const line = detail + ' · initiated by ' + actor
     db.event(guild.id,kind,line)
-    void sendModuleLog(guild,db,kind,line)
+    const title = {'Lockdown started':'Lockdown Started','Lockdown lifted':'Lockdown Lifted',
+      'Lockdown recovery incomplete':'Lockdown Recovery Incomplete','Quarantine role configured':'Quarantine Role Configured'}[detail]
+    void sendModuleLog(guild,db,kind,{title:title ?? (kind === 'lockdown' ? 'Lockdown Update' : 'Recovery Update'),
+      body:safeText(detail),options:{icon:detail === 'Lockdown lifted' ? 'unlocked' : kind === 'lockdown' ? 'locked' : 'gear',
+        fields:[['Initiated By',/^\d{17,20}$/.test(actor) ? mention(actor) : safeText(actor)]]}})
   }
   const scope = async guild => {
     const [channels,roles] = await Promise.all([guild.channels.fetch(),guild.roles.fetch()])

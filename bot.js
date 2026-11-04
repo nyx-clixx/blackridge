@@ -4,7 +4,7 @@ import { attachVerification } from './verification.js'
 import { createHash } from 'node:crypto'
 import { hasQuarantineOverwrite, sendModuleLog, setQuarantineOverwrite } from './recovery.js'
 import { guildPlan, matchesPermit, premiumFilters, premiumGuards } from './store.js'
-import { logCard, messageCard, safeText } from './messages.js'
+import { actionCard, logCard, memberAction } from './messages.js'
 import { onDomainList, startDomainFeeds } from './domain-feeds.js'
 
 export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages | P.ManageGuild | P.ReadMessageHistory | P.EmbedLinks | P.AttachFiles
@@ -111,11 +111,11 @@ export function attachProtection(client, db) {
     for (const [key,hits] of recentAccounts) if (hits.at(-1).at <= now-60000) recentAccounts.delete(key)
   },60000)
   cleanup.unref()
-  const log = (guild,kind,text) => {
+  const log = (guild,kind,text,card) => {
     db.event(guild.id,kind,text)
-    if (kind === 'automod' || (['nuke','raid','checkpoint'].includes(kind) &&
+    if (card || kind === 'automod' || (['nuke','raid','checkpoint'].includes(kind) &&
         /^(?:Protection error|Response |Timed out|Removed role|Some or all|(?:kick|ban|tempban) completed)/.test(text))) {
-      void sendModuleLog(guild,db,kind,text)
+      void sendModuleLog(guild,db,kind,card ?? text)
     }
   }
   const run = async (guild,kind,handler) => {
@@ -136,8 +136,9 @@ export function attachProtection(client, db) {
   const enforce = async (member,kind,cfg) => {
     const reason = 'Blackridge ' + kind + ' threshold reached'
     const action = cfg.action
-    const notify = (title,icon) => {
-      void member.user?.send?.(messageCard(title,'**Server** '+safeText(member.guild.name)+'\n**Reason** '+safeText(reason),{icon,tone:'warning'})).catch(() => {})
+    const data = {userId:member.id,reason}
+    const notify = (kind,until) => {
+      void member.user?.send?.(actionCard(memberAction(kind,{...data,server:member.guild.name,until,dm:true}))).catch(() => {})
     }
     if (action === 'kick' && member.kickable) await member.kick(reason)
     else if (action === 'ban' && member.bannable) await member.ban({reason})
@@ -149,16 +150,18 @@ export function attachProtection(client, db) {
       const minutes = action === 'timeout' ? cfg.timeoutMinutes : cfg.quarantineMinutes
       const until = Math.max(Date.now()+minutes*60000,member.communicationDisabledUntilTimestamp ?? 0)
       await member.disableCommunicationUntil(until,reason)
-      notify('Server Timeout','timer')
-      log(member.guild,kind,'Timed out ' + member.id + ' for ' + minutes + ' minute(s) or longer')
+      notify('timeout',until)
+      log(member.guild,kind,'Timed out ' + member.id + ' for ' + minutes + ' minute(s) or longer',
+        memberAction('timeout',{...data,actor:client.user?.id,until}))
       return
     } else {
       log(member.guild,kind,'Response blocked by Discord permissions or role hierarchy for ' + member.id)
       return
     }
     db.recordModeration(member.guild.id,member.id,action,reason)
-    notify(({kick:'Server Kick',ban:'Server Ban',tempban:'Temporary Ban'})[action],action === 'tempban' ? 'timer' : 'hammer')
-    log(member.guild,kind,action + ' completed for ' + member.id)
+    const until = action === 'tempban' ? db.pendingTempBan(member.guild.id,member.id)?.expires : undefined
+    notify(action,until)
+    log(member.guild,kind,action + ' completed for ' + member.id,memberAction(action,{...data,actor:client.user?.id,until}))
   }
   async function isolate(member,cfg,reason,kind = 'nuke') {
     const guild = member.guild
@@ -190,7 +193,8 @@ export function attachProtection(client, db) {
       db.quarantineMember(guild.id,member.id,role.id,until)
       await member.roles.add(role,reason)
       for (const item of held.values()) await member.roles.remove(item,reason)
-      log(guild,kind,'Quarantined ' + member.id + ' · removed ' + held.size + ' role(s)')
+      log(guild,kind,'Quarantined ' + member.id + ' · removed ' + held.size + ' role(s)',
+        memberAction('quarantine',{userId:member.id,actor:client.user?.id,reason,until}))
       const isolated = await guild.members.fetch({user:member.id,force:true})
       if (isolated.moderatable) await isolated.disableCommunicationUntil(until,reason)
     } finally { quarantineChanges.delete(key) }

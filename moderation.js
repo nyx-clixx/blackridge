@@ -3,7 +3,7 @@ import { ApplicationCommandType, AuditLogEvent, ChannelType, Events, MessageFlag
 import { commandNames, matchesPermit } from './store.js'
 import { sendModuleLog } from './recovery.js'
 import { appealMarker, attachAppeals, sendBanNotice } from './appeals.js'
-import { messageCard, safeText } from './messages.js'
+import { actionCard, memberAction, mention, messageCard, safeText } from './messages.js'
 
 const channelCommands = new Set(['lock-channel','unlock-channel'])
 const timedCommands = new Set(['timeout','tempban'])
@@ -63,10 +63,35 @@ export function attachModeration(client,db,lookupGuild) {
   attachAppeals(client,db,lookupGuild)
   const channelChanges = new Set()
   client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => {
-    if (!db.config(guild.id,'moderation').enabled || !entry.targetId || !entry.executorId || entry.executorId === client.user.id) return
+    if (!db.config(guild.id,'moderation').enabled || !entry.targetId || !entry.executorId) return
+    const data = {userId:entry.targetId,actor:entry.executorId,reason:entry.reason,at:entry.createdTimestamp}
+    if (entry.action === AuditLogEvent.MemberRoleUpdate) {
+      const changes = (entry.changes ?? []).flatMap(change => {
+        if (!['$add','$remove'].includes(change.key) || !Array.isArray(change.new)) return []
+        const roles = change.new.map(role=>mention(role.id,'role')).join(', ')
+        return roles ? [mention(entry.targetId)+(change.key === '$add' ? ' was granted ' : ' lost ')+roles+'.'] : []
+      })
+      if (changes.length) {
+        const {options} = memberAction('warn',data)
+        void sendModuleLog(guild,db,'moderation',{title:'Member Roles Updated',body:changes.join('\n'),options:{...options,icon:'user'}})
+      }
+      return
+    }
+    if (entry.executorId === client.user.id) return
+    if (entry.action === AuditLogEvent.MemberUpdate) {
+      const change = entry.changes?.find(change=>change.key === 'communication_disabled_until')
+      if (!change) return
+      const until = Date.parse(change.new)
+      if (Number.isFinite(until)) void sendModuleLog(guild,db,'moderation',memberAction('timeout',{...data,until}))
+      else if (change.old && change.new == null) void sendModuleLog(guild,db,'moderation',memberAction('untimeout',data))
+      return
+    }
     const action = entry.action === AuditLogEvent.MemberKick ? 'kick' : entry.action === AuditLogEvent.MemberBanAdd ? 'ban' : null
     if (!action) return
-    try { db.recordModeration(guild.id,entry.targetId,action,entry.reason ?? 'No reason supplied',entry.createdTimestamp,entry.id) }
+    try {
+      db.recordModeration(guild.id,entry.targetId,action,entry.reason ?? 'No reason supplied',entry.createdTimestamp,entry.id)
+      void sendModuleLog(guild,db,'moderation',memberAction(action,data))
+    }
     catch (error) { console.error('Could not record Discord moderation history:',error.code ?? error.name) }
   })
   const register = async guild => {
@@ -119,8 +144,10 @@ export function attachModeration(client,db,lookupGuild) {
         const deleted = await channel.bulkDelete(amount,true)
         const detail = 'purge · ' + deleted.size + ' messages · channel ' + channel.id + ' · moderator ' + actor.id
         db.event(guild.id,'moderation',detail)
-        void sendModuleLog(guild,db,'moderation',detail)
-        return await interaction.editReply(messageCard('Purge Complete','**Deleted** '+deleted.size+' of '+amount+' requested messages.\nMessages older than 14 days are skipped.',{icon:'trash',tone:'success'}))
+        const result = {title:'Messages Purged',body:'Deleted **'+deleted.size+'** of '+amount+' requested messages in '+mention(channel.id,'channel')+'.',
+          options:{icon:'trash',fields:[['Moderator',mention(actor.id)],['Limit','Messages older than 14 days are skipped.']]}}
+        void sendModuleLog(guild,db,'moderation',result)
+        return await interaction.editReply(actionCard(result))
       }
       if (name === 'history') {
         const member = interaction.options.getUser('member')
@@ -136,6 +163,7 @@ export function attachModeration(client,db,lookupGuild) {
       }
       const reason = interaction.options.getString('reason') || 'No reason supplied'
       let notice
+      let action
       if (channelCommands.has(name)) {
         const key = interaction.channelId
         if (channelChanges.has(key)) return await respond('A channel change is already in progress.')
@@ -168,6 +196,7 @@ export function attachModeration(client,db,lookupGuild) {
           throw error
         }
         if (pending) db.removeTempBan(guild.id,id,pending.marker)
+        action = memberAction(name,{userId:id,actor:actor.id,reason})
         db.event(guild.id,'moderation','unban · member ' + id + ' · moderator ' + actor.id + ' · ' + reason)
       } else {
         const target = await guild.members.fetch({user:interaction.options.getUser('member',true).id,force:true})
@@ -176,6 +205,7 @@ export function attachModeration(client,db,lookupGuild) {
           return await respond('You cannot moderate that member.')
         }
         const minutes = interaction.options.getInteger('minutes')
+        let until
         if (name === 'ban' && target.bannable) {
           const appeal = interaction.options.getBoolean('appeal') === true && !db.appealBlacklisted(guild.id,target.id) ? randomUUID() : null
           await target.ban({reason:appeal ? appealMarker(appeal)+reason : reason})
@@ -184,18 +214,26 @@ export function attachModeration(client,db,lookupGuild) {
         }
         else if (name === 'tempban' && target.bannable) await temporaryBan(target,minutes,db,reason)
         else if (name === 'kick' && target.kickable) await target.kick(reason)
-        else if (name === 'timeout' && target.moderatable) await target.timeout(minutes*60000,reason)
+        else if (name === 'timeout' && target.moderatable) {
+          const timedOut = await target.timeout(minutes*60000,reason)
+          until = timedOut.communicationDisabledUntilTimestamp
+        }
         else if (name !== 'warn') return await respond('Blackridge lacks permission or role priority for this action.')
-        if (name !== 'ban') notice = target.user.send(messageCard(({kick:'Server Kick',tempban:'Temporary Ban',timeout:'Server Timeout',warn:'Server Warning'})[name],
-          '**Server** '+safeText(guild.name)+'\n**Reason** '+safeText(reason)+(minutes ? '\n**Duration** '+minutes+' minutes' : ''),
-          {icon:minutes ? 'timer' : 'hammer',tone:'warning'})).then(() => true,() => false)
+        if (name === 'tempban') until = db.pendingTempBan(guild.id,target.id)?.expires
+        action = memberAction(name,{userId:target.id,actor:actor.id,reason,until})
+        if (name !== 'ban') notice = target.user.send(actionCard(memberAction(name,{userId:target.id,server:guild.name,reason,until,dm:true}))).then(() => true,() => false)
         db.event(guild.id,'moderation',name + ' · member ' + target.id + ' · moderator ' + actor.id + ' · ' + reason)
       }
-      if (channelCommands.has(name)) db.event(guild.id,'moderation',name + ' · channel ' + interaction.channelId + ' · moderator ' + actor.id)
-      void sendModuleLog(guild,db,'moderation','/' + name + ' completed · moderator ' + actor.id + ' · channel ' + interaction.channelId)
-      const title = {ban:'Ban Complete',tempban:'Temporary Ban Complete',kick:'Kick Complete',warn:'Warning Recorded',timeout:'Timeout Complete',unban:'Ban Lifted','lock-channel':'Channel Locked','unlock-channel':'Channel Unlocked'}[name]
-      const icon = name === 'lock-channel' ? 'locked' : ['unban','unlock-channel'].includes(name) ? 'unlocked' : 'check'
-      await interaction.editReply(messageCard(title,'Recorded **/'+name+'**.'+(notice && !await notice ? '\nDiscord did not deliver the member DM.' : ''),{icon,tone:'success'}))
+      if (channelCommands.has(name)) {
+        db.event(guild.id,'moderation',name + ' · channel ' + interaction.channelId + ' · moderator ' + actor.id)
+        const locked = name === 'lock-channel'
+        action = {title:locked ? 'Channel Locked' : 'Channel Unlocked',body:mention(interaction.channelId,'channel')+' was '+(locked ? 'locked.' : 'unlocked.'),
+          options:{icon:locked ? 'locked' : 'unlocked',fields:[['Moderator',mention(actor.id)],['Reason',safeText(reason)]]}}
+      }
+      void sendModuleLog(guild,db,'moderation',action)
+      const fields = [...action.options.fields]
+      if (notice && !await notice) fields.push(['DM Delivery','Discord did not deliver the member DM.'])
+      await interaction.editReply(actionCard(action,{fields}))
     } catch (error) {
       console.error('Moderation command failed:',error.code ?? error.name)
       if (interaction.deferred) await respond('The action could not be completed.').catch(() => {})

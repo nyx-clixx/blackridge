@@ -1,6 +1,6 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, MessageFlags, ModalBuilder, PermissionFlagsBits as P, TextInputBuilder, TextInputStyle } from 'discord.js'
 import { matchesPermit } from './store.js'
-import { messageCard, safeText } from './messages.js'
+import { actionCard, memberAction, mention, messageCard, safeText } from './messages.js'
 
 const prefix = 'blackridge-appeal:'
 const reviewPrefix = 'blackridge-review:'
@@ -31,14 +31,14 @@ function reviewCard(row) {
   const answers = JSON.parse(row.answers)
   const transcript = questions.map((question,i) => question+'\n'+answers[i]).join('\n\n')
   const details = questions.map((question,i) => '**'+safeText(question)+'**\n'+safeText(answers[i])).join('\n\n')
-  const heading = 'Applicant `'+row.user+'` · **'+row.status.toUpperCase()+'**\n\n'
+  const heading = mention(row.user)+' submitted a ban appeal. · **'+row.status.toUpperCase()+'**\n\n'
   const actions = row.status === 'pending' ? [new ActionRowBuilder().addComponents(
     ...[['accepted','Accept & Unban',ButtonStyle.Success],['rejected','Reject',ButtonStyle.Secondary],['blacklisted','Blacklist',ButtonStyle.Danger]]
       .map(([decision,label,style]) => new ButtonBuilder().setCustomId(reviewPrefix+decision+':'+row.id).setLabel(label).setStyle(style))
   )] : []
   const long = (heading+details).length > 3400
   return messageCard('Ban Appeal',heading+(long ? 'See the attached appeal answers.' : details),{
-    icon:'inbox',tone:row.status === 'accepted' ? 'success' : row.status === 'pending' ? 'info' : 'danger',actions,
+    icon:'inbox',userId:row.user,at:row.submitted,actions,
     files:long ? [{attachment:Buffer.from(transcript),name:'appeal-answers.txt'}] : []
   })
 }
@@ -84,8 +84,9 @@ export async function sendBanNotice(guild,user,reason,id) {
   const components = id ? [new ActionRowBuilder().addComponents(new ButtonBuilder()
     .setCustomId(prefix+id).setLabel('Appeal Ban').setStyle(ButtonStyle.Primary))] : []
   try {
-    await user.send(messageCard('Server Ban','**Server** '+safeText(guild.name)+'\n**Reason** '+safeText(reason)+
-      (id ? '\n\nYou can appeal this ban within 30 days.' : ''),{icon:'hammer',tone:'danger',actions:components}))
+    const action = memberAction('ban',{userId:user.id,server:guild.name,reason,dm:true})
+    if (id) action.options.fields.push(['Appeal','You can appeal this ban within 30 days.'])
+    await user.send(actionCard(action,{actions:components}))
     return true
   } catch { return false }
 }

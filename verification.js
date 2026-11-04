@@ -2,7 +2,7 @@ import { randomInt, randomUUID } from 'node:crypto'
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, MessageFlags, ModalBuilder, PermissionFlagsBits as P, TextInputBuilder, TextInputStyle } from 'discord.js'
 import png from 'pngjs'
 import { sendModuleLog } from './recovery.js'
-import { messageCard } from './messages.js'
+import { mention, messageCard } from './messages.js'
 
 const prefix = 'blackridge-verify:'
 const reason = 'Blackridge member verification'
@@ -88,7 +88,9 @@ export function attachVerification(client,db) {
   const log = (guild,member,outcome) => {
     const message = 'Verification ' + outcome + ' for ' + member.id
     db.event(guild.id,'verification',message)
-    void sendModuleLog(guild,db,'verification',message)
+    const title = {passed:'Member Verified',failed:'Verification Failed','kicked after failed attempts':'Member Kicked After Verification Failure'}[outcome] ?? 'Verification'
+    void sendModuleLog(guild,db,'verification',{title,body:mention(member.id)+(outcome === 'passed' ? ' completed verification.' : ' did not pass verification.'),
+      options:{icon:outcome === 'passed' ? 'check' : 'warning',userId:member.id}})
   }
   client.on(Events.GuildMemberAdd,async member => {
     const {guild} = member

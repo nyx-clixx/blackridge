@@ -8,7 +8,21 @@ import { canModerate, syncModerationCommands } from '../moderation.js'
 import { recoveryTools } from '../recovery.js'
 import { attachVerification } from '../verification.js'
 import { appealMarker, canReviewAppeals, hasAppealableBan } from '../appeals.js'
-import { messageCard } from '../messages.js'
+import { actionCard, memberAction, messageCard } from '../messages.js'
+
+test('timeout action card shows moderator, non-pinging member reference, and localizable dates', () => {
+  const userId = '1567348176866902119'
+  const actor = '1567267439245525202'
+  const card = actionCard(memberAction('timeout',{userId,actor,until:200000,at:100000}))
+  const components = card.components[0].components
+  assert.ok(components.some(component=>component.divider === true))
+  const text = components.map(component=>component.content ?? '').join('\n')
+  assert.match(text,/Member Timed Out/)
+  assert.ok(text.includes('<@'+userId+'> was timed out until <t:200:f> (<t:200:R>)'))
+  assert.ok(text.includes('**Moderator**\n<@'+actor+'>'))
+  assert.ok(text.includes('User ID: '+userId+' · <t:100:f>'))
+  assert.deepEqual(card.allowedMentions,{parse:[],roles:[]})
+})
 
 test('Components V2 cards retain attachments and suppress unsolicited mentions', () => {
   const card = messageCard('Test','@everyone',{roles:['role'],files:[{name:'report.txt',attachment:Buffer.from('test')}]})
