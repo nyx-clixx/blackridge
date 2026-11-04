@@ -75,7 +75,8 @@ function checkpointRule(score,action = 'log') {
 }
 function protectionControls(form, section, config) {
   const button = form.querySelector('button[type=submit]')
-  button.insertAdjacentHTML('beforebegin',extraControls(section,config))
+  const anchor = form.querySelector('.discord-alerts') ?? button
+  anchor.insertAdjacentHTML('beforebegin',extraControls(section,config))
   if (section === 'checkpoint') {
     const list = form.querySelector('#checkpoint-rules')
     const add = form.querySelector('#add-checkpoint-rule')
@@ -91,7 +92,7 @@ function protectionControls(form, section, config) {
       const rule = config.rates?.[key] ?? config
       return '<div class="rate-row"><label class="toggle"><input type="checkbox" name="' + key + '-enabled"' + ((!config.rates || rule.enabled) ? ' checked' : '') + '> ' + label + '</label><div class="fields"><label>Actions<input required type="number" min="2" max="30" name="' + key + '-threshold" value="' + rule.threshold + '"></label><label>Window in seconds<input required type="number" min="5" max="120" name="' + key + '-window" value="' + rule.window + '"></label></div></div>'
     }).join('')
-    button.insertAdjacentHTML('beforebegin','<section class="card settings-section"><h3>Per-action rate limits</h3><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></section>')
+    anchor.insertAdjacentHTML('beforebegin','<section class="card settings-section"><h3>Per-action rate limits</h3><label class="toggle"><input type="checkbox" name="custom-rates"' + (config.rates ? ' checked' : '') + '> Enable separate limits</label><div class="stack">' + rows + '</div></section>')
     return
   }
   if (section !== 'raid') return
@@ -152,7 +153,7 @@ function form(kind, config, owner) {
   const response = actionsByKind[kind] ? '<label>Response<select name="action">' + actionsByKind[kind].map(action => '<option value="' + action + '"' + (config.action === action ? ' selected' : '') + '>' + actionLabels[action] + '</option>').join('') + '</select></label>' : ''
   const alertFields = settingFields[kind].filter(([key]) => key.startsWith('alert'))
   const baseFields = settingFields[kind].filter(([key]) => !key.startsWith('alert'))
-  return '<form id="settings"><fieldset class="settings-panels"' + disabled + '><section class="card settings-section"><h3>' + (kind === 'automod' ? 'Anti-Spam' : sections[kind] + ' policy') + '</h3><p>' + (owner ? 'Set detection thresholds and how Blackridge responds.' : 'Only the server owner can change this policy.') + '</p><label class="toggle stack"><input type="checkbox" name="enabled"' + (config.enabled ? ' checked' : '') + '> Enable detection</label><div class="fields">' + fields(baseFields) + response + '</div></section>' + (alertFields.length ? '<section class="card settings-section"><h3>Discord alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '<button class="button primary settings-save" type="submit">Save settings</button></fieldset><p role="status" id="notice"></p></form>'
+  return '<form id="settings"><fieldset class="settings-panels"' + disabled + '><section class="card settings-section"><h3>' + (kind === 'automod' ? 'Anti-Spam' : sections[kind] + ' policy') + '</h3><p>' + (owner ? 'Set detection thresholds and how Blackridge responds.' : 'Only the server owner can change this policy.') + '</p><label class="toggle stack"><input type="checkbox" name="enabled"' + (config.enabled ? ' checked' : '') + '> Enable detection</label><div class="fields">' + fields(baseFields) + response + '</div></section>' + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '<button class="button primary settings-save" type="submit">Save settings</button></fieldset><p role="status" id="notice"></p></form>'
 }
 function discordSelect(name,items,values,multiple = false) {
   const selected = new Set(values.filter(Boolean))
@@ -232,7 +233,7 @@ async function recoveryPanel(section,path,data) {
       (history ? '<form class="card stack" data-operation="restore"><h3>Backup history</h3><p>Restore supported settings and recreate eligible deleted roles and channels. Messages, role memberships, member overwrites, and ordering require manual recovery.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label><label>Type RESTORE BACKUP<input name="confirm" required></label></div><button class="button primary">Restore Backup</button></form>' : '<p class="stack">No backups yet.</p>')
   }
   const logging = '<form class="card stack" data-operation="logging"><h3>Discord logging</h3><div class="fields"><div class="discord-field"><span>Logging channel</span>' + channel + '</div></div><button class="button">Save Logging</button></form>'
-  panel.innerHTML = (section === 'lockdown' ? controls + logging : logging + controls) + '<p class="stack" role="status"></p>'
+  panel.innerHTML = controls + logging + '<p class="stack" role="status"></p>'
   const status = panel.querySelector('[role="status"]')
   for (const form of panel.querySelectorAll('form')) form.onsubmit = async event => {
     event.preventDefault()
@@ -261,9 +262,9 @@ async function recoveryPanel(section,path,data) {
 }
 function setupQuarantine(settings,path) {
   const panel = document.createElement('section')
-  panel.className = 'card stack'
+  panel.className = 'card quarantine-panel'
   panel.innerHTML = '<h3>Quarantine role</h3><p>Apply view and chat denies across channels and categories. Anti-Nuke removes manageable roles and restores eligible roles when quarantine ends.</p><button type="button" class="button stack">Configure Quarantine Role</button>'
-  settings.after(panel)
+  settings.before(panel)
   panel.querySelector('button').onclick = async event => {
     const button = event.currentTarget
     button.disabled = true
@@ -336,7 +337,7 @@ async function dashboard() {
     }).join('')
     const overview = '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<div id="recovery"></div><section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(events.filter(event => event.kind === 'moderation'),true) + '</section>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans() : section === 'logs' ? activity : section === 'permits' ? permitsForm(data.config.permits) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent cases</h3>' + logList(events.filter(event => event.kind === 'moderation'),true) + '</section><div id="recovery"></div>' : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     if (['lockdown','backup','moderation'].includes(section)) await recoveryPanel(section,path,data)
     const settings = document.querySelector('#settings')
     if (settings && (settings.elements.alertChannel || section === 'permits')) {
