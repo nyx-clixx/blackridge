@@ -25,6 +25,7 @@ const guildRaw = guild => guild.client.rest.get(Routes.guild(guild.id))
 const timestamp = value => value ? new Date(value).toISOString() : null
 
 export async function sendModuleLog(guild,db,kind,detail) {
+  if (kind === 'backup') return
   const id = db.config(guild.id,kind).alertChannel
   if (!id) return
   try {
@@ -231,7 +232,7 @@ export function recoveryTools(db,bot) {
     for (const {guild:id} of db.scheduledBackups()) {
       const schedule = db.recovery(id,'backupSchedule')
       const guild = bot?.guilds.cache.get(id)
-      if (!guild?.available || schedule.next > Date.now() || busy.has(id)) continue
+      if (!guild?.available || !db.config(id,'backup').enabled || schedule.next > Date.now() || busy.has(id)) continue
       try {
         await run(guild,async () => {
           await backup(guild,'automatic schedule')

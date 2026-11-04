@@ -34,6 +34,9 @@ function messageSignals(message, repeats, now, window, cfg) {
   const urls = body.match(/https?:\/\/[^\s]+/gi) ?? []
   const entries = value => value.toLowerCase().split(',').map(item => item.trim()).filter(Boolean)
   const domains = entries(cfg.nsfwDomains)
+  const malicious = entries(cfg.maliciousDomains)
+  const hosts = urls.map(url => URL.parse(url)?.hostname.toLowerCase().replace(/\.$/,'')).filter(Boolean)
+  const blocked = list => hosts.filter(host => list.some(domain => host === domain || host.endsWith('.' + domain))).length
   return {
     mentions:message.mentions.users.size + message.mentions.roles.size + (message.mentions.everyone ? 10 : 0),
     files:message.attachments.size,
@@ -43,10 +46,8 @@ function messageSignals(message, repeats, now, window, cfg) {
     links:urls.length,
     badWords:entries(cfg.badWords).filter(word => text.includes(word)).length,
     scam:Number(urls.length > 0 && /\b(?:free nitro|claim your nitro|verify your wallet|steam gift)\b/i.test(body)),
-    nsfw:urls.filter(url => {
-      const hostname = URL.parse(url)?.hostname.toLowerCase()
-      return hostname && domains.some(domain => hostname === domain || hostname.endsWith('.' + domain))
-    }).length,
+    nsfw:blocked(domains),
+    malicious:blocked(malicious),
     caps:letters >= 10 ? Math.round((body.match(/[A-Z]/g)?.length ?? 0)*100/letters) : 0,
     newlines:(body.match(/\n/g) ?? []).length,
     length:body.length,
@@ -85,7 +86,10 @@ export function attachProtection(client, db) {
   const seen = new Map()
   const responses = new Set()
   const quarantineChanges = new Set()
-  const bypasses = (guild,kind) => db.config(guild.id,'permits').entries.filter(permit => permit.bypasses.includes(kind))
+  const bypasses = (guild,kind) => {
+    const config = db.config(guild.id,'permits')
+    return config.enabled ? config.entries.filter(permit => permit.bypasses.includes(kind)) : []
+  }
   const bypass = (guild,kind,id,member) => bypasses(guild,kind).some(permit => matchesPermit(permit,id,guild.id,member?.roles.cache))
   const cleanup = setInterval(() => {
     const now = Date.now()
@@ -177,6 +181,14 @@ export function attachProtection(client, db) {
       if (isolated.moderatable) await isolated.disableCommunicationUntil(until,reason)
     } finally { quarantineChanges.delete(key) }
   }
+  const escalate = async (message,cfg,points) => {
+    if (!message.member || !points) return false
+    const rule = db.escalation(message.guild.id,message.author.id,message.id,points,cfg.pointRules)
+    if (!rule) return false
+    log(message.guild,'automod','Point escalation: ' + rule.action + ' for ' + message.author.id + ' · ' + rule.points + ' points in ' + rule.hours + ' hours')
+    await enforce(message.member,'automod',{...cfg,action:rule.action})
+    return true
+  }
   client.on(Events.MessageCreate,message => {
     if (!message.inGuild() || !message.member || message.author.bot || message.webhookId || message.member.permissions.has(P.ManageMessages)) return
     const guild = message.guild
@@ -193,18 +205,19 @@ export function attachProtection(client, db) {
         if (matches.length) {
           const [,rule] = matches.reduce((a,b) => severity[b[1].action] > severity[a[1].action] ? b : a)
           log(guild,'automod','Matched ' + matches.map(([name]) => name).join(', ') + ' · member ' + message.author.id)
+          const escalated = await escalate(message,cfg,matches.reduce((total,[,match]) => total+(match.points ?? 0),0))
           if (rule.action === 'delete') {
             if (message.deletable) await message.delete()
             else log(guild,'automod','Message deletion blocked by Discord permissions')
           }
-          if (rule.action === 'timeout') await enforce(message.member,'automod',{...cfg,action:'timeout'})
+          if (!escalated && rule.action === 'timeout') await enforce(message.member,'automod',{...cfg,action:'timeout'})
           return
         }
       }
       if (recordHit(messages,key,now,cfg.window*1000,cfg.threshold) < cfg.threshold) return
       messages.delete(key)
       log(guild,'automod','Message rate exceeded by ' + message.author.id)
-      if (cfg.action !== 'log') await enforce(message.member,'automod',cfg)
+      if (!await escalate(message,cfg,cfg.spamPoints) && cfg.action !== 'log') await enforce(message.member,'automod',cfg)
     })
   })
   client.on(Events.ChannelCreate,channel => {
@@ -225,7 +238,10 @@ export function attachProtection(client, db) {
       const member = message.member ?? guild.members.cache.get(message.author.id)
       if (bypass(guild,'automod',message.author.id,member)) return
       const count = message.mentions.users.size + message.mentions.roles.size + (message.mentions.everyone ? 10 : 0)
-      if (count >= rule.limit) log(guild,'automod','Deleted message with mentions · author ' + message.author.id)
+      if (count >= rule.limit) {
+        log(guild,'automod','Deleted message with mentions · author ' + message.author.id)
+        await escalate(message,cfg,rule.points)
+      }
     })
   })
   client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => void run(guild,'nuke',async () => {

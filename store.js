@@ -26,13 +26,13 @@ export function matchesPermit(permit,userId,guildId,roles) {
 
 function normalizePermits(config) {
   if (Array.isArray(config.entries)) {
-    return {entries:config.entries.filter(entry =>
+    return {enabled:config.enabled ?? true,entries:config.entries.filter(entry =>
       !(entry.name === '/kick' && entry.commands.length === 1 && entry.commands[0] === 'kick' && !entry.bypasses.length)
     ).map(entry => ({...entry,commands:[...new Set(entry.commands.map(name =>
       name === 'lock' || name === 'unlock' ? name + '-channel' : name
     ))]}))}
   }
-  return {entries:['ban','tempban','timeout','warn','lock','unlock'].flatMap(command => {
+  return {enabled:true,entries:['ban','tempban','timeout','warn','lock','unlock'].flatMap(command => {
     const entry = config[command]
     if (!entry || !(entry.users.length || entry.roles.length)) return []
     const name = command === 'lock' || command === 'unlock' ? command + '-channel' : command
@@ -41,21 +41,23 @@ function normalizePermits(config) {
 }
 const alerts = {alertChannel:z.union([snowflake,z.literal('')]).optional(),alertRoles:z.array(snowflake).max(5).optional()}
 const timedResponse = {tempBanMinutes:integer(1,1440).optional(),quarantineMinutes:integer(1,1440).optional()}
-export const spamFilters = ['mentions','files','images','stickers','invites','links','caps','newlines','length','emoji','headers','duplicate','multiUser','badWords','scam','nsfw','ghost']
-const filter = z.strictObject({action:z.enum(['off','log','delete','timeout']),limit:integer(1,4000)})
+export const spamFilters = ['mentions','files','images','stickers','invites','links','caps','newlines','length','emoji','headers','duplicate','multiUser','badWords','scam','nsfw','malicious','ghost']
+const filter = z.strictObject({action:z.enum(['off','log','delete','timeout']),limit:integer(1,4000),points:integer(0,100).optional()})
 export const policies = {
-  permits: z.strictObject({entries:z.array(permit).max(30)}),
-  automod: z.strictObject({enabled:z.boolean(),threshold:integer(3,30),window:integer(2,60),action:z.enum(['log','timeout']),timeoutMinutes:integer(1,1440),filters:z.strictObject(Object.fromEntries(spamFilters.map(key => [key,filter]))).optional(),badWords:z.string().max(500).optional(),nsfwDomains:z.string().max(500).optional(),...alerts}),
-  moderation:z.strictObject({alertChannel:z.union([snowflake,z.literal('')])}),
+  permits: z.strictObject({enabled:z.boolean().optional(),entries:z.array(permit).max(30)}),
+  automod: z.strictObject({enabled:z.boolean(),threshold:integer(3,30),window:integer(2,60),action:z.enum(['log','timeout']),timeoutMinutes:integer(1,1440),filters:z.strictObject(Object.fromEntries(spamFilters.map(key => [key,key === 'malicious' ? filter.optional() : filter]))).optional(),badWords:z.string().max(500).optional(),nsfwDomains:z.string().max(500).optional(),maliciousDomains:z.string().max(500).optional(),spamPoints:integer(0,100).optional(),pointRules:z.array(z.strictObject({points:integer(1,1000),hours:integer(1,168),action:z.enum(['timeout','kick','ban'])})).max(10).optional(),...alerts}),
+  moderation:z.strictObject({enabled:z.boolean().optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
   lockdown:z.strictObject({alertChannel:z.union([snowflake,z.literal('')])}),
-  backup:z.strictObject({alertChannel:z.union([snowflake,z.literal('')])}),
+  backup:z.strictObject({enabled:z.boolean()}),
   checkpoint: z.strictObject({enabled:z.boolean(),age:integer(1,365),agePoints:integer(0,5),avatarPoints:integer(0,5),threshold:integer(1,25),alertChannel:z.union([snowflake,z.literal('')]),alertRoles:z.array(snowflake).max(5),rejoinPoints:integer(0,5).optional(),similarPoints:integer(0,5).optional(),inviteNamePoints:integer(0,5).optional(),rules:z.array(z.strictObject({score:integer(1,25),action:z.enum(['log','kick','quarantine','tempban'])})).max(4).optional(),...timedResponse}),
   nuke: z.strictObject({enabled:z.boolean(),threshold:integer(2,30),window:integer(5,120),trusted:z.string().max(500).regex(/^\s*(?:\d{17,20}(?:\s*,\s*\d{17,20})*)?\s*$/),action:z.enum(['log','strip','kick','ban','tempban','quarantine']),rates:rates.optional(),...alerts,...timedResponse}),
   raid: z.strictObject({enabled:z.boolean(),threshold:integer(3,100),window:integer(5,120),duration:integer(15,600),age:integer(0,365),action:z.enum(['log','timeout','kick','ban','tempban','quarantine']),timeoutMinutes:integer(1,1440).optional(),...alerts,...timedResponse})
 }
 const defaults = {
   permits:{entries:[]},
-  automod:{enabled:false,threshold:6,window:8,action:'log',timeoutMinutes:5,badWords:'',nsfwDomains:''},
+  automod:{enabled:false,threshold:6,window:8,action:'log',timeoutMinutes:5,badWords:'',nsfwDomains:'',maliciousDomains:'',spamPoints:0,pointRules:[]},
+  moderation:{enabled:true,alertChannel:''},
+  backup:{enabled:true},
   checkpoint:{enabled:false,age:7,agePoints:3,avatarPoints:2,threshold:5,alertChannel:'',alertRoles:[],rejoinPoints:0,similarPoints:0,inviteNamePoints:0,quarantineMinutes:10,tempBanMinutes:60},
   nuke:{enabled:true,threshold:3,window:20,trusted:'',action:'log',alertChannel:'',alertRoles:[],tempBanMinutes:60,quarantineMinutes:10},
   raid:{enabled:true,threshold:8,window:15,duration:60,age:7,action:'log',timeoutMinutes:10,alertChannel:'',alertRoles:[],tempBanMinutes:60,quarantineMinutes:10}
@@ -86,7 +88,21 @@ export function createStore(file) {
   const append = db.prepare('INSERT INTO event (guild,kind,detail,at) VALUES (?,?,?,?)')
   const read = db.prepare('SELECT config FROM policy WHERE guild=? AND kind=?')
   const write = db.prepare('INSERT INTO policy VALUES (?,?,?) ON CONFLICT(guild,kind) DO UPDATE SET config=excluded.config')
+  db.exec(`CREATE TABLE IF NOT EXISTS automod_points (
+    guild TEXT, user TEXT, event TEXT, points INTEGER, at INTEGER, PRIMARY KEY(guild,event)
+  ); CREATE INDEX IF NOT EXISTS automod_points_user ON automod_points(guild,user,at);
+  CREATE INDEX IF NOT EXISTS automod_points_age ON automod_points(at);`)
+  const awardPoints = db.prepare('INSERT OR IGNORE INTO automod_points VALUES (?,?,?,?,?)')
+  const sumPoints = db.prepare('SELECT coalesce(sum(points),0) AS total FROM automod_points WHERE guild=? AND user=? AND at>?')
   return {
+    escalation(guild,user,event,points,rules,now=Date.now()) {
+      if (!points || !awardPoints.run(guild,user,event,points,now).changes) return null
+      const matched = rules.filter(rule => {
+        const total = sumPoints.get(guild,user,now-rule.hours*3600000).total
+        return total >= rule.points && total-points < rule.points
+      })
+      return matched.sort((a,b) => b.points-a.points)[0] ?? null
+    },
     quarantineMember(guild,user,role,expires) {
       db.prepare('INSERT INTO quarantine_member VALUES (?,?,?,?) ON CONFLICT(guild,user,role) DO UPDATE SET expires=max(expires,excluded.expires)').run(guild,user,role,expires)
     },
@@ -133,6 +149,7 @@ export function createStore(file) {
     prune() {
       db.prepare('DELETE FROM event WHERE at<?').run(Date.now()-30*86400000)
       db.prepare('DELETE FROM web_session WHERE expires<=?').run(Date.now())
+      db.prepare('DELETE FROM automod_points WHERE at<=?').run(Date.now()-168*3600000)
     },
     close() { db.close() }
   }

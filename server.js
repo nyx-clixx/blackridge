@@ -7,6 +7,7 @@ import { ChannelType, PermissionFlagsBits as P } from 'discord.js'
 import { createStore, policies } from './store.js'
 import { startBot, requiredPermissions } from './bot.js'
 import { recoveryTools } from './recovery.js'
+import { syncModerationCommands } from './moderation.js'
 
 const {DISCORD_CLIENT_ID: clientId, DISCORD_CLIENT_SECRET: clientSecret, DISCORD_BOT_TOKEN: botToken} = process.env
 const port = Number(process.env.PORT || 3000)
@@ -207,6 +208,9 @@ app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
   const guild = bot.guilds.cache.get(req.guild.id)
   const actor = req.session.user.id
   const input = req.body ?? {}
+  if (['backup','restore','schedule'].includes(req.params.operation) && !db.config(guild.id,'backup').enabled) {
+    return res.status(400).json({error:'Turn on Server Backups first.'})
+  }
   const result = await recovery.run(guild,async () => {
     if (req.params.operation === 'enable') return recovery.enable(guild,actor,input)
     if (req.params.operation === 'lift' && input.confirm === 'LIFT LOCKDOWN') return recovery.lift(guild,actor)
@@ -223,13 +227,18 @@ app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
   })
   res.json({ok:true,notices:result ?? []})
 })
-app.put('/api/guilds/:id/:kind',(req,res) => {
+app.put('/api/guilds/:id/:kind',async (req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can change policies.'})
   const {kind} = req.params
   if (!Object.hasOwn(policies,kind)) return res.status(404).json({error:'Unknown protection policy.'})
   const parsed = policies[kind].safeParse(req.body)
   if (!parsed.success) return res.status(400).json({error:'Check your thresholds and Discord user IDs.'})
-  db.save(req.guild.id,kind,parsed.data,req.session.user.id)
+  const config = kind === 'moderation' ? {...db.config(req.guild.id,kind),...parsed.data} : parsed.data
+  db.save(req.guild.id,kind,config,req.session.user.id)
+  if (kind === 'moderation' && parsed.data.enabled !== undefined) {
+    try { await syncModerationCommands(bot.guilds.cache.get(req.guild.id),db) }
+    catch { return res.status(503).json({error:'Moderation changed, but Discord could not refresh the slash command list. Try toggling it again.'}) }
+  }
   res.json({ok:true})
 })
 app.use('/api',(req,res) => res.status(404).json({error:'Route not found.'}))

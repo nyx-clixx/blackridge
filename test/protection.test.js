@@ -4,8 +4,33 @@ import { EventEmitter, once } from 'node:events'
 import { AuditLogEvent as A, Collection, Events, PermissionFlagsBits as P } from 'discord.js'
 import { attachProtection, isDestructive, recordHit } from '../bot.js'
 import { createStore, policies } from '../store.js'
-import { canModerate } from '../moderation.js'
+import { canModerate, syncModerationCommands } from '../moderation.js'
 import { recoveryTools } from '../recovery.js'
+
+test('point escalation triggers on threshold crossings and ignores repeated message IDs', t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  const rule = {points:5,hours:24,action:'timeout'}
+  const now = 100000000
+  const award = (id,points,at=now) => db.escalation('guild','member',id,points,[rule],at)
+  assert.equal(award('first',2),null)
+  assert.equal(award('first',2),null)
+  assert.deepEqual(award('second',3),rule)
+  assert.equal(award('third',5),null)
+  assert.deepEqual(award('fourth',5,now+86400001),rule)
+})
+
+test('turning moderation off removes only Blackridge moderation slash commands', async t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  const removed = []
+  const guild = {id:'guild',commands:{fetch:async () => new Map(['ban','unban','lock','other'].map(name =>
+    [name,{name,type:1,delete:async () => removed.push(name)}]
+  ))}}
+  db.save(guild.id,'moderation',{enabled:false},'owner')
+  await syncModerationCommands(guild,db)
+  assert.deepEqual(removed,['ban','unban','lock'])
+})
 
 test('lockdown records recovery before mutation and preserves a changed verification level', async t => {
   const db = createStore(':memory:')

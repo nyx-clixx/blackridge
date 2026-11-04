@@ -19,6 +19,20 @@ const commands = commandNames.map(name => {
   }
   return builder.addStringOption(option => option.setName('reason').setDescription('Reason for the action').setMaxLength(250))
 })
+const commandSync = new Map()
+export function syncModerationCommands(guild,db) {
+  const previous = commandSync.get(guild.id) ?? Promise.resolve()
+  const operation = previous.catch(() => {}).then(async () => {
+    const enabled = db.config(guild.id,'moderation').enabled
+    if (enabled) for (const command of commands) await guild.commands.create(command)
+    const obsolete = enabled ? ['lock','unlock'] : [...commandNames,'lock','unlock']
+    for (const command of (await guild.commands.fetch()).values()) {
+      if (command.type === ApplicationCommandType.ChatInput && obsolete.includes(command.name)) await command.delete()
+    }
+  }).finally(() => { if (commandSync.get(guild.id) === operation) commandSync.delete(guild.id) })
+  commandSync.set(guild.id,operation)
+  return operation
+}
 
 export function canModerate(actor, ownerId, name, permit, channelPermissions) {
   if (!Object.hasOwn(permissions,name)) return false
@@ -39,12 +53,7 @@ export async function temporaryBan(member, minutes, db, reason) {
 export function attachModeration(client,db) {
   const channelChanges = new Set()
   const register = async guild => {
-    try {
-      for (const command of commands) await guild.commands.create(command)
-      for (const command of (await guild.commands.fetch()).values()) {
-        if (command.type === ApplicationCommandType.ChatInput && ['lock','unlock'].includes(command.name)) await command.delete()
-      }
-    }
+    try { await syncModerationCommands(guild,db) }
     catch (error) { console.error('Command registration failed:',error.code ?? error.name) }
   }
   client.once(Events.ClientReady,async () => {
@@ -76,9 +85,11 @@ export function attachModeration(client,db) {
     const {guild,commandName:name} = interaction
     try {
       await interaction.deferReply({flags:MessageFlags.Ephemeral})
+      if (!db.config(guild.id,'moderation').enabled) return await interaction.editReply('Moderation is off in this server.')
       const actor = await guild.members.fetch({user:interaction.user.id,force:true})
       const owner = guild.ownerId === actor.id
-      const permit = db.config(guild.id,'permits').entries
+      const permits = db.config(guild.id,'permits')
+      const permit = permits.enabled ? permits.entries : []
       if (!canModerate(actor,guild.ownerId,name,permit,interaction.channel?.permissionsFor(actor))) {
         return await interaction.editReply('You do not have access to this command.')
       }
