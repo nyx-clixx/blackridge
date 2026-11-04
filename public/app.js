@@ -175,33 +175,64 @@ const filters = {
 function options(labels, selected) {
   return Object.entries(labels).map(([value,label]) => '<option value="' + value + '"' + (selected === value ? ' selected' : '') + '>' + label + '</option>').join('')
 }
+function settingRow(label,description,fields,{className = '',enabled} = {}) {
+  const toggle = enabled === undefined ? '' : '<label class="nuke-switch"><input type="checkbox" role="switch" data-response-toggle aria-label="Enable ' + esc(label) + '"' + (enabled ? ' checked' : '') + '><span aria-hidden="true"></span></label>'
+  return '<article class="nuke-row setting-row ' + className + '"><div><h4 class="setting-name">' + esc(label) + '</h4><p>' + esc(description) + '</p></div><div class="nuke-row-actions"><button type="button" class="button small" data-open-settings aria-label="Configure ' + esc(label) + '">' + icon('configure') + ' Configure</button>' + toggle + '</div><dialog class="nuke-dialog" aria-label="' + esc(label) + ' settings"><header><h3>' + esc(label) + '</h3><button type="button" class="button small" data-close-settings aria-label="Close settings">×</button></header><div class="nuke-dialog-fields">' + fields + '</div></dialog></article>'
+}
+document.addEventListener('click',event => {
+  const button = event.target.closest('[data-open-settings],[data-close-settings]')
+  const dialog = button?.closest('.setting-row')?.querySelector('dialog')
+  if (!dialog) return
+  if (button.hasAttribute('data-open-settings')) dialog.showModal()
+  else dialog.close()
+})
+document.addEventListener('change',event => {
+  if (!event.target.matches('[data-response-toggle]')) return
+  event.target.form.dispatchEvent(new Event('change'))
+})
+function ruleCard(title,description,rows) {
+  return '<section class="card nuke-rules"><h3>' + title + '</h3>' + (description ? '<p>' + description + '</p>' : '') + rows + '</section>'
+}
+function collapseSettings(section,description) {
+  if (!section) return
+  const title = section.querySelector('h3').textContent
+  const readOnly = section.closest('fieldset:disabled')
+  const fields = document.createDocumentFragment()
+  for (const child of [...section.children]) if (!child.matches('h3,p')) fields.append(child)
+  section.classList.add('nuke-rules','single-setting')
+  section.innerHTML = settingRow(title,readOnly ? description + ' Only the server owner can make changes.' : description,'')
+  section.querySelector('.nuke-dialog-fields').append(fields)
+}
 function extraControls(section,config) {
   if (section === 'automod') {
     const configFields = {badWords:['badWords','Blocked Phrases'],nsfw:['nsfwDomains','Additional NSFW Domains'],malicious:['maliciousDomains','Additional Malicious Domains']}
     const cards = Object.entries(filters).map(([key,[label,limit]]) => {
       const rule = config.filters?.[key]
-      const actions = {off:'Disabled',log:'Log',...(key === 'ghost' ? {} : {delete:'Delete message',timeout:'Timeout'})}
+      const actions = {log:'Log',...(key === 'ghost' ? {} : {delete:'Delete Message',timeout:'Timeout'})}
       const field = configFields[key]
-      const configure = field ? '<details class="filter-config"><summary class="button small">' + icon('configure') + ' Configure</summary><label>' + field[1] + ' (one per line)<textarea name="' + field[0] + '" maxlength="500" rows="5" spellcheck="false">' + esc(config[field[0]].split(',').map(value => value.trim()).filter(Boolean).join('\n')) + '</textarea></label></details>' : ''
-      return '<article class="filter-card"><h3>' + label + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options(actions,rule?.action ?? 'off') + '</select></label><label>Threshold<input type="number" required min="1" max="4000" name="' + key + '-limit" value="' + esc(rule?.limit ?? limit) + '"></label><label>Points<input type="number" required min="0" max="100" name="' + key + '-points" value="' + esc(rule?.points ?? 0) + '"></label></div>' + configure + '</article>'
+      const configure = field ? '<label>' + field[1] + ' (one per line)<textarea name="' + field[0] + '" maxlength="500" rows="5" spellcheck="false">' + esc(config[field[0]].split(',').map(value => value.trim()).filter(Boolean).join('\n')) + '</textarea></label>' : ''
+      const enabled = Boolean(rule?.action && rule.action !== 'off')
+      const response = enabled ? rule.action : rule?.resumeAction ?? 'log'
+      return settingRow(label,'Set the threshold, response, and escalation points.','<div class="fields"><label>Response<select name="' + key + '-action">' + options(actions,response) + '</select></label><label>Threshold<input type="number" required min="1" max="4000" name="' + key + '-limit" value="' + esc(rule?.limit ?? limit) + '"></label><label>Points<input type="number" required min="0" max="100" name="' + key + '-points" value="' + esc(rule?.points ?? 0) + '"></label></div>' + configure,{className:'response-rule',enabled})
     }).join('')
-    return '<section class="card settings-section"><h3>Message Filters</h3><p>Text and attachment filters require Message Content access. Domain filters use community feeds and your additional domains. Blackridge matches hostnames without opening URLs.</p><div class="grid filter-grid">' + cards + '</div></section><section class="card settings-section"><h3>Point Escalation</h3><p>When a member reaches a threshold within its time window, Blackridge applies the highest matching rule.</p><div class="settings-panels stack" id="point-rules">' + (config.pointRules ?? []).map(pointRule).join('') + '</div><button type="button" class="button small stack" id="add-point-rule">Add Points Rule</button></section>'
+    return ruleCard('Message Filters','Text and attachment filters require Message Content access. Domain filters match hostnames without opening URLs.',cards) + '<section class="card settings-section"><h3>Point Escalation</h3><p>When a member reaches a threshold within its time window, Blackridge applies the highest matching rule.</p><div class="setting-list stack" id="point-rules">' + (config.pointRules ?? []).map(pointRule).join('') + '</div><button type="button" class="button small stack" id="add-point-rule">Add Points Rule</button></section>'
   }
   if (section === 'checkpoint') {
     const rows = (config.rules ?? []).map(rule => checkpointRule(rule.score,rule.action)).join('')
     const botRules = ['verifiedBot','unverifiedBot'].map(key => {
       const rule = config[key] ?? {action:'off',quarantine:false}
-      return '<article class="filter-card"><h3>' + (key === 'verifiedBot' ? 'Verified Bot Addition' : 'Unverified Bot Addition') + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options({off:'Disabled',kick:'Kick Bot',ban:'Ban Bot'},rule.action) + '</select></label></div><label class="toggle"><input type="checkbox" name="' + key + '-quarantine"' + (rule.quarantine ? ' checked' : '') + '> Quarantine the Inviter</label></article>'
+      const enabled = rule.action !== 'off'
+      return settingRow(key === 'verifiedBot' ? 'Verified Bot Addition' : 'Unverified Bot Addition','Choose how Blackridge responds when a bot is added.','<label>Response<select name="' + key + '-action">' + options({kick:'Kick Bot',ban:'Ban Bot'},enabled ? rule.action : rule.resumeAction ?? 'kick') + '</select></label><label class="toggle"><input type="checkbox" name="' + key + '-quarantine"' + (rule.quarantine ? ' checked' : '') + '> Quarantine the Inviter</label>',{className:'response-rule',enabled})
     }).join('')
-    return '<section class="card settings-section"><h3>Risk Score Rules</h3><p>The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.</p><div class="grid filter-grid" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section><section class="card settings-section"><h3>Bot Addition Rules</h3><p>Quarantining the inviter uses the quarantine role configured in Anti-Nuke.</p><div class="grid filter-grid">' + botRules + '</div></section>'
+    return '<section class="card settings-section"><h3>Risk Score Rules</h3><p>The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.</p><div class="setting-list" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section>' + ruleCard('Bot Addition Rules','Quarantining the inviter uses the quarantine role configured in Anti-Nuke.',botRules)
   }
   return ''
 }
 function pointRule(rule = {points:5,hours:24,action:'timeout'}) {
-  return '<article class="filter-card point-rule"><div class="module-head"><h3>Escalation rule</h3><button type="button" class="button small remove-point-rule">Remove</button></div><div class="fields"><label>Points<input name="rule-points" type="number" min="1" max="1000" required value="' + esc(rule.points) + '"></label><label>Within hours<input name="rule-hours" type="number" min="1" max="168" required value="' + esc(rule.hours) + '"></label><label>Response<select name="rule-action">' + options({timeout:'Timeout',kick:'Kick',ban:'Ban'},rule.action) + '</select></label></div></article>'
+  return settingRow('Escalation Rule','Choose a point threshold, time window, and response.','<div class="fields"><label>Points<input name="rule-points" type="number" min="1" max="1000" required value="' + esc(rule.points) + '"></label><label>Within Hours<input name="rule-hours" type="number" min="1" max="168" required value="' + esc(rule.hours) + '"></label><label>Response<select name="rule-action">' + options({timeout:'Timeout',kick:'Kick',ban:'Ban'},rule.action) + '</select></label></div><button type="button" class="button small remove-point-rule">Remove Rule</button>',{className:'point-rule'})
 }
 function checkpointRule(score,action = 'log') {
-  return '<article class="filter-card checkpoint-rule"><div class="module-head"><h3>Risk rule</h3><button type="button" class="button small remove-rule">Remove</button></div><div class="fields"><label>Minimum score<input type="number" min="1" max="25" required name="score" value="' + esc(score) + '"></label><label>Response<select name="rule">' + options({log:'Log and alert',kick:'Kick',quarantine:'Quarantine',tempban:'Temporary ban'},action) + '</select></label></div></article>'
+  return settingRow('Risk Rule','Choose a minimum score and response.','<div class="fields"><label>Minimum Score<input type="number" min="1" max="25" required name="score" value="' + esc(score) + '"></label><label>Response<select name="rule">' + options({log:'Log and Alert',kick:'Kick',quarantine:'Quarantine',tempban:'Temporary Ban'},action) + '</select></label></div><button type="button" class="button small remove-rule">Remove Rule</button>',{className:'checkpoint-rule'})
 }
 function protectionControls(form, section, config) {
   const alerts = form.querySelector('.discord-alerts')
@@ -212,14 +243,20 @@ function protectionControls(form, section, config) {
     const add = form.querySelector('#add-point-rule')
     const changed = () => { add.disabled = list.children.length >= 4; form.dispatchEvent(new Event('change')) }
     add.disabled = list.children.length >= 4
-    add.onclick = () => { if (list.children.length < 4) { list.insertAdjacentHTML('beforeend',pointRule()); changed() } }
+    add.onclick = () => { if (list.children.length < 4) { list.insertAdjacentHTML('beforeend',pointRule()); changed(); list.lastElementChild.querySelector('dialog').showModal() } }
     list.onclick = event => { if (event.target.matches('.remove-point-rule')) { event.target.closest('.point-rule').remove(); changed(); add.focus() } }
   }
   if (section === 'checkpoint') {
     const list = form.querySelector('#checkpoint-rules')
     const add = form.querySelector('#add-checkpoint-rule')
     const refresh = () => { add.disabled = list.children.length >= 4 }
-    add.onclick = () => { if (list.children.length < 4) list.insertAdjacentHTML('beforeend',checkpointRule(config.threshold)); refresh(); form.dispatchEvent(new Event('change')) }
+    add.onclick = () => {
+      if (list.children.length >= 4) return
+      list.insertAdjacentHTML('beforeend',checkpointRule(config.threshold))
+      refresh()
+      form.dispatchEvent(new Event('change'))
+      list.lastElementChild.querySelector('dialog').showModal()
+    }
     list.onclick = event => {
       if (event.target.matches('.remove-rule')) { event.target.closest('.checkpoint-rule').remove(); refresh(); add.focus(); form.dispatchEvent(new Event('change')) }
     }
@@ -259,12 +296,12 @@ function permitCard(entry,roles) {
     '<label class="toggle"><input type="checkbox" name="' + name + '" value="' + esc(id) + '"' + (selected.includes(id) ? ' checked' : '') + '> ' + esc(label) + '</label>'
   ).join('')
   const commands = Object.fromEntries(commandNames.map(name => [name,'/' + name]))
-  return '<details class="card permit-card"><summary>' + esc(entry.name) + '</summary>' +
+  return settingRow(entry.name,'Manage role and user access, commands, and protection bypasses.',
     '<section class="permit-section"><h3>Permit Name</h3><div class="fields"><label>Display name<input name="permit-name" maxlength="60" required value="' + esc(entry.name) + '"></label></div></section>' +
     '<section class="permit-section"><h3>Permit Access</h3><div class="fields"><label>Discord user IDs<input name="permit-users" data-commit-on-change maxlength="330" value="' + esc(entry.users.join(', ')) + '" placeholder="Comma-separated user IDs"></label><div class="discord-field"><span>Discord roles</span>' + discordSelect('permit-roles',roles,entry.roles,true) + '</div></div></section>' +
     '<section class="permit-section"><h3>Permit Command Access</h3><div class="permit-choices">' + choices('permit-commands',commands,entry.commands) + '</div></section>' +
     '<section class="permit-section"><h3>Permit Bypass</h3><div class="permit-choices">' + choices('permit-bypasses',bypassLabels,entry.bypasses) + '</div></section>' +
-    '<button type="button" class="button small remove-permit">Remove Permit</button></details>'
+    '<button type="button" class="button small remove-permit">Remove Permit</button>',{className:'card permit-card'})
 }
 function permitsForm(config,roles) {
   return '<form class="settings-panels" id="settings"><section class="card settings-section"><div class="module-head"><h3>Permit Manager</h3><button type="button" class="button small" id="add-permit">Add Permit</button></div><p>Grant commands and protection bypasses to selected Discord users or roles. Command users also need the corresponding Discord permissions.</p></section><div class="settings-panels" id="permit-list">' + config.entries.map(entry => permitCard(entry,roles)).join('') + '</div><p id="notice" role="status"></p></form>'
@@ -276,7 +313,7 @@ function wirePermits(form,roles) {
   add.onclick = () => {
     if (list.children.length >= 30) return
     list.insertAdjacentHTML('beforeend',permitCard({name:'New Permit',users:[],roles:[],commands:[],bypasses:[]},roles))
-    list.lastElementChild.open = true
+    list.lastElementChild.querySelector('dialog').showModal()
     const name = list.lastElementChild.querySelector('[name=permit-name]')
     name.focus()
     name.select()
@@ -284,7 +321,13 @@ function wirePermits(form,roles) {
     form.dispatchEvent(new Event('change'))
   }
   list.addEventListener('input',event => {
-    if (event.target.name === 'permit-name') event.target.closest('.permit-card').querySelector('summary').textContent = event.target.value.trim() || 'New Permit'
+    if (event.target.name !== 'permit-name') return
+    const row = event.target.closest('.permit-card')
+    const name = event.target.value.trim() || 'New Permit'
+    row.querySelector('.setting-name').textContent = name
+    row.querySelector('dialog h3').textContent = name
+    row.querySelector('dialog').setAttribute('aria-label',name + ' settings')
+    row.querySelector('[data-open-settings]').setAttribute('aria-label','Configure ' + name)
   })
   list.addEventListener('click',event => {
     if (!event.target.matches('.remove-permit')) return
@@ -415,6 +458,15 @@ async function recoveryPanel(section,path,data,prepared) {
   }
   const logging = '<form class="card stack" data-operation="logging"><h3>Discord Logging</h3><div class="fields"><div class="discord-field"><span>Logging Channel</span>' + channel + '</div></div></form>'
   panel.innerHTML = controls + (section === 'backup' ? '' : logging) + '<p class="stack" role="status"></p>'
+  collapseSettings(panel.querySelector('[data-operation=logging]'),'Choose where Blackridge posts Discord logs.')
+  collapseSettings(panel.querySelector('[data-operation=schedule]'),'Choose how often Blackridge creates a backup.')
+  const lockdown = panel.querySelector('[data-operation=enable]')
+  if (lockdown) {
+    const fields = [...lockdown.querySelectorAll(':scope > .fields, :scope > .toggle')]
+    const start = lockdown.querySelector('.lockdown-submit')
+    start.insertAdjacentHTML('beforebegin',settingRow('Lockdown Options','Choose the channels and restrictions to apply.',''))
+    lockdown.querySelector('.nuke-dialog-fields').append(...fields)
+  }
   const status = panel.querySelector('[role="status"]')
   for (const form of panel.querySelectorAll('form')) {
     const operation = form.dataset.operation
@@ -449,7 +501,7 @@ async function recoveryPanel(section,path,data,prepared) {
       payload.id = Number(payload.id)
       payload.confirm = 'RESTORE BACKUP'
     }
-    const button = form.querySelector('button')
+    const button = event.submitter ?? form.querySelector('.lockdown-submit,button:not([type=button])')
     button.disabled = true
     try {
       await Promise.all([...pendingSettings].map(flush => flush()))
@@ -557,15 +609,29 @@ async function dashboard() {
     if (settings?.elements.alertChannel) wireDiscordSelectors(settings,choices)
     if (section === 'permits') wirePermits(settings,choices.roles)
     if (settings && settingFields[section]) protectionControls(settings,section,data.config[section])
+    if (settings && settingFields[section]) {
+      collapseSettings(settings.querySelector('.settings-section'),'Configure thresholds and the default response for this module.')
+      collapseSettings(settings.querySelector('.discord-alerts'),'Choose the logging channel and roles to notify.')
+    }
     if (settings && section === 'nuke') nukeControls(settings,data.config.nuke,choices.roles)
+    const readOnly = settings?.querySelector('fieldset:disabled')
+    if (readOnly) {
+      for (const control of readOnly.querySelectorAll('input:not([type=search]), select, textarea, button:not([data-open-settings],[data-close-settings],[data-nuke-config],[data-close-nuke])')) control.disabled = true
+      readOnly.disabled = false
+    }
     if (settings && section === 'nuke' && data.owner) setupQuarantine(settings,path)
     if (recoverySection) await recoveryPanel(section,path,data,[choices,recoveryState])
     if (settings && data.owner) autosave(settings,settings.querySelector('#notice'),async () => {
       const fields = new FormData(settings)
       const payload = section === 'permits' ? {...readPermits(settings),enabled:fields.has('enabled')} : {enabled:fields.has('enabled')}
       if (fields.has('action')) payload.action = fields.get('action')
+      const ruleResponse = key => {
+        const resumeAction = fields.get(key + '-action')
+        const active = settings.elements[key + '-action'].closest('.response-rule').querySelector('[data-response-toggle]').checked
+        return {action:active ? resumeAction : 'off',resumeAction}
+      }
       if (section === 'automod') payload.filters = Object.fromEntries(Object.keys(filters).map(key => [key,{
-        action:fields.get(key + '-action'),limit:Number(fields.get(key + '-limit')),points:Number(fields.get(key + '-points'))
+        ...ruleResponse(key),limit:Number(fields.get(key + '-limit')),points:Number(fields.get(key + '-points'))
       }]))
       if (section === 'automod') {
         for (const name of ['badWords','nsfwDomains','maliciousDomains']) payload[name] = fields.get(name).split(/[\n,]/).map(value => value.trim()).filter(Boolean).join(',')
@@ -578,7 +644,7 @@ async function dashboard() {
       if (section === 'checkpoint') {
         payload.rules = fields.getAll('score').map((score,index) => ({score:Number(score),action:fields.getAll('rule')[index]}))
         for (const key of ['verifiedBot','unverifiedBot']) payload[key] = {
-          action:fields.get(key + '-action'),quarantine:fields.has(key + '-quarantine')
+          ...ruleResponse(key),quarantine:fields.has(key + '-quarantine')
         }
       }
       if (section === 'nuke') {
