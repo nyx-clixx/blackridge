@@ -4,14 +4,14 @@ import { billingError } from './billing-store.js'
 
 const objectId = value => typeof value === 'string' ? value : value?.id
 const invoiceSubscription = invoice => objectId(invoice?.parent?.subscription_details?.subscription)
-export function stripeBilling(db,base,env = process.env) {
+export function stripeBilling(db,base,env = process.env,makeStripe = (key,options) => new Stripe(key,options)) {
   const prices = {premium:env.STRIPE_PREMIUM_PRICE,custom:env.STRIPE_CUSTOM_PRICE}
   const live = env.STRIPE_LIVEMODE === 'true'
   const keyMode = live ? 'live' : 'test'
   const keyMatchesMode = new RegExp('^(?:sk|rk)_' + keyMode + '_').test(env.STRIPE_SECRET_KEY ?? '')
   const enabled = Boolean(keyMatchesMode && env.STRIPE_WEBHOOK_SECRET && prices.premium && prices.custom &&
     prices.premium !== prices.custom && env.STRIPE_PORTAL_CONFIGURATION)
-  const stripe = enabled ? new Stripe(env.STRIPE_SECRET_KEY,{timeout:12000,maxNetworkRetries:1}) : null
+  const stripe = enabled ? makeStripe(env.STRIPE_SECRET_KEY,{timeout:12000,maxNetworkRetries:1}) : null
   const queue = new Map()
   async function serialized(key,operation) {
     const next = (queue.get(key) ?? Promise.resolve()).catch(() => {}).then(operation)
@@ -36,10 +36,18 @@ export function stripeBilling(db,base,env = process.env) {
     return serialized('guild:'+guild,async () => {
       let order = db.reserve(guild,owner,plan,randomUUID(),prices[plan],Math.floor(Date.now()/1000)+3600)
       if (order.session) {
-        const previous = await stripe.checkout.sessions.retrieve(order.session)
-        if (previous.status === 'open' && previous.url) {
-          if (order.plan !== plan) throw billingError('A checkout for another plan is already open. Finish it or wait for it to expire.')
-          return previous.url
+        let previous = await stripe.checkout.sessions.retrieve(order.session)
+        if (previous.status === 'open' && order.plan === plan && previous.url) return previous.url
+        if (previous.status === 'open' && order.plan !== plan) {
+          try { previous = await stripe.checkout.sessions.expire(order.session) }
+          catch (error) {
+            // Checkout may have completed or expired while the switch was in progress.
+            previous = await stripe.checkout.sessions.retrieve(order.session)
+            if (previous.status === 'open') {
+              console.error('Stripe Checkout switch failed:',error.type ?? error.name,error.code ?? '',error.requestId ?? '')
+              throw billingError('Stripe could not switch plans. Please try again shortly.',503)
+            }
+          }
         }
         if (previous.status !== 'expired') throw billingError('Your checkout is awaiting payment confirmation.')
         db.release(order.ref,order.session)
