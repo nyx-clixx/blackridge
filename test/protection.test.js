@@ -3,11 +3,39 @@ import assert from 'node:assert/strict'
 import { EventEmitter, once } from 'node:events'
 import { AuditLogEvent as A, Collection, Events, PermissionFlagsBits as P } from 'discord.js'
 import { attachProtection, isDestructive, recordHit } from '../bot.js'
-import { createStore, policies } from '../store.js'
+import { createStore, guildPlan, policies } from '../store.js'
 import { canModerate, syncModerationCommands } from '../moderation.js'
 import { recoveryTools } from '../recovery.js'
 import { attachVerification } from '../verification.js'
-import { appealMarker, hasAppealableBan } from '../appeals.js'
+import { appealMarker, canReviewAppeals, hasAppealableBan } from '../appeals.js'
+import { messageCard } from '../messages.js'
+
+test('Components V2 cards retain attachments and suppress unsolicited mentions', () => {
+  const card = messageCard('Test','@everyone',{roles:['role'],files:[{name:'report.txt',attachment:Buffer.from('test')}]})
+  assert.equal(card.flags,32768)
+  assert.equal(card.components[0].type,17)
+  assert.deepEqual(card.allowedMentions,{parse:[],roles:['role']})
+  assert.ok(card.components[0].components.some(component=>component.file?.url === 'attachment://report.txt'))
+})
+
+test('appeal blacklist is server scoped and review permission requires a permit and Ban Members', t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  const guild = {id:'guild',ownerId:'owner'}
+  const member = {id:'reviewer',roles:{cache:new Map()},permissions:{has:permission=>permission===P.BanMembers}}
+  assert.equal(canReviewAppeals(guild,member,db),false)
+  db.save(guild.id,'permits',{enabled:true,entries:[{name:'Reviewer',users:[member.id],roles:[],commands:[],bypasses:[],appealsManager:true}]},'owner')
+  assert.equal(canReviewAppeals(guild,member,db),true)
+  member.permissions.has = () => false
+  assert.equal(canReviewAppeals(guild,member,db),false)
+  db.inviteAppeal('first',guild.id,'applicant',['Question'])
+  assert.equal(db.submitAppeal('first','applicant',['Answer']),true)
+  assert.equal(db.reviewAppeal('first',guild.id,'blacklisted'),true)
+  db.inviteAppeal('second',guild.id,'applicant',['Question'])
+  assert.equal(db.submitAppeal('second','applicant',['Answer']),false)
+  assert.equal(db.appealBlacklisted('other','applicant'),false)
+  assert.equal(guildPlan('1567348176866902119'),'custom')
+})
 
 test('ban appeal links are single use and accept only the original ban', async t => {
   const db = createStore(':memory:')

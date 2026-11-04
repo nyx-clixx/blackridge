@@ -8,7 +8,7 @@ import { createStore, guildPlan, policies, premiumFilters, premiumGuards } from 
 import { customBots, profilePolicy } from './custom-bot.js'
 import { startBot, requiredPermissions } from './bot.js'
 import { publishVerification } from './verification.js'
-import { hasAppealableBan } from './appeals.js'
+import { canReviewAppeals, privateAppealChannel, reviewBanAppeal } from './appeals.js'
 import { recoveryTools } from './recovery.js'
 import { syncModerationCommands } from './moderation.js'
 
@@ -176,7 +176,7 @@ app.use('/api/guilds/:id',async (req,res,next) => {
   if (!member || (guild.ownerId !== member.id && !member.permissions.has(P.ManageGuild))) {
     return res.status(404).json({error:'Blackridge is unavailable for this server.'})
   }
-  req.guild = {id:guild.id,name:guild.name,owner:guild.ownerId === member.id}
+  req.guild = {id:guild.id,name:guild.name,owner:guild.ownerId === member.id,appealsManager:canReviewAppeals(guild,member,db)}
   next()
 })
 app.get('/api/guilds/:id',(req,res) => {
@@ -194,7 +194,7 @@ app.get('/api/guilds/:id',(req,res) => {
   }
   const plan = guildPlan(id)
   if (plan === 'free') config.backup = {...config.backup,enabled:false}
-  res.json({name,owner,icon:guild.icon ?? null,config,security,plan,lockdownActive:Boolean(db.recovery(id,'lockdown')),backupsScheduled:plan !== 'free' && Boolean(db.recovery(id,'backupSchedule'))})
+  res.json({name,owner,appealsManager:req.guild.appealsManager,icon:guild.icon ?? null,config,security,plan,lockdownActive:Boolean(db.recovery(id,'lockdown')),backupsScheduled:plan !== 'free' && Boolean(db.recovery(id,'backupSchedule'))})
 })
 function customAccess(req,res,next) {
   if (!req.guild.owner || guildPlan(req.guild.id) !== 'custom') return res.status(403).json({error:'Custom Bot requires the Custom Bot plan and server ownership.'})
@@ -237,30 +237,16 @@ app.get('/api/guilds/:id/events',async (req,res) => {
   })})
 })
 const verificationPublishing = new Set()
-const appealReviews = new Set()
 app.get('/api/guilds/:id/appeals', (req,res) => {
-  if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can view appeals.'})
+  if (!req.guild.appealsManager) return res.status(403).json({error:'Ban Appeals Manager access is required.'})
   res.json({appeals:db.appeals(req.guild.id)})
 })
 app.post('/api/guilds/:id/appeals/:appeal',async (req,res) => {
-  if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can review appeals.'})
+  if (!req.guild.appealsManager) return res.status(403).json({error:'Ban Appeals Manager access is required.'})
   const {id} = req.guild
   const {decision} = req.body ?? {}
-  if (!['accepted','rejected'].includes(decision)) return res.status(400).json({error:'Choose a valid decision.'})
-  const row = db.appeal(req.params.appeal)
-  if (!row || row.guild !== id || row.status !== 'pending') return res.status(404).json({error:'Pending appeal not found.'})
-  if (appealReviews.has(row.id)) return res.status(409).json({error:'This appeal is already being reviewed.'})
-  appealReviews.add(row.id)
-  try {
-    if (decision === 'accepted') {
-      const guild = activeGuild(id)
-      if (!await hasAppealableBan(guild,row)) return res.status(409).json({error:'The original ban is no longer active. This appeal cannot lift a different ban.'})
-      await guild.bans.remove(row.user,'Blackridge appeal accepted by '+req.session.user.id)
-    }
-    db.reviewAppeal(row.id,id,decision)
-    db.event(id,'appeals','Ban appeal ' + decision + ' for ' + row.user + ' by ' + req.session.user.id)
-    res.json({ok:true})
-  } finally { appealReviews.delete(row.id) }
+  await reviewBanAppeal(activeGuild(id),db,req.params.appeal,decision,req.session.user.id)
+  res.json({ok:true})
 })
 app.post('/api/guilds/:id/verification-panel',async (req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can publish verification.'})
@@ -325,9 +311,12 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   if (kind === 'backup' && free) return res.status(403).json({error:'Server Backups require Premium or Custom Bot.'})
   const parsed = policies[kind].safeParse(req.body)
   if (!parsed.success) return res.status(400).json({error:'Check your thresholds and Discord user IDs.'})
+  if (kind === 'appeals' && parsed.data.channel &&
+      !await privateAppealChannel(activeGuild(req.guild.id),parsed.data.channel).catch(() => null))
+    return res.status(400).json({error:'Choose a text channel that denies View Channel to @everyone.'})
   if (kind === 'verification' && parsed.data.verifiedRole && parsed.data.verifiedRole === parsed.data.unverifiedRole)
     return res.status(400).json({error:'Verified and unverified roles must be different.'})
-  const config = ['moderation','lockdown'].includes(kind) ? {...db.config(req.guild.id,kind),...parsed.data} : parsed.data
+  const config = ['moderation','lockdown','appeals'].includes(kind) ? {...db.config(req.guild.id,kind),...parsed.data} : parsed.data
   const restricted = kind === 'nuke' ? ['guards',premiumGuards] : kind === 'automod' ? ['filters',premiumFilters] : null
   if (free && restricted) {
     const [field,keys] = restricted
@@ -359,7 +348,7 @@ app.use((error,req,res,next) => {
   if (res.headersSent) return next(error)
   const status = error.status || 500
   if (status === 500) console.error('Request failed:',error.name)
-  res.status(status).json({error:[400,401,503].includes(status) ? error.message : 'Could not complete the request.'})
+  res.status(status).json({error:[400,401,403,404,409,503].includes(status) ? error.message : 'Could not complete the request.'})
 })
 const server = app.listen(port,'0.0.0.0',() => console.log('Blackridge listening on port ' + port))
 function stop() {

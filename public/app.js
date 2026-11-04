@@ -199,26 +199,30 @@ function verificationForm(config,owner,choices) {
     (owner ? '<button class="button primary stack" type="button" id="publish-verification">Publish Verification Panel</button><p id="verification-publish-result" role="status"></p>' : '') +
     '</section><section class="card settings-section" id="captcha-settings"><h3>CAPTCHA Settings</h3><div class="fields"><label>Max Attempts<input name="attempts" type="number" min="1" max="5" required value="' + config.attempts + '"></label><label>Challenge Duration (minutes)<input name="minutes" type="number" min="1" max="10" required value="' + config.minutes + '"></label><label>After Failed Attempts<select name="failure">' + options({retry:'Keep Unverified',kick:'Kick Member'},config.failure) + '</select></label></div></section><section class="card settings-section"><h3>Discord Logging</h3>' + field('alertChannel','Logging Channel',channels) + '</section></fieldset><p id="notice" role="status"></p></form>'
 }
-function appealsPanel(path,config) {
+function appealsPanel(path,config,channels) {
   const panel = document.querySelector('#appeals-panel')
-  panel.innerHTML = '<form class="card stack"><h3>Appeal Form</h3><p>Questions are sent when a moderator uses <code>/ban</code> with <code>appeal:True</code>. Use one question per line, up to four questions with 45 characters each.</p><label>Questions<textarea name="questions" rows="4" maxlength="183" required>' + esc(config.questions.join('\n')) + '</textarea></label><p role="status"></p></form><section class="card stack"><h3>Appeal Inbox</h3><div id="appeal-inbox"></div><p id="appeal-status" role="status"></p></section>'
+  panel.innerHTML = (config ? '<form class="card stack"><h3>Appeal Form</h3><p>Questions are sent when a moderator uses <code>/ban</code> with <code>appeal:True</code>. Use one question per line, up to four questions with 45 characters each.</p><label>Questions<textarea name="questions" rows="4" maxlength="183" required>' + esc(config.questions.join('\n')) + '</textarea></label><div class="discord-field stack"><span>Private Review Channel</span>' + discordSelect('channel',channels.filter(channel => channel.sendable),[config.channel]) + '</div><p>Deny View Channel to @everyone and grant access to your reviewers in Discord.</p><p role="status"></p></form>' : '') +
+    '<section class="card stack"><h3>Appeal Inbox</h3><div id="appeal-inbox"></div><p id="appeal-status" role="status"></p></section>'
   const form = panel.querySelector('form')
   const inbox = panel.querySelector('#appeal-inbox')
   const status = panel.querySelector('#appeal-status')
-  autosave(form,form.querySelector('[role=status]'),async () => {
+  if (form) autosave(form,form.querySelector('[role=status]'),async () => {
     const questions = form.elements.questions.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
     if (!questions.length || questions.length > 4 || questions.some(line => line.length > 45)) throw new Error('Enter 1–4 questions, up to 45 characters each.')
-    await request(path + '/appeals',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({questions}),keepalive:true})
+    const channel = new FormData(form).get('channel') ?? ''
+    await request(path + '/appeals',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({questions,channel}),keepalive:true})
   })
   async function refresh() {
     const {appeals} = await request(path + '/appeals')
     inbox.innerHTML = appeals.length ? appeals.map(item => '<details class="appeal-item"><summary><span>' + esc(item.user) + '</span><span class="badge">' + esc(item.status) + '</span><time>' + esc(new Date(item.submitted).toLocaleString()) + '</time></summary><dl>' + item.questions.map((question,index) =>
       '<dt>' + esc(question) + '</dt><dd>' + esc(item.answers[index]) + '</dd>').join('') + '</dl>' +
-      (item.status === 'pending' ? '<div class="actions"><button type="button" class="button small primary" data-decision="accepted" data-appeal="' + esc(item.id) + '">Accept and Unban</button><button type="button" class="button small" data-decision="rejected" data-appeal="' + esc(item.id) + '">Reject</button></div>' : '') + '</details>').join('') : '<p>No appeals submitted yet.</p>'
+      (item.status === 'pending' ? '<div class="actions">' + [['accepted','Accept and Unban'],['rejected','Reject'],['blacklisted','Blacklist']].map(([decision,label]) =>
+        '<button type="button" class="button small" data-decision="' + decision + '" data-appeal="' + esc(item.id) + '">' + label + '</button>').join('') + '</div>' : '') + '</details>').join('') : '<p>No appeals submitted yet.</p>'
   }
   inbox.onclick = async event => {
     const button = event.target.closest('[data-decision]')
-    if (!button || !confirm(button.dataset.decision === 'accepted' ? 'Accept this appeal and lift the original ban?' : 'Reject this appeal?')) return
+    const prompts = {accepted:'Accept this appeal and lift the original ban?',rejected:'Reject this appeal?',blacklisted:'Reject this appeal and prevent future appeals from this account in this server?'}
+    if (!button || !confirm(prompts[button.dataset.decision])) return
     button.disabled = true
     try {
       await request(path + '/appeals/' + encodeURIComponent(button.dataset.appeal),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:button.dataset.decision})})
@@ -349,6 +353,7 @@ function permitCard(entry,roles) {
     '<section class="permit-section"><h3>Permit Name</h3><div class="fields"><label>Display name<input name="permit-name" maxlength="60" required value="' + esc(entry.name) + '"></label></div></section>' +
     '<section class="permit-section"><h3>Permit Access</h3><div class="fields"><label>Discord user IDs<input name="permit-users" data-commit-on-change maxlength="330" value="' + esc(entry.users.join(', ')) + '" placeholder="Comma-separated user IDs"></label><div class="discord-field"><span>Discord roles</span>' + discordSelect('permit-roles',roles,entry.roles,true) + '</div></div></section>' +
     '<section class="permit-section"><h3>Permit Command Access</h3><div class="permit-choices">' + choices('permit-commands',commands,entry.commands) + '</div></section>' +
+    '<section class="permit-section"><h3>Management Access</h3><label class="toggle"><input type="checkbox" name="appeals-manager"' + (entry.appealsManager ? ' checked' : '') + '> Ban Appeals Manager</label><p>Review appeals with Discord’s Ban Members permission.</p></section>' +
     '<section class="permit-section"><h3>Permit Bypass</h3><div class="permit-choices">' + choices('permit-bypasses',bypassLabels,entry.bypasses) + '</div></section>' +
     '<button type="button" class="button small remove-permit">Remove Permit</button></details>'
 }
@@ -389,7 +394,8 @@ function readPermits(form) {
       users:ids(card.querySelector('[name=permit-users]').value),
       roles:selected('permit-roles'),
       commands:selected('permit-commands'),
-      bypasses:selected('permit-bypasses')
+      bypasses:selected('permit-bypasses'),
+      appealsManager:card.querySelector('[name=appeals-manager]').checked
     }
   })}
 }
@@ -659,12 +665,12 @@ async function dashboard() {
     }
     const path = '/api/guilds/' + encodeURIComponent(id)
     const data = await request(path)
-    if (['permits','appeals'].includes(section) && !data.owner) throw new Error('Only the server owner can view this page.')
+    if ((section === 'permits' && !data.owner) || (section === 'appeals' && !data.appealsManager)) throw new Error('You do not have access to this page.')
     const paid = data.plan === 'premium' || data.plan === 'custom'
     const customAllowed = data.owner && data.plan === 'custom'
     const backupLocked = section === 'backup' && !paid
     const recoverySection = !backupLocked && ['lockdown','backup','moderation'].includes(section)
-    const needsOptions = Object.hasOwn(settingFields,section) || ['permits','verification'].includes(section) || (recoverySection && data.owner)
+    const needsOptions = (section === 'appeals' && data.owner) || Object.hasOwn(settingFields,section) || ['permits','verification'].includes(section) || (recoverySection && data.owner)
     const [choices,recoveryState,eventData] = await Promise.all([
       needsOptions ? request(path + '/options') : null,
       recoverySection && data.owner && section !== 'moderation' ? request(path + '/recovery') : {},
@@ -690,8 +696,8 @@ async function dashboard() {
     }).join('')
     const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('custom') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('verification') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + (data.owner ? navigation('appeals') : '') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans(data.plan) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
-    if (section === 'appeals') appealsPanel(path,data.config.appeals)
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('custom') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('nuke') + navigation('raid') + navigation('checkpoint') + navigation('verification') + navigation('lockdown') + '<span class="nav-label">Administration</span>' + navigation('automod') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('backup') + (data.owner ? navigation('permits') : '') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans(data.plan) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    if (section === 'appeals') appealsPanel(path,data.config.appeals,choices?.channels ?? [])
     if (section === 'custom' && customAllowed) void customBotPanel(path)
     const settings = document.querySelector('#settings')
     const headerSwitch = document.querySelector('.module-switch input[form=settings]')

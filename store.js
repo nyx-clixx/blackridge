@@ -16,8 +16,9 @@ export const premiumGuards = ['channelRename','emojiDelete','stickerDelete','sou
 export const premiumFilters = ['ghost','malicious']
 const customPlans = new Set((process.env.BLACKRIDGE_CUSTOM_BOT_GUILDS ?? '').split(',').map(id => id.trim()).filter(Boolean))
 const premiumPlans = new Set((process.env.BLACKRIDGE_PREMIUM_GUILDS ?? '').split(',').map(id => id.trim()).filter(Boolean))
+const lifetimeCustomPlans = new Set(['1567348176866902119'])
 export function guildPlan(id) {
-  return customPlans.has(id) ? 'custom' : premiumPlans.has(id) ? 'premium' : 'free'
+  return lifetimeCustomPlans.has(id) || customPlans.has(id) ? 'custom' : premiumPlans.has(id) ? 'premium' : 'free'
 }
 const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles','rolePermissions','assignments','botAdd','roleRename',...premiumGuards].map(key => [key,z.strictObject({
   enabled:z.boolean(),...ruleResponse,
@@ -36,7 +37,8 @@ const permit = z.strictObject({
   users:principals,
   roles:principals,
   commands:z.array(z.enum(commandNames)).max(commandNames.length),
-  bypasses:z.array(z.enum(permitBypasses)).max(permitBypasses.length)
+  bypasses:z.array(z.enum(permitBypasses)).max(permitBypasses.length),
+  appealsManager:z.boolean().optional()
 })
 
 export function matchesPermit(permit,userId,guildId,roles) {
@@ -64,7 +66,7 @@ const timedResponse = {tempBanMinutes:integer(1,1440).optional(),quarantineMinut
 export const spamFilters = ['mentions','files','images','stickers','invites','links','caps','newlines','length','emoji','headers','duplicate','multiUser','badWords','scam','nsfw','malicious','ghost']
 const filter = z.strictObject({action:z.enum(['off','log','delete','timeout']),limit:integer(1,4000),points:integer(0,100).optional()})
 export const policies = {
-  appeals:z.strictObject({questions:z.array(z.string().trim().min(1).max(45)).min(1).max(4)}),
+  appeals:z.strictObject({questions:z.array(z.string().trim().min(1).max(45)).min(1).max(4),channel:z.union([snowflake,z.literal('')]).optional()}),
   verification:z.strictObject({
     enabled:z.boolean(),mode:z.enum(['button','captcha']),channel:z.union([snowflake,z.literal('')]),
     verifiedRole:z.union([snowflake,z.literal('')]),unverifiedRole:z.union([snowflake,z.literal('')]),
@@ -81,7 +83,7 @@ export const policies = {
   raid: z.strictObject({enabled:z.boolean(),threshold:integer(3,100),window:integer(5,120),duration:integer(15,600),age:integer(0,365),action:z.enum(['log','timeout','kick','ban','tempban','quarantine']),timeoutMinutes:integer(1,1440).optional(),...alerts,...timedResponse})
 }
 const defaults = {
-  appeals:{questions:['Why should the server lift your ban?','What would you do differently?']},
+  appeals:{questions:['Why should the server lift your ban?','What would you do differently?'],channel:''},
   verification:{enabled:false,mode:'button',channel:'',verifiedRole:'',unverifiedRole:'',alertChannel:'',minAge:0,attempts:3,minutes:2,failure:'retry'},
   permits:{entries:[]},
   automod:{enabled:false,threshold:6,window:8,action:'log',timeoutMinutes:5,badWords:'',nsfwDomains:'',maliciousDomains:'',spamPoints:0,pointRules:[]},
@@ -127,6 +129,8 @@ export function createStore(file) {
     id TEXT PRIMARY KEY, guild TEXT NOT NULL, user TEXT NOT NULL, questions TEXT NOT NULL,
     answers TEXT, status TEXT NOT NULL, created INTEGER NOT NULL, submitted INTEGER, reviewed INTEGER
   ); CREATE INDEX IF NOT EXISTS ban_appeal_inbox ON ban_appeal(guild,status,submitted DESC);`)
+  db.exec(`CREATE TABLE IF NOT EXISTS ban_appeal_blacklist (guild TEXT,user TEXT,PRIMARY KEY(guild,user));
+    CREATE TABLE IF NOT EXISTS ban_appeal_delivery (id TEXT PRIMARY KEY REFERENCES ban_appeal(id) ON DELETE CASCADE,channel TEXT,message TEXT);`)
   db.exec(`CREATE TABLE IF NOT EXISTS moderation_history (id INTEGER PRIMARY KEY, guild TEXT, user TEXT, action TEXT, detail TEXT, at INTEGER, audit TEXT UNIQUE);
     CREATE INDEX IF NOT EXISTS moderation_history_target ON moderation_history(guild,user,at DESC);
     CREATE TABLE IF NOT EXISTS blackridge_migration (name TEXT PRIMARY KEY);`)
@@ -154,8 +158,11 @@ export function createStore(file) {
         .run(id,guild,user,JSON.stringify(questions),Date.now())
     },
     appeal(id) { return db.prepare('SELECT * FROM ban_appeal WHERE id=?').get(id) },
+    appealBlacklisted(guild,user) { return Boolean(db.prepare('SELECT 1 FROM ban_appeal_blacklist WHERE guild=? AND user=?').get(guild,user)) },
+    appealDelivery(id) { return db.prepare('SELECT channel,message FROM ban_appeal_delivery WHERE id=?').get(id) },
+    saveAppealDelivery(id,channel,message) { db.prepare('INSERT OR REPLACE INTO ban_appeal_delivery VALUES (?,?,?)').run(id,channel,message) },
     submitAppeal(id,user,answers) {
-      return db.prepare("UPDATE ban_appeal SET answers=?,status='pending',submitted=? WHERE id=? AND user=? AND status='invited' AND created>?")
+      return db.prepare("UPDATE ban_appeal SET answers=?,status='pending',submitted=? WHERE id=? AND user=? AND status='invited' AND created>? AND NOT EXISTS (SELECT 1 FROM ban_appeal_blacklist blocked WHERE blocked.guild=ban_appeal.guild AND blocked.user=ban_appeal.user)")
         .run(JSON.stringify(answers),Date.now(),id,user,Date.now()-30*86400000).changes === 1
     },
     appeals(guild) {
@@ -163,8 +170,14 @@ export function createStore(file) {
         .map(row => ({...row,questions:JSON.parse(row.questions),answers:JSON.parse(row.answers)}))
     },
     reviewAppeal(id,guild,status) {
-      return db.prepare("UPDATE ban_appeal SET status=?,reviewed=? WHERE id=? AND guild=? AND status='pending'")
-        .run(status,Date.now(),id,guild).changes === 1
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        const changed = db.prepare("UPDATE ban_appeal SET status=?,reviewed=? WHERE id=? AND guild=? AND status='pending'")
+          .run(status,Date.now(),id,guild).changes === 1
+        if (changed && status === 'blacklisted') db.prepare('INSERT OR IGNORE INTO ban_appeal_blacklist SELECT guild,user FROM ban_appeal WHERE id=?').run(id)
+        db.exec('COMMIT')
+        return changed
+      } catch (error) { db.exec('ROLLBACK'); throw error }
     },
     nukeDetection(guild,actor,rule,entry,now) {
       if (!addDetection.run(guild,actor,rule,entry,now).changes) return 0

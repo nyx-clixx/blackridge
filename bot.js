@@ -4,6 +4,7 @@ import { attachVerification } from './verification.js'
 import { createHash } from 'node:crypto'
 import { hasQuarantineOverwrite, sendModuleLog, setQuarantineOverwrite } from './recovery.js'
 import { guildPlan, matchesPermit, premiumFilters, premiumGuards } from './store.js'
+import { logCard, messageCard, safeText } from './messages.js'
 import { onDomainList, startDomainFeeds } from './domain-feeds.js'
 
 export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages | P.ManageGuild | P.ReadMessageHistory | P.EmbedLinks | P.AttachFiles
@@ -129,15 +130,15 @@ export function attachProtection(client, db) {
       const roles = [...new Set(cfg.alertRoles)].filter(id => id !== guild.id && guild.roles.cache.has(id))
       const channel = await guild.channels.fetch(cfg.alertChannel)
       if (!channel?.isSendable() || channel.guildId !== guild.id) throw new Error('Invalid alert channel')
-      await channel.send({
-        content:[detail,...roles.map(id => '<@&' + id + '>')].join(' '),
-        allowedMentions:{parse:[],roles}
-      })
+      await channel.send(logCard(kind,detail,roles))
     })
   }
   const enforce = async (member,kind,cfg) => {
     const reason = 'Blackridge ' + kind + ' threshold reached'
     const action = cfg.action
+    const notify = (title,icon) => {
+      void member.user?.send?.(messageCard(title,'**Server** '+safeText(member.guild.name)+'\n**Reason** '+safeText(reason),{icon,tone:'warning'})).catch(() => {})
+    }
     if (action === 'kick' && member.kickable) await member.kick(reason)
     else if (action === 'ban' && member.bannable) await member.ban({reason})
     else if (action === 'tempban' && member.bannable) await temporaryBan(member,cfg.tempBanMinutes,db,reason)
@@ -148,6 +149,7 @@ export function attachProtection(client, db) {
       const minutes = action === 'timeout' ? cfg.timeoutMinutes : cfg.quarantineMinutes
       const until = Math.max(Date.now()+minutes*60000,member.communicationDisabledUntilTimestamp ?? 0)
       await member.disableCommunicationUntil(until,reason)
+      notify('Server Timeout','timer')
       log(member.guild,kind,'Timed out ' + member.id + ' for ' + minutes + ' minute(s) or longer')
       return
     } else {
@@ -155,6 +157,7 @@ export function attachProtection(client, db) {
       return
     }
     db.recordModeration(member.guild.id,member.id,action,reason)
+    notify(({kick:'Server Kick',ban:'Server Ban',tempban:'Temporary Ban'})[action],action === 'tempban' ? 'timer' : 'hammer')
     log(member.guild,kind,action + ' completed for ' + member.id)
   }
   async function isolate(member,cfg,reason,kind = 'nuke') {
@@ -536,7 +539,7 @@ export function createBotClient() {
   if (process.env.ENABLE_MESSAGE_CONTENT === 'true') intents.push(I.MessageContent)
   return new Client({intents})
 }
-export function mountBot(client,db,ownsGuild) {
+export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {
   const view = new Proxy(client,{
     get(target,property) {
       if (property === 'guilds') return {cache:target.guilds.cache.filter(guild => ownsGuild(guild.id))}
@@ -544,7 +547,8 @@ export function mountBot(client,db,ownsGuild) {
         const first = args[0]
         const id = event === Events.GuildAuditLogEntryCreate ? args[1]?.id
           : event === Events.GuildCreate ? first?.id : first?.guildId ?? first?.guild?.id
-        if (!id || ownsGuild(id)) handler(...args)
+        const oldReview = allowInactiveReviews && event === Events.InteractionCreate && first?.customId?.startsWith('blackridge-review:')
+        if (!id || ownsGuild(id) || oldReview) handler(...args)
       })
       const value = Reflect.get(target,property,target)
       return typeof value === 'function' ? value.bind(target) : value
@@ -556,7 +560,7 @@ export function mountBot(client,db,ownsGuild) {
 export function startBot(token,db,ownsGuild = () => true) {
   startDomainFeeds()
   const client = createBotClient()
-  const cleanup = mountBot(client,db,ownsGuild)
+  const cleanup = mountBot(client,db,ownsGuild,true)
   const destroy = client.destroy.bind(client)
   client.destroy = () => { cleanup(); return destroy() }
   client.once(Events.ClientReady,() => console.log('Discord bot connected'))

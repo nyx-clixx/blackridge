@@ -3,6 +3,7 @@ import { ApplicationCommandType, AuditLogEvent, ChannelType, Events, MessageFlag
 import { commandNames, matchesPermit } from './store.js'
 import { sendModuleLog } from './recovery.js'
 import { appealMarker, attachAppeals, sendBanNotice } from './appeals.js'
+import { messageCard, safeText } from './messages.js'
 
 const channelCommands = new Set(['lock-channel','unlock-channel'])
 const timedCommands = new Set(['timeout','tempban'])
@@ -99,58 +100,59 @@ export function attachModeration(client,db,lookupGuild) {
   client.on(Events.InteractionCreate,async interaction => {
     if (!interaction.isChatInputCommand() || !interaction.inCachedGuild() || !commandNames.includes(interaction.commandName)) return
     const {guild,commandName:name} = interaction
+    const respond = body => interaction.editReply(messageCard('Moderation Notice',body,{icon:'info'}))
     try {
       await interaction.deferReply({flags:MessageFlags.Ephemeral})
-      if (!db.config(guild.id,'moderation').enabled) return await interaction.editReply('Moderation is off in this server.')
+      if (!db.config(guild.id,'moderation').enabled) return await respond('Moderation is off in this server.')
       const actor = await guild.members.fetch({user:interaction.user.id,force:true})
       const owner = guild.ownerId === actor.id
       const permits = db.config(guild.id,'permits')
       const permit = permits.enabled ? permits.entries : []
       if (!canModerate(actor,guild.ownerId,name,permit,interaction.channel?.permissionsFor(actor))) {
-        return await interaction.editReply('You do not have access to this command.')
+        return await respond('You do not have access to this command.')
       }
       if (name === 'purge') {
         const channel = await guild.channels.fetch(interaction.channelId,{force:true})
-        if (!channel?.bulkDelete) return await interaction.editReply('Use this command in a server text channel.')
-        if (!canModerate(actor,guild.ownerId,name,permit,channel.permissionsFor(actor))) return await interaction.editReply('You do not have access in this channel.')
+        if (!channel?.bulkDelete) return await respond('Use this command in a server text channel.')
+        if (!canModerate(actor,guild.ownerId,name,permit,channel.permissionsFor(actor))) return await respond('You do not have access in this channel.')
         const amount = interaction.options.getInteger('amount',true)
         const deleted = await channel.bulkDelete(amount,true)
         const detail = 'purge · ' + deleted.size + ' messages · channel ' + channel.id + ' · moderator ' + actor.id
         db.event(guild.id,'moderation',detail)
         void sendModuleLog(guild,db,'moderation',detail)
-        return await interaction.editReply('Deleted ' + deleted.size + ' of ' + amount + ' requested messages. Messages older than 14 days are skipped.')
+        return await interaction.editReply(messageCard('Purge Complete','**Deleted** '+deleted.size+' of '+amount+' requested messages.\nMessages older than 14 days are skipped.',{icon:'trash',tone:'success'}))
       }
       if (name === 'history') {
         const member = interaction.options.getUser('member')
         const supplied = interaction.options.getString('user-id')?.trim()
         const id = member?.id ?? supplied
-        if ((member && supplied) || !/^\d{17,20}$/.test(id ?? '')) return await interaction.editReply('Choose a member or enter one Discord user ID.')
+        if ((member && supplied) || !/^\d{17,20}$/.test(id ?? '')) return await respond('Choose a member or enter one Discord user ID.')
         const cases = db.history(guild.id,id)
-        if (!cases.length) return await interaction.editReply('No warnings, kicks, or bans recorded by Blackridge for that user in this server.')
+        if (!cases.length) return await respond('No warnings, kicks, or bans recorded by Blackridge for that user in this server.')
         const rows = cases.map(item => new Date(item.at).toISOString() + ' | ' + item.action + ' | ' + item.detail.replace(/[\r\n]+/g,' '))
         const summary = cases.slice(0,10).map(item => '• **' + item.action + '** · <t:' + Math.floor(item.at/1000) + ':f>').join('\n')
-        return await interaction.editReply({content:'**Moderation history** for `' + id + '` · ' + cases.length + ' recorded\n' + summary,
-          allowedMentions:{parse:[]},files:[{attachment:Buffer.from(rows.join('\n')),name:'moderation-history.txt'}]})
+        return await interaction.editReply(messageCard('Moderation History','Member `'+id+'` · '+cases.length+' recorded\n'+summary,
+          {icon:'user',files:[{attachment:Buffer.from(rows.join('\n')),name:'moderation-history.txt'}]}))
       }
       const reason = interaction.options.getString('reason') || 'No reason supplied'
       let notice
       if (channelCommands.has(name)) {
         const key = interaction.channelId
-        if (channelChanges.has(key)) return await interaction.editReply('A channel change is already in progress.')
+        if (channelChanges.has(key)) return await respond('A channel change is already in progress.')
         channelChanges.add(key)
         try {
           const channel = await guild.channels.fetch(key,{force:true})
-          if (channel?.type !== ChannelType.GuildText) return await interaction.editReply('Use this command in a server text channel.')
-          if (!canModerate(actor,guild.ownerId,name,permit,channel.permissionsFor(actor))) return await interaction.editReply('You do not have access in this channel.')
+          if (channel?.type !== ChannelType.GuildText) return await respond('Use this command in a server text channel.')
+          if (!canModerate(actor,guild.ownerId,name,permit,channel.permissionsFor(actor))) return await respond('You do not have access in this channel.')
           const current = channel.permissionOverwrites.cache.get(guild.id)
           if (name === 'lock-channel') {
-            if (current?.allow.has(P.SendMessages) || current?.deny.has(P.SendMessages)) return await interaction.editReply('This channel already has an explicit everyone send rule.')
+            if (current?.allow.has(P.SendMessages) || current?.deny.has(P.SendMessages)) return await respond('This channel already has an explicit everyone send rule.')
             db.lock(guild.id,channel.id)
           } else {
-            if (!db.hasLock(guild.id,channel.id)) return await interaction.editReply('Blackridge has no recorded lock for this channel.')
+            if (!db.hasLock(guild.id,channel.id)) return await respond('Blackridge has no recorded lock for this channel.')
             if (!current?.deny.has(P.SendMessages)) {
               db.unlock(guild.id,channel.id)
-              return await interaction.editReply('The Blackridge lock was already removed.')
+              return await respond('The Blackridge lock was already removed.')
             }
           }
           await channel.permissionOverwrites.edit(guild.roles.everyone,{SendMessages:name === 'lock-channel' ? false : null},{reason})
@@ -158,11 +160,11 @@ export function attachModeration(client,db,lookupGuild) {
         } finally { channelChanges.delete(key) }
       } else if (name === 'unban') {
         const id = interaction.options.getString('user-id',true).trim()
-        if (!/^\d{17,20}$/.test(id)) return await interaction.editReply('Enter a valid Discord user ID.')
+        if (!/^\d{17,20}$/.test(id)) return await respond('Enter a valid Discord user ID.')
         const pending = db.pendingTempBan(guild.id,id)
         try { await guild.bans.remove(id,reason) }
         catch (error) {
-          if (error.code === 10026) return await interaction.editReply('That user is not banned.')
+          if (error.code === 10026) return await respond('That user is not banned.')
           throw error
         }
         if (pending) db.removeTempBan(guild.id,id,pending.marker)
@@ -171,11 +173,11 @@ export function attachModeration(client,db,lookupGuild) {
         const target = await guild.members.fetch({user:interaction.options.getUser('member',true).id,force:true})
         if (target.id === actor.id || target.id === guild.ownerId || target.id === client.user.id ||
             (!owner && actor.roles.highest.comparePositionTo(target.roles.highest) <= 0)) {
-          return await interaction.editReply('You cannot moderate that member.')
+          return await respond('You cannot moderate that member.')
         }
         const minutes = interaction.options.getInteger('minutes')
         if (name === 'ban' && target.bannable) {
-          const appeal = interaction.options.getBoolean('appeal') === true ? randomUUID() : null
+          const appeal = interaction.options.getBoolean('appeal') === true && !db.appealBlacklisted(guild.id,target.id) ? randomUUID() : null
           await target.ban({reason:appeal ? appealMarker(appeal)+reason : reason})
           if (appeal) db.inviteAppeal(appeal,guild.id,target.id,db.config(guild.id,'appeals').questions)
           notice = sendBanNotice(guild,target.user,reason,appeal)
@@ -183,15 +185,20 @@ export function attachModeration(client,db,lookupGuild) {
         else if (name === 'tempban' && target.bannable) await temporaryBan(target,minutes,db,reason)
         else if (name === 'kick' && target.kickable) await target.kick(reason)
         else if (name === 'timeout' && target.moderatable) await target.timeout(minutes*60000,reason)
-        else if (name !== 'warn') return await interaction.editReply('Blackridge lacks permission or role priority for this action.')
+        else if (name !== 'warn') return await respond('Blackridge lacks permission or role priority for this action.')
+        if (name !== 'ban') notice = target.user.send(messageCard(({kick:'Server Kick',tempban:'Temporary Ban',timeout:'Server Timeout',warn:'Server Warning'})[name],
+          '**Server** '+safeText(guild.name)+'\n**Reason** '+safeText(reason)+(minutes ? '\n**Duration** '+minutes+' minutes' : ''),
+          {icon:minutes ? 'timer' : 'hammer',tone:'warning'})).then(() => true,() => false)
         db.event(guild.id,'moderation',name + ' · member ' + target.id + ' · moderator ' + actor.id + ' · ' + reason)
       }
       if (channelCommands.has(name)) db.event(guild.id,'moderation',name + ' · channel ' + interaction.channelId + ' · moderator ' + actor.id)
       void sendModuleLog(guild,db,'moderation','/' + name + ' completed · moderator ' + actor.id + ' · channel ' + interaction.channelId)
-      await interaction.editReply({content:'Recorded /' + name + '.' + (notice && !await notice ? ' Discord did not deliver the ban DM.' : ''),allowedMentions:{parse:[]}})
+      const title = {ban:'Ban Complete',tempban:'Temporary Ban Complete',kick:'Kick Complete',warn:'Warning Recorded',timeout:'Timeout Complete',unban:'Ban Lifted','lock-channel':'Channel Locked','unlock-channel':'Channel Unlocked'}[name]
+      const icon = name === 'lock-channel' ? 'locked' : ['unban','unlock-channel'].includes(name) ? 'unlocked' : 'check'
+      await interaction.editReply(messageCard(title,'Recorded **/'+name+'**.'+(notice && !await notice ? '\nDiscord did not deliver the member DM.' : ''),{icon,tone:'success'}))
     } catch (error) {
       console.error('Moderation command failed:',error.code ?? error.name)
-      if (interaction.deferred) await interaction.editReply('The action could not be completed.').catch(() => {})
+      if (interaction.deferred) await respond('The action could not be completed.').catch(() => {})
     }
   })
   return () => clearInterval(sweep)

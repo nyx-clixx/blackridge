@@ -1,6 +1,7 @@
 import { ChannelType as C, PermissionFlagsBits as P, Routes } from 'discord.js'
 import { z } from 'zod'
 import { guildPlan } from './store.js'
+import { logCard } from './messages.js'
 
 const snowflake = z.string().regex(/^\d{17,20}$/)
 const lockdownInput = z.strictObject({
@@ -32,7 +33,7 @@ export async function sendModuleLog(guild,db,kind,detail) {
   if (!id) return
   try {
     const channel = await guild.channels.fetch(id)
-    if (channel?.isSendable() && channel.guildId === guild.id) await channel.send({content:detail.slice(0,1800),allowedMentions:{parse:[]}})
+    if (channel?.isSendable() && channel.guildId === guild.id) await channel.send(logCard(kind,detail))
   } catch { console.error('Discord module log delivery failed:',kind) }
 }
 

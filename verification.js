@@ -1,7 +1,8 @@
 import { randomInt, randomUUID } from 'node:crypto'
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, Events, MessageFlags, ModalBuilder, PermissionFlagsBits as P, TextInputBuilder, TextInputStyle } from 'discord.js'
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, MessageFlags, ModalBuilder, PermissionFlagsBits as P, TextInputBuilder, TextInputStyle } from 'discord.js'
 import png from 'pngjs'
 import { sendModuleLog } from './recovery.js'
+import { messageCard } from './messages.js'
 
 const prefix = 'blackridge-verify:'
 const reason = 'Blackridge member verification'
@@ -55,17 +56,17 @@ export async function publishVerification(guild,db) {
   if (!channel?.isSendable() || channel.isThread() ||
       !await memberRole(guild,config.verifiedRole,db) ||
       (config.unverifiedRole && !await memberRole(guild,config.unverifiedRole,db))) return null
-  const embed = new EmbedBuilder().setColor(0x6199ff).setTitle('Verification Required')
-    .setDescription('Press **Verify** to unlock member access. ' + (config.mode === 'captcha' ? 'Blackridge will show you a private image challenge.' : 'Blackridge will assign your member role.'))
-    .setFooter({text:'Blackridge'})
   const saved = db.recovery(guild.id,'verificationPanel')
-  const payload = {embeds:[embed],components:[button('start','Verify')],allowedMentions:{parse:[]}}
+  const payload = messageCard('Verification Required','Press **Verify** to unlock member access. ' +
+    (config.mode === 'captcha' ? 'You’ll receive a private image challenge.' : 'Blackridge will assign your member role.'),
+    {icon:'shield',actions:[button('start','Verify')]})
   if (saved?.channel === channel.id) {
     const previous = await channel.messages.fetch(saved.message).catch(error => {
       if (error.code !== 10008) throw error
       return null
     })
-    if (previous?.author.id === guild.client.user.id) return previous.edit(payload)
+    if (previous?.author.id === guild.client.user.id)
+      return previous.edit(previous.flags.has(MessageFlags.IsComponentsV2) ? payload : {...payload,content:null,embeds:[]})
   }
   const message = await channel.send(payload)
   db.saveRecovery(guild.id,'verificationPanel',{channel:channel.id,message:message.id})
@@ -105,7 +106,11 @@ export function attachVerification(client,db) {
     const key = guild.id + ':' + user.id
     const action = interaction.customId.slice(prefix.length)
     const ephemeral = {flags:MessageFlags.Ephemeral}
-    const reply = content => interaction.deferred ? interaction.editReply(content) : interaction.reply({content,...ephemeral})
+    const reply = (body,success=false) => {
+      const card = messageCard(success ? 'Verified' : 'Verification',body,
+        {icon:success ? 'check' : 'shield',tone:success ? 'success' : 'info',ephemeral:!interaction.deferred})
+      return interaction.deferred ? interaction.editReply(card) : interaction.reply(card)
+    }
     if (busy.has(key)) { await reply('Verification is already in progress.').catch(() => {}); return }
     busy.add(key)
     try {
@@ -138,8 +143,8 @@ export function attachVerification(client,db) {
         const challenge = captcha()
         session = {id:randomUUID(),answer:challenge.answer,failures:session?.failures ?? 0,issued:now,until:now+config.minutes*60000}
         sessions.set(key,session)
-        return await interaction.editReply({content:'Read the six digits, then press **Enter Code**.',components:[button('answer:'+session.id,'Enter Code')],
-          files:[{attachment:challenge.image,name:'verification.png'}]})
+        return await interaction.editReply(messageCard('Verification Challenge','Read the six digits, then press **Enter Code**.',{
+          icon:'shield',actions:[button('answer:'+session.id,'Enter Code')],media:'verification.png',files:[{attachment:challenge.image,name:'verification.png'}]}))
       }
       if (submit && interaction.fields.getTextInputValue('code').trim() !== session.answer) {
         session.failures++
@@ -170,7 +175,7 @@ export function attachVerification(client,db) {
       }
       sessions.delete(key)
       log(guild,member,'passed')
-      await reply('You’re verified. Welcome to the server!')
+      await reply('Welcome to the server!',true)
     } catch (error) {
       console.error('Verification failed:',error.code ?? error.name)
       await reply('Verification could not be completed. Try again or contact a server administrator.').catch(() => {})
