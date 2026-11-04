@@ -1,10 +1,12 @@
+import { stripeBilling } from './billing.js'
+import { billingError } from './billing-store.js'
 import express from 'express'
 import helmet from 'helmet'
 import { randomBytes, createHash, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { readFileSync } from 'node:fs'
 import { ChannelType, PermissionFlagsBits as P } from 'discord.js'
-import { createStore, guildPlan, policies, premiumFilters, premiumGuards } from './store.js'
+import { createStore, policies, premiumFilters, premiumGuards } from './store.js'
 import { customBots, profilePolicy } from './custom-bot.js'
 import { startBot, requiredPermissions } from './bot.js'
 import { publishVerification } from './verification.js'
@@ -19,6 +21,7 @@ const redirect = base + '/auth/callback'
 const configured = Boolean(clientId && clientSecret)
 const app = express()
 const db = createStore(process.env.DB_PATH || './data/blackridge.sqlite')
+const billing = stripeBilling(db.billing,base)
 let custom
 const bot = botToken && startBot(botToken,db,id => !custom?.active(id))
 custom = customBots(db,() => bot,configured ? scryptSync(clientSecret,'blackridge custom bot credentials v1',32) : null)
@@ -68,6 +71,16 @@ app.use(['/api','/auth'], (req,res,next) => {
   if (['PUT','POST'].includes(req.method) && req.get('origin') !== base) return res.status(403).json({error:'Invalid request origin.'})
   next()
 })
+app.post('/webhooks/stripe',express.raw({type:'application/json',limit:'256kb'}),async (req,res) => {
+  try {
+    await billing.webhook(req.body,req.get('stripe-signature'))
+    res.sendStatus(204)
+  } catch (error) {
+    if (error.status === 400 || error.status === 503) return res.sendStatus(error.status)
+    console.error('Stripe webhook processing failed:',error.type ?? error.name)
+    res.sendStatus(500)
+  }
+})
 app.use(express.json({limit:'32kb'}))
 async function discord(path,options = {}) {
   const response = await fetch('https://discord.com/api/v10' + path,{...options,signal:AbortSignal.timeout(8000)})
@@ -77,7 +90,7 @@ async function discord(path,options = {}) {
   return response.json()
 }
 
-app.get('/healthz',(req,res) => res.json({ok:true,botConnected:Boolean(bot && bot.isReady()),oauthConfigured:configured}))
+app.get('/healthz',(req,res) => res.json({ok:true,botConnected:Boolean(bot && bot.isReady()),oauthConfigured:configured,billingConfigured:billing.enabled}))
 app.get('/auth/login',(req,res) => {
   if (!configured) return res.redirect('/dashboard')
   if (states.size >= 2000) return res.status(429).send('Sign-in capacity reached. Please retry shortly.')
@@ -158,9 +171,22 @@ async function visibleGuilds(req) {
     throw error
   }
 }
+app.post('/api/billing/:guild/portal',async (req,res) => {
+  if (!req.session) throw billingError('Sign in with Discord.',401)
+  if (!idPattern.test(req.params.guild)) throw billingError('Server not found.',404)
+  const url = await billing.portal(req.params.guild,req.session.user.id,req.body?.action ?? 'manage')
+  res.json({url})
+})
+app.get('/api/billing',(req,res) => {
+  if (!req.session) throw billingError('Sign in with Discord.',401)
+  const subscriptions = db.billing.owned(req.session.user.id).map(row => ({
+    guild:row.guild,plan:row.plan,name:bot?.guilds.cache.get(row.guild)?.name ?? 'Server ' + row.guild
+  }))
+  res.json({enabled:billing.enabled,subscriptions})
+})
 app.get('/api/guilds',async (req,res) => {
   const guilds = await visibleGuilds(req)
-  res.json({guilds:guilds.map(({id,name,icon,owner}) => ({id,name,icon,owner,plan:guildPlan(id),installed:Boolean(bot && bot.guilds.cache.has(id))}))})
+  res.json({guilds:guilds.map(({id,name,icon,owner}) => ({id,name,icon,owner,plan:db.guildPlan(id),installed:Boolean(bot && bot.guilds.cache.has(id))}))})
 })
 app.use('/api/guilds/:id',async (req,res,next) => {
   if (!idPattern.test(req.params.id)) return res.status(404).json({error:'Server not found.'})
@@ -179,6 +205,41 @@ app.use('/api/guilds/:id',async (req,res,next) => {
   req.guild = {id:guild.id,name:guild.name,owner:guild.ownerId === member.id,appealsManager:canReviewAppeals(guild,member,db)}
   next()
 })
+app.get('/api/guilds/:id/billing',(req,res) => {
+  const {id,owner} = req.guild
+  const actor = req.session.user.id
+  const row = db.billing.current(id)
+  const manages = row?.owner === actor
+  const remaining = manages ? db.billing.remaining(actor) : 0
+  const eligible = manages && owner && !row.risk && row.status === 'active' && row.paid_until > Date.now()
+  const targets = eligible && remaining ? [...bot.guilds.cache.values()].filter(guild =>
+    guild.available && guild.id !== id && guild.ownerId === actor && db.billing.available(guild.id)
+  ).map(({id,name}) => ({id,name})) : []
+  res.json({enabled:billing.enabled,purchasable:owner && (!row && db.guildPlan(id) === 'free'),
+    subscription:manages ? {plan:row.plan,status:row.status,paidUntil:row.paid_until,cancelAt:row.cancel_at,review:Boolean(row.risk)} : null,
+    remaining,targets})
+})
+app.post('/api/guilds/:id/billing/checkout',async (req,res) => {
+  if (!req.guild.owner) throw billingError('Only the server owner can subscribe.',403)
+  const url = await billing.checkout(req.guild.id,req.session.user.id,req.body?.plan)
+  res.json({url})
+})
+app.post('/api/guilds/:id/billing/transfer',async (req,res) => {
+  const actor = req.session.user.id
+  const {id,owner} = req.guild
+  const targetId = req.body?.target
+  const target = typeof targetId === 'string' && idPattern.test(targetId) ? bot.guilds.cache.get(targetId) : null
+  if (!owner || !target?.available || target.ownerId !== actor) throw billingError('You must own both servers and have Blackridge installed.',403)
+  const sub = db.billing.current(id)
+  if (!sub || sub.owner !== actor) throw billingError('Only the billing owner can transfer this subscription.',403)
+  await billing.refresh(sub.id)
+  if (bot.guilds.cache.get(id)?.ownerId !== actor || bot.guilds.cache.get(targetId)?.ownerId !== actor)
+    throw billingError('You must own both servers.',403)
+  db.billing.move(id,targetId,actor)
+  db.event(id,'billing','Subscription transferred out by ' + actor)
+  db.event(targetId,'billing','Subscription transferred in by ' + actor)
+  res.json({remaining:db.billing.remaining(actor)})
+})
 app.get('/api/guilds/:id',(req,res) => {
   const {id,name,owner} = req.guild
   const guild = activeGuild(id)
@@ -192,12 +253,12 @@ app.get('/api/guilds/:id',(req,res) => {
     priority:Boolean(me && highest && me.roles.highest.id === highest.id),
     admin:Boolean(me?.permissions.has('Administrator'))
   }
-  const plan = guildPlan(id)
+  const plan = db.guildPlan(id)
   if (plan === 'free') config.backup = {...config.backup,enabled:false}
   res.json({name,owner,appealsManager:req.guild.appealsManager,appealsConfigured:req.guild.appealsManager && Boolean(db.config(id,'appeals').channel),customConnected:Boolean(custom.active(id)),icon:guild.icon ?? null,config,security,plan,lockdownActive:Boolean(db.recovery(id,'lockdown')),backupsScheduled:plan !== 'free' && Boolean(db.recovery(id,'backupSchedule'))})
 })
 function customAccess(req,res,next) {
-  if (!req.guild.owner || guildPlan(req.guild.id) !== 'custom') return res.status(403).json({error:'Custom Bot requires the Custom Bot plan and server ownership.'})
+  if (!req.guild.owner || db.guildPlan(req.guild.id) !== 'custom') return res.status(403).json({error:'Custom Bot requires the Custom Bot plan and server ownership.'})
   next()
 }
 app.get('/api/guilds/:id/custom-bot',customAccess,(req,res) => res.json(custom.state(req.guild.id,req.session.user.id)))
@@ -279,7 +340,7 @@ app.get('/api/guilds/:id/options',async (req,res) => {
 app.get('/api/guilds/:id/recovery',(req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can access recovery.'})
   const id = req.guild.id
-  const premium = guildPlan(id) !== 'free'
+  const premium = db.guildPlan(id) !== 'free'
   res.json({lockdown:db.recovery(id,'lockdown')?.at ?? null,backups:premium ? db.backups(id) : [],schedule:premium ? db.recovery(id,'backupSchedule') : null,quarantineRole:db.recovery(id,'quarantineRole')?.role ?? '',quarantineSetup:db.recovery(id,'quarantineSetup')?.role ?? ''})
 })
 app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
@@ -287,7 +348,7 @@ app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
   const guild = activeGuild(req.guild.id)
   const actor = req.session.user.id
   const input = req.body ?? {}
-  if (['backup','restore','schedule'].includes(req.params.operation) && guildPlan(guild.id) === 'free')
+  if (['backup','restore','schedule'].includes(req.params.operation) && db.guildPlan(guild.id) === 'free')
     return res.status(403).json({error:'Server Backups require Premium or Custom Bot.'})
   if (['enable','delete-invites'].includes(req.params.operation) && !db.config(guild.id,'lockdown').enabled) {
     return res.status(400).json({error:'Turn on the Lockdown module first.'})
@@ -316,7 +377,7 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can change policies.'})
   const {kind} = req.params
   if (!Object.hasOwn(policies,kind)) return res.status(404).json({error:'Unknown protection policy.'})
-  const free = guildPlan(req.guild.id) === 'free'
+  const free = db.guildPlan(req.guild.id) === 'free'
   if (kind === 'backup' && free) return res.status(403).json({error:'Server Backups require Premium or Custom Bot.'})
   const parsed = policies[kind].safeParse(req.body)
   if (!parsed.success) return res.status(400).json({error:'Check your thresholds and Discord user IDs.'})

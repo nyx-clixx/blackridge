@@ -3,7 +3,7 @@ import { attachModeration, temporaryBan } from './moderation.js'
 import { attachVerification } from './verification.js'
 import { createHash } from 'node:crypto'
 import { hasQuarantineOverwrite, sendModuleLog, setQuarantineOverwrite } from './recovery.js'
-import { guildPlan, matchesPermit, premiumFilters, premiumGuards } from './store.js'
+import { matchesPermit, premiumFilters, premiumGuards } from './store.js'
 import { actionCard, logCard, memberAction } from './messages.js'
 import { onDomainList, startDomainFeeds } from './domain-feeds.js'
 
@@ -220,7 +220,7 @@ export function attachProtection(client, db) {
         const signals = messageSignals(message,repeats,now,cfg.window*1000,cfg)
         const severity = {log:0,delete:1,timeout:2}
         const matches = Object.entries(cfg.filters).filter(([name,rule]) => rule.action !== 'off' &&
-          (guildPlan(message.guild.id) !== 'free' || !premiumFilters.includes(name)) && signals[name] >= rule.limit)
+          (db.guildPlan(message.guild.id) !== 'free' || !premiumFilters.includes(name)) && signals[name] >= rule.limit)
         if (matches.length) {
           const [,rule] = matches.reduce((a,b) => severity[b[1].action] > severity[a[1].action] ? b : a)
           log(guild,'automod','Matched ' + matches.map(([name]) => name).join(', ') + ' · member ' + message.author.id)
@@ -253,7 +253,7 @@ export function attachProtection(client, db) {
     void run(guild,'automod',async () => {
       const cfg = db.config(guild.id,'automod')
       const rule = cfg.filters?.ghost
-      if (guildPlan(message.guild.id) === 'free') return
+      if (db.guildPlan(message.guild.id) === 'free') return
       if (!cfg.enabled || !['log','timeout'].includes(rule?.action)) return
       const member = message.member ?? guild.members.cache.get(message.author.id)
       if (bypass(guild,'automod',message.author.id,member)) return
@@ -288,7 +288,7 @@ export function attachProtection(client, db) {
     const changed = key => entry.changes.find(change => change.key === key)
     const addedBits = key => flags(changed(key)?.new) & ~flags(changed(key)?.old)
     const hit = (key,undo) => {
-      if (guards[key]?.enabled && (guildPlan(guild.id) !== 'free' || !premiumGuards.includes(key))) hits.push({key,rule:guards[key],undo})
+      if (guards[key]?.enabled && (db.guildPlan(guild.id) !== 'free' || !premiumGuards.includes(key))) hits.push({key,rule:guards[key],undo})
     }
     if (entry.action === A.GuildUpdate && (guards.identity?.identity ?? ['icon_hash','name','vanity_url_code']).some(changed)) hit('identity')
     if (entry.action === A.BotAdd) hit('botAdd')

@@ -473,15 +473,78 @@ async function accountMenu(me) {
   }
 }
 async function premium(me) {
-  const plans = me?.user ? await request('/api/guilds').then(data => data.guilds.map(guild => guild.plan)).catch(() => []) : []
-  shell('<h2>Blackridge Premium</h2>' + premiumPlans(...plans))
+  const [guilds,billing] = me?.user ? await Promise.all([
+    request('/api/guilds').then(data => data.guilds).catch(() => []),
+    request('/api/billing').catch(() => ({}))
+  ]) : [[],{}]
+  const servers = guilds.filter(guild => guild.owner && guild.installed)
+  const picker = servers.length ? '<section class="card stack billing-panel"><h3>Choose a Server</h3><div class="actions">' +
+    servers.map(guild => '<a class="button small" href="/dashboard/' + encodeURIComponent(guild.id) + '/premium">' + esc(guild.name) + '</a>').join('') +
+    '</div></section>' : '<p class="stack"><a class="button" href="/dashboard">' + (me?.user ? 'Open Dashboard' : 'Sign In to Subscribe') + '</a></p>'
+  const subscriptions = billing.subscriptions?.length ? '<section class="card stack billing-panel"><h3>Your Subscriptions</h3>' +
+    billing.subscriptions.map(row => '<div class="actions stack"><span>' + esc(row.name) + ' · ' + planName(row.plan) +
+      '</span><button type="button" class="button small" data-portal="manage" data-guild="' + esc(row.guild) + '"' + (billing.enabled ? '' : ' disabled') + '>Manage Billing</button></div>').join('') + '</section>' : ''
+  shell('<h2>Blackridge Premium</h2>' + premiumPlans(guilds.map(guild => guild.plan)) + picker + subscriptions + '<p id="billing-status" role="status"></p>')
+  wireBilling()
 }
-function premiumPlans(...plans) {
+const planName = plan => plan === 'custom' ? 'Custom Bot' : 'Premium'
+function premiumPlans(plans,billing = {}) {
   const features = ['Advanced Auto Moderation','Advanced Anti-Nuke','Server Backups']
   return '<div class="grid pricing">' + [
-    ['blue','Blackridge Premium','$2.99',features],
-    ['custom','Blackridge Custom Bot','$4.99',[...features,'Custom Bot']]
-  ].map(([theme,name,price,items]) => '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + icon('premium') + '</span><h3>' + name + '</h3><strong>' + price + '</strong><ul>' + items.map(item => '<li>' + item + '</li>').join('') + '</ul><button class="button plan-purchase" type="button" disabled>Purchase</button><span class="badge">' + (plans.includes(theme === 'custom' ? 'custom' : 'premium') ? 'Your Current Active Plan' : 'Coming soon') + '</span></article>').join('') + '</div>'
+    ['premium','blue','$2.99',features],
+    ['custom','custom','$4.99',[...features,'Custom Bot']]
+  ].map(([plan,theme,price,items]) => {
+    const purchase = billing.enabled && billing.purchasable ? '<button class="button plan-purchase" type="button" data-checkout="' + plan + '">Subscribe</button>' : ''
+    const upgrade = billing.enabled && plan === 'custom' && billing.subscription?.plan === 'premium' && billing.subscription.status === 'active' && !billing.subscription.review
+      ? '<button class="button plan-purchase" type="button" data-portal="upgrade">Upgrade to Custom Bot</button>' : ''
+    return '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + icon('premium') + '</span><h3>Blackridge ' + planName(plan) + '</h3><strong>' + price + '<small> / month</small></strong><ul>' +
+      items.map(item => '<li>' + item + '</li>').join('') + '</ul>' + purchase + upgrade +
+      (plans.includes(plan) ? '<span class="badge">Your Current Active Plan</span>' : '') + '</article>'
+  }).join('') + '</div>'
+}
+function serverBilling(plan,billing) {
+  const sub = billing.subscription
+  const date = value => esc(new Date(value).toLocaleDateString())
+  const processing = new URLSearchParams(location.search).get('billing') === 'processing' && plan === 'free'
+  let message = billing.enabled ? '' : 'Subscription billing is currently unavailable.'
+  if (processing) message = 'Stripe is confirming your payment. Refresh this page shortly to check your plan.'
+  else if (sub?.review) message = 'Access is on hold due to a payment issue. Contact Blackridge Support for help.'
+  else if (sub?.cancelAt) message = 'Your plan is scheduled to end on ' + date(sub.cancelAt) + '.'
+  else if (sub?.status === 'past_due') message = 'A payment is overdue. Use Manage Billing to update your payment method.'
+  else if (sub && plan === 'free') message = 'Payment confirmation is pending.'
+  const manage = sub && billing.enabled ? '<section class="card stack billing-panel"><h3>Subscription Management</h3><div class="actions"><button type="button" class="button" data-portal="manage">Manage Billing</button>' +
+    (!sub.cancelAt ? '<button type="button" class="button" data-portal="cancel">Cancel Plan</button>' : '') + '</div></section>' : ''
+  const transfer = sub && billing.enabled && Array.isArray(billing.targets) && billing.remaining !== undefined ? '<section class="card stack billing-panel"><h3>Transfer Subscription</h3><p>' +
+    billing.remaining + ' of 3 transfers remaining this calendar month (UTC). Only the subscription moves.</p>' +
+    (billing.targets.length ? '<form id="billing-transfer"><div class="fields"><label>Destination Server<select name="target" required><option value="">Select a server</option>' +
+      billing.targets.map(guild => '<option value="' + esc(guild.id) + '">' + esc(guild.name) + '</option>').join('') +
+      '</select></label></div><button class="button" type="submit">Transfer Plan</button></form>' : '<p>No eligible destination servers are available.</p>') + '</section>' : ''
+  return premiumPlans([plan],billing) + (message ? '<p class="stack">' + message + '</p>' : '') + manage + transfer + '<p id="billing-status" role="status"></p>'
+}
+function wireBilling(path,guild) {
+  const status = document.querySelector('#billing-status')
+  const send = (url,body) => request(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+  const run = async (button,operation) => {
+    button.disabled = true
+    status.textContent = ''
+    try { await operation() } catch (error) { status.textContent = error.message }
+    finally { button.disabled = false }
+  }
+  for (const button of document.querySelectorAll('[data-checkout],[data-portal]')) button.onclick = () => run(button,async () => {
+    const result = button.dataset.checkout ? await send(path+'/billing/checkout',{plan:button.dataset.checkout})
+      : await send('/api/billing/'+encodeURIComponent(button.dataset.guild ?? guild)+'/portal',{action:button.dataset.portal})
+    location.assign(result.url)
+  })
+  const transfer = document.querySelector('#billing-transfer')
+  if (transfer) transfer.onsubmit = event => {
+    event.preventDefault()
+    const target = transfer.elements.target
+    if (!confirm('Transfer this plan to ' + target.selectedOptions[0].text + '? Paid features will move immediately.')) return
+    void run(event.submitter,async () => {
+      await send(path+'/billing/transfer',{target:target.value})
+      location.assign('/dashboard/'+encodeURIComponent(target.value)+'/premium')
+    })
+  }
 }
 function planLock(title,description,href) {
   return '<section class="card stack plan-lock"><h3>' + title + crown + '</h3><p>' + description + '</p><a class="button small" href="' + href + '">View Plans</a></section>'
@@ -780,6 +843,7 @@ async function dashboard() {
       recoverySection && data.owner && section !== 'moderation' ? request(path + '/recovery') : {},
       ['logs','moderation'].includes(section) ? request(path + '/events' + (section === 'moderation' ? '?kind=moderation' : '')) : {events:[]}
     ])
+    const billing = section === 'premium' ? await request(path + '/billing') : null
     const linkedSwitch = Object.hasOwn(settingFields,section) || ['permits','verification'].includes(section)
     const serviceSwitch = !backupLocked && ['backup','moderation','lockdown'].includes(section)
     let switchControl = ''
@@ -800,7 +864,8 @@ async function dashboard() {
     }).join('')
     const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('custom') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('verification') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? premiumPlans(data.plan) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('custom') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('verification') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    if (section === 'premium') wireBilling(path,id)
     if (section === 'appeals') appealsPanel(path,data.config.appeals,choices?.channels ?? [])
     if (section === 'custom' && customAllowed) void customBotPanel(path)
     const settings = document.querySelector('#settings')

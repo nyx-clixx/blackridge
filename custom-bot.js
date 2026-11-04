@@ -3,7 +3,6 @@ import { ActivityType, ApplicationFlagsBitField, Events } from 'discord.js'
 import { z } from 'zod'
 import { createBotClient, mountBot, requiredPermissions } from './bot.js'
 import { syncModerationCommands } from './moderation.js'
-import { guildPlan } from './store.js'
 
 const keyName = 'customBot'
 const activities = {playing:ActivityType.Playing,listening:ActivityType.Listening,watching:ActivityType.Watching,competing:ActivityType.Competing}
@@ -27,7 +26,7 @@ export function missingPrivilegedIntents(flags) {
 export function customBots(db,shared,key) {
   const clients = new Map()
   const busy = new Set()
-  const eligible = (id,owner) => guildPlan(id) === 'custom' && shared()?.guilds.cache.get(id)?.ownerId === owner
+  const eligible = (id,owner) => db.guildPlan(id) === 'custom' && shared()?.guilds.cache.get(id)?.ownerId === owner
   function seal(id,token) {
     const iv = randomBytes(12)
     const cipher = createCipheriv('aes-256-gcm',key,iv)

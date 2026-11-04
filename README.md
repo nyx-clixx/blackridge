@@ -30,3 +30,12 @@ Generate a public Railway domain, set `PUBLIC_URL` to that HTTPS origin, then re
 - [Discord audit logs](https://docs.discord.com/developers/resources/audit-log)
 
 
+## Stripe Billing
+
+Use the variables listed in `.env.example` to configure billing. Store the restricted Stripe API key and webhook signing secret in Railway Variables. Use a separate Stripe sandbox and database for testing. Set `STRIPE_LIVEMODE=true` only in production.
+
+Create separate monthly prices for Blackridge Premium and Blackridge Custom Bot. Configure a Stripe customer portal with payment method updates, invoice history, end-of-period cancellation, and price changes between both plans. Set upgrades to invoice prorations immediately and schedule downgrades for the end of the billing period.
+
+Point the Stripe webhook to `/webhooks/stripe` and subscribe to Checkout completed, expired, asynchronous payment succeeded and failed, subscription created, updated and deleted, invoice paid and payment failed, charge refunded, charge dispute created, and Radar early fraud warning created events. The restricted key needs Checkout Sessions and Customer Portal Sessions write access, and Subscriptions, Invoices, and Invoice Payments read access.
+
+Full refunds, disputes, and early fraud warnings place paid access on hold. Review those payments in Stripe before clearing the corresponding row in `billing_risk` through authorized database maintenance.

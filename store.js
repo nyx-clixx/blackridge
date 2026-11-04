@@ -1,3 +1,4 @@
+import { billingStore } from './billing-store.js'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -101,6 +102,7 @@ const defaults = {
 export function createStore(file) {
   if (file !== ':memory:') mkdirSync(dirname(file),{recursive:true})
   const db = new DatabaseSync(file)
+  const billing = billingStore(db,guildPlan)
   db.exec(`PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS policy (guild TEXT, kind TEXT, config TEXT, PRIMARY KEY(guild,kind));
     CREATE TABLE IF NOT EXISTS event (id INTEGER PRIMARY KEY, guild TEXT, kind TEXT, detail TEXT, at INTEGER);
@@ -163,6 +165,7 @@ export function createStore(file) {
   const countDetections = db.prepare('SELECT COUNT(*) AS total FROM nuke_detection WHERE guild=? AND actor=? AND rule=? AND at>?')
   const sumPoints = db.prepare('SELECT coalesce(sum(points),0) AS total FROM automod_points WHERE guild=? AND user=? AND at>?')
   return {
+    billing,guildPlan:billing.plan,
     inviteAppeal(id,guild,user,questions) {
       db.prepare("INSERT INTO ban_appeal(id,guild,user,questions,status,created) VALUES (?,?,?,?,'invited',?)")
         .run(id,guild,user,JSON.stringify(questions),Date.now())

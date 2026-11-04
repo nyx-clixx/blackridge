@@ -379,3 +379,6 @@ body.has-workspace .sidebar{overflow:auto}
 @media(max-width:1280px){.account-links{left:auto;right:0;transform:none}}
 @media(max-width:760px){.hero,.setup-cards{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:480px){footer{align-items:flex-start;flex-direction:column;padding-block:16px;gap:8px}}
+
+.plan strong small{font-size:.9rem;font-weight:500;color:var(--muted)}
+.billing-panel .actions{flex-wrap:wrap}
