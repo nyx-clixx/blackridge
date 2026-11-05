@@ -21,7 +21,7 @@ export const premiumGuards = ['channelRename','emojiDelete','stickerDelete','sou
 export const premiumFilters = ['ghost','malicious']
 const customPlans = new Set((process.env.BLACKRIDGE_CUSTOM_BOT_GUILDS ?? '').split(',').map(id => id.trim()).filter(Boolean))
 const premiumPlans = new Set((process.env.BLACKRIDGE_PREMIUM_GUILDS ?? '').split(',').map(id => id.trim()).filter(Boolean))
-const lifetimeCustomPlans = new Set(['1567348176866902119'])
+const lifetimeCustomPlans = new Set(['1567348176866902119','1567687590532878467'])
 export function guildPlan(id) {
   return lifetimeCustomPlans.has(id) || customPlans.has(id) ? 'custom' : premiumPlans.has(id) ? 'premium' : 'free'
 }
