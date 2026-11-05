@@ -382,3 +382,18 @@ body.has-workspace .sidebar{overflow:auto}
 
 .plan strong small{font-size:.9rem;font-weight:500;color:var(--muted)}
 .billing-panel .actions{flex-wrap:wrap}
+
+.duration-field[hidden]{display:none}
+.premium-server{display:flex;align-items:center;gap:14px;color:inherit;text-decoration:none}
+.premium-server:hover,.premium-server:focus-visible{border-color:#719ee5;background:#1b2433}
+.premium-server small{display:block;color:var(--muted);margin-top:3px}
+.premium-server-arrow{margin-left:auto;font-size:1.4rem;color:var(--muted)}
+.filter-card .fields+.toggle{margin-top:12px}
+.custom-preview-body .custom-preview-avatar{position:relative;width:74px;margin-top:-45px;margin-bottom:10px}
+.custom-preview-avatar img{width:74px;height:74px;border-radius:50%;border:5px solid #222328;margin:0}
+.presence-dot{position:absolute;bottom:1px;right:0;width:21px;height:21px;border:4px solid #222328;border-radius:50%;background:#82858c}
+.presence-online{background:#60aa79}.presence-idle{background:#f2ac42}.presence-dnd{background:#e05658}
+.presence-dnd::after{content:"";display:block;background:#222328;width:9px;height:3px;margin:5px auto;border-radius:3px}
+.app-badge{background:#5865f2;color:white;padding:2px 5px;border-radius:4px;font-size:.64rem;vertical-align:middle}
+.custom-preview-bio{border-top:1px solid var(--line);padding-top:12px}
+.custom-preview-bio p{white-space:pre-wrap;overflow-wrap:anywhere}

@@ -3,7 +3,7 @@ import { ApplicationCommandType, AuditLogEvent, ChannelType, Events, MessageFlag
 import { commandNames, matchesPermit } from './store.js'
 import { sendModuleLog } from './recovery.js'
 import { appealMarker, attachAppeals, sendBanNotice } from './appeals.js'
-import { actionCard, memberAction, mention, messageCard, safeText } from './messages.js'
+import { actionCard, memberAction, mention, messageCard, safeText, timestamp } from './messages.js'
 import { grantVerification } from './verification.js'
 
 const channelCommands = new Set(['lock-channel','unlock-channel'])
@@ -11,13 +11,15 @@ const timedCommands = new Set(['timeout','tempban'])
 const permissions = {
   ban:P.BanMembers, tempban:P.BanMembers, unban:P.BanMembers, kick:P.KickMembers,
   timeout:P.ModerateMembers, warn:P.ModerateMembers, 'lock-channel':P.ManageChannels, 'unlock-channel':P.ManageChannels,
-  purge:P.ManageMessages, history:P.ModerateMembers, 'force-verify':P.ManageRoles
+  purge:P.ManageMessages, history:P.ModerateMembers, info:P.ModerateMembers, 'force-verify':P.ManageRoles
 }
 const commands = commandNames.map(name => {
   const builder = new SlashCommandBuilder().setName(name).setDescription('Blackridge ' + name + ' moderation action')
   if (name === 'force-verify') builder.setDescription('Verify a member without a button or CAPTCHA')
   if (name === 'purge') return builder.setDescription('Delete recent messages in this channel').addIntegerOption(option =>
     option.setName('amount').setDescription('Number of recent messages to delete').setRequired(true).setMinValue(1).setMaxValue(100))
+  if (name === 'info') return builder.setDescription('View account and server information for a Discord user')
+    .addUserOption(option => option.setName('member').setDescription('Discord user to inspect').setRequired(true))
   if (name === 'history') return builder.setDescription('View recorded warns, kicks, and bans for a user')
     .addUserOption(option => option.setName('member').setDescription('Choose a member'))
     .addStringOption(option => option.setName('user-id').setDescription('Discord ID, including users who left').setMinLength(17).setMaxLength(20))
@@ -150,6 +152,22 @@ export function attachModeration(client,db,lookupGuild) {
           options:{icon:'trash',fields:[['Moderator',mention(actor.id)],['Limit','Messages older than 14 days are skipped.']]}}
         void sendModuleLog(guild,db,'moderation',result)
         return await interaction.editReply(actionCard(result))
+      }
+      if (name === 'info') {
+        const user = interaction.options.getUser('member',true)
+        const [flags,member] = await Promise.all([
+          user.fetchFlags().catch(() => null),guild.members.fetch({user:user.id,force:true}).catch(() => null)
+        ])
+        const humanize = key => key.replace(/([a-z])([A-Z])/g,'$1 $2')
+        const permissions = member?.permissions.toArray().map(humanize).join(', ')
+        const badges = flags?.toArray().map(humanize).join(', ')
+        return await interaction.editReply(messageCard('User Information',
+          '**Username** · '+safeText(user.username)+'\n**User ID** · `'+user.id+'`\n**Account Created** · '+timestamp(user.createdTimestamp)+' ('+timestamp(user.createdTimestamp,'R')+')'+
+          '\n**Public Discord Badges** · '+(flags ? safeText(badges || 'None') : 'Unavailable')+
+          '\n**Account Type** · '+(user.bot ? 'Bot' : 'User')+
+          '\n**Joined Server** · '+(member?.joinedTimestamp ? timestamp(member.joinedTimestamp) : 'Unavailable')+
+          '\n**Server Permissions** · '+(member ? safeText(permissions || 'None') : 'Unavailable'),
+          {icon:'user',userId:user.id}))
       }
       if (name === 'history') {
         const member = interaction.options.getUser('member')

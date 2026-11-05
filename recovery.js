@@ -1,6 +1,6 @@
 import { ChannelType as C, PermissionFlagsBits as P, Routes } from 'discord.js'
 import { z } from 'zod'
-import { logCard, mention, safeText } from './messages.js'
+import { messageCard, logCard, mention, safeText } from './messages.js'
 
 const snowflake = z.string().regex(/^\d{17,20}$/)
 const lockdownInput = z.strictObject({
@@ -126,7 +126,15 @@ export function recoveryTools(db,bot) {
         }
         journal.steps.push(step)
         db.saveRecovery(guild.id,'lockdown',journal)
-        if (step.kind === 'channel') await channels.get(step.id).permissionOverwrites.edit(guild.id,Object.fromEntries(Object.keys(step.before).map(key => [key,false])),{reason:'Blackridge lockdown'})
+        if (step.kind === 'channel') {
+          const channel = channels.get(step.id)
+          await channel.permissionOverwrites.edit(guild.id,Object.fromEntries(Object.keys(step.before).map(key => [key,false])),{reason:'Blackridge lockdown'})
+          if (channel.isSendable?.()) {
+            const notice = await channel.send(messageCard('Channel Locked','Blackridge has temporarily restricted activity in this channel.',{icon:'locked'})).catch(() => null)
+            if (notice) step.notice = notice.id
+            else notices.push('Could not post a lockdown notice in #' + channel.name)
+          }
+        }
         if (step.kind === 'verification') await guild.setVerificationLevel(step.applied,'Blackridge lockdown')
         if (role) await role.setPermissions(role.permissions.bitfield & ~BigInt(step.before),'Blackridge lockdown')
         if (step.kind === 'incident') await guild.client.rest.put(incidentPath(guild),{body:{[step.key]:step.applied}})
@@ -152,6 +160,13 @@ export function recoveryTools(db,bot) {
           const current = channel?.permissionOverwrites.cache.get(guild.id)
           const restore = Object.fromEntries(Object.entries(step.before).filter(([key]) => current?.deny.has(P[key],false)))
           if (Object.keys(restore).length) await channel.permissionOverwrites.edit(guild.id,restore,{reason:'Blackridge lockdown lifted'})
+          if (channel?.isSendable?.()) {
+            if (step.notice) await channel.messages.delete(step.notice).catch(failure => {
+              if (failure.code !== 10008) record(guild,'lockdown',actor,'Could not remove lockdown notice in ' + step.id)
+            })
+            await channel.send(messageCard('Lockdown Lifted','Blackridge has lifted the lockdown in this channel.',{icon:'unlocked'}))
+              .catch(() => record(guild,'lockdown',actor,'Could not post unlock notice in ' + step.id))
+          }
         }
         if (step.kind === 'role') {
           const role = roles.get(step.id)
@@ -194,6 +209,8 @@ export function recoveryTools(db,bot) {
     if (id !== '' && !snowflake.safeParse(id).success) throw invalid('Select a valid quarantine role.')
     const {channels,roles} = await scope(guild)
     const role = id ? roles.get(id) : await guild.roles.create({name:'Blackridge Quarantine',permissions:0n,reason:'Blackridge quarantine setup'})
+    if (!id && role.comparePositionTo(guild.members.me.roles.highest) >= 0)
+      await role.setPosition(Math.max(1,guild.members.me.roles.highest.position-1),{reason:'Keep quarantine below Blackridge'})
     if (!role?.editable || role.id === guild.id || role.permissions.bitfield !== 0n) throw invalid('Use a manageable role with no server permissions.')
     const targets = channels.filter(channel => channel?.permissionOverwrites)
     if (targets.some(channel => channel.permissionOverwrites.cache.get(role.id)?.allow.bitfield)) {

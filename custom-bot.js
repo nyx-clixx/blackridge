@@ -7,7 +7,7 @@ import { syncModerationCommands } from './moderation.js'
 const keyName = 'customBot'
 const activities = {playing:ActivityType.Playing,listening:ActivityType.Listening,watching:ActivityType.Watching,competing:ActivityType.Competing}
 export const profilePolicy = z.strictObject({
-  username:z.string().trim().min(2).max(32),
+  username:z.string().trim().min(2).max(32),bio:z.string().trim().max(400).optional(),
   status:z.enum(['online','idle','dnd','invisible']),
   activityType:z.enum(['none',...Object.keys(activities)]),activity:z.string().trim().max(100)
 }).refine(value => value.activityType === 'none' || value.activity.length > 0)
@@ -25,7 +25,7 @@ export function missingPrivilegedIntents(flags) {
 
 export function customBots(db,shared,key,makeClient = createBotClient) {
   const clients = new Map()
-  const busy = new Set()
+  const busy = new Map()
   const eligible = (id,owner) => db.guildPlan(id) === 'custom' && shared()?.guilds.cache.get(id)?.ownerId === owner
   function seal(id,token) {
     const iv = randomBytes(12)
@@ -50,9 +50,9 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
       guild.members.me?.permissions.has(requiredPermissions) ? guild : null
   }
   async function exclusive(id,operation) {
-    if (busy.has(id)) throw error('A Custom Bot update is already in progress.')
-    busy.add(id)
-    try { return await operation() } finally { busy.delete(id) }
+    const next = (busy.get(id) ?? Promise.resolve()).catch(() => {}).then(operation)
+    busy.set(id,next)
+    try { return await next } finally { if (busy.get(id) === next) busy.delete(id) }
   }
   async function restoreShared(id) {
     const guild = shared()?.guilds.cache.get(id)
@@ -85,6 +85,8 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
     return {missingIntents,installUrl:missingIntents.length ? null : 'https://discord.com/oauth2/authorize?' + params}
   }
   async function connect(id,owner,token,stored) {
+    const currentRecord = db.recovery(id,keyName)
+    if (!stored && active(id) && currentRecord?.owner === owner && open(id,currentRecord.secret) === token) return
     const {missingIntents} = await check(id,owner,token)
     // Keep legacy installations working with their original gateway options.
     if ((!stored || stored.intentsChecked) && missingIntents.length)
@@ -129,6 +131,7 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
   const timer = setInterval(async () => {
     if (!key || !shared()?.isReady()) return
     for (const [id,item] of clients) {
+      if (busy.has(id)) continue
       if (!eligible(id,item.owner) || (item.client.isReady() && item.client.guilds.cache.size !== 1))
         await exclusive(id,() => disconnect(id)).catch(() => {})
       else if (item.sharedEnabled === Boolean(active(id))) {
@@ -156,12 +159,13 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
       const record = db.recovery(id,keyName)
       const user = active(id)?.client.user
       return {configured:Boolean(record?.owner === owner),connected:Boolean(user),username:user?.username ?? '',
-        avatar:user?.displayAvatarURL(),banner:user?.bannerURL(),profile:record?.owner === owner ? record.profile : null}
+        avatar:user?.displayAvatarURL(),banner:user?.bannerURL(),bio:user ? active(id)?.client.application?.description ?? '' : '',profile:record?.owner === owner ? record.profile : null}
     },
     async profile(id,profile) {
       const client = active(id)?.client
       if (!client) throw error('Connect your custom bot first.')
       if (client.user.username !== profile.username) await client.user.setUsername(profile.username)
+      if (profile.bio !== undefined && profile.bio !== client.application.description) await client.application.edit({description:profile.bio})
       presence(client,profile)
       db.saveRecovery(id,keyName,{...db.recovery(id,keyName),profile:{status:profile.status,activityType:profile.activityType,activity:profile.activity}})
     },

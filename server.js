@@ -5,13 +5,13 @@ import helmet from 'helmet'
 import { randomBytes, createHash, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { readFileSync } from 'node:fs'
-import { ChannelType, PermissionFlagsBits as P } from 'discord.js'
-import { createStore, policies, premiumFilters, premiumGuards } from './store.js'
+import { ChannelType } from 'discord.js'
+import { createStore, matchesPermit, policies, premiumFilters, premiumGuards } from './store.js'
 import { customBots, profilePolicy } from './custom-bot.js'
 import { startBot, requiredPermissions } from './bot.js'
 import { publishVerification } from './verification.js'
 import { canReviewAppeals, privateAppealChannel, reviewBanAppeal } from './appeals.js'
-import { recoveryTools } from './recovery.js'
+import { recoveryTools, hasQuarantineOverwrite } from './recovery.js'
 import { syncModerationCommands } from './moderation.js'
 
 const {DISCORD_CLIENT_ID: clientId, DISCORD_CLIENT_SECRET: clientSecret, DISCORD_BOT_TOKEN: botToken} = process.env
@@ -156,7 +156,13 @@ async function visibleGuilds(req) {
     let after = '0'
     for (;;) {
       const page = await discord('/users/@me/guilds?limit=200&after=' + after,{headers:session.headers})
-      list.push(...page.filter(guild => guild.owner || Boolean(BigInt(guild.permissions) & (P.Administrator | P.ManageGuild))))
+      for (const entry of page) {
+        if (entry.owner) { list.push(entry); continue }
+        const guild = bot?.guilds.cache.get(entry.id)
+        if (!guild?.available || !dashboardGrants(guild.id).length) continue
+        const member = await guild.members.fetch({user:session.user.id,force:true}).catch(() => null)
+        if (member && canOpenDashboard(guild,member)) list.push(entry)
+      }
       if (page.length < 200) break
       const next = page.reduce((highest,guild) => BigInt(guild.id) > BigInt(highest) ? guild.id : highest,after)
       if (next === after) throw new Error('Discord guild pagination stalled.')
@@ -170,6 +176,13 @@ async function visibleGuilds(req) {
     if (guildLists.get(key) === entry) guildLists.delete(key)
     throw error
   }
+}
+function dashboardGrants(id) {
+  const permits = db.config(id,'permits')
+  return permits.enabled ? permits.entries.filter(entry => entry.dashboardAccess) : []
+}
+function canOpenDashboard(guild,member) {
+  return guild.ownerId === member.id || dashboardGrants(guild.id).some(entry => matchesPermit(entry,member.id,guild.id,member.roles.cache))
 }
 app.post('/api/billing/:guild/portal',async (req,res) => {
   if (!req.session) throw billingError('Sign in with Discord.',401)
@@ -199,13 +212,14 @@ app.use('/api/guilds/:id',async (req,res,next) => {
   catch (error) {
     if (error.code !== 10007) throw Object.assign(new Error('Could not verify server access with Discord. Try again shortly.'),{status:503})
   }
-  if (!member || (guild.ownerId !== member.id && !member.permissions.has(P.ManageGuild))) {
+  if (!member || !canOpenDashboard(guild,member)) {
     return res.status(404).json({error:'Blackridge is unavailable for this server.'})
   }
   req.guild = {id:guild.id,name:guild.name,owner:guild.ownerId === member.id,appealsManager:canReviewAppeals(guild,member,db)}
   next()
 })
 app.get('/api/guilds/:id/billing',(req,res) => {
+  if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can access this section.'})
   const {id,owner} = req.guild
   const actor = req.session.user.id
   const row = db.billing.current(id)
@@ -249,13 +263,15 @@ app.get('/api/guilds/:id',(req,res) => {
   const quarantine = db.recovery(id,'quarantineRole')?.role
   const security = {
     nuke:config.nuke.enabled,raid:config.raid.enabled,checkpoint:config.checkpoint.enabled,
-    quarantine:Boolean(quarantine && guild.roles?.cache.get(quarantine)?.editable),
+    quarantine:Boolean(quarantine && guild.roles?.cache.get(quarantine)?.editable &&
+      guild.roles.cache.get(quarantine).permissions.bitfield === 0n &&
+      [...guild.channels.cache.values()].filter(channel => channel.permissionOverwrites).every(channel => hasQuarantineOverwrite(channel,guild.roles.cache.get(quarantine)))),
     priority:Boolean(me && highest && me.roles.highest.id === highest.id),
     admin:Boolean(me?.permissions.has('Administrator'))
   }
   const plan = db.guildPlan(id)
   if (plan === 'free') config.backup = {...config.backup,enabled:false}
-  res.json({name,owner,appealsManager:req.guild.appealsManager,appealsConfigured:req.guild.appealsManager && Boolean(db.config(id,'appeals').channel),customConnected:Boolean(custom.active(id)),icon:guild.icon ?? null,config,security,plan,lockdownActive:Boolean(db.recovery(id,'lockdown')),backupsScheduled:plan !== 'free' && Boolean(db.recovery(id,'backupSchedule'))})
+  res.json({name,owner,appealsManager:req.guild.appealsManager,appealsConfigured:req.guild.appealsManager && Boolean(db.config(id,'appeals').channel),customConnected:owner && Boolean(custom.active(id)),icon:guild.icon ?? null,config,security,plan,lockdownActive:Boolean(db.recovery(id,'lockdown')),backupsScheduled:plan !== 'free' && Boolean(db.recovery(id,'backupSchedule'))})
 })
 function customAccess(req,res,next) {
   if (!req.guild.owner || db.guildPlan(req.guild.id) !== 'custom') return res.status(403).json({error:'Custom Bot requires the Custom Bot plan and server ownership.'})
@@ -337,6 +353,13 @@ app.get('/api/guilds/:id/options',async (req,res) => {
     roles:roles.filter(role => role.id !== guild.id).map(role => ({id:role.id,name:role.name}))
   })
 })
+app.get('/api/guilds/:id/recovery/backup/:backup',(req,res) => {
+  if (!req.guild.owner || db.guildPlan(req.guild.id) === 'free') return res.status(403).json({error:'Backup preview requires server ownership and a paid plan.'})
+  if (!/^\d{1,15}$/.test(req.params.backup)) return res.status(404).json({error:'Backup not found.'})
+  const snapshot = db.backup(req.guild.id,Number(req.params.backup))
+  if (!snapshot) return res.status(404).json({error:'Backup not found.'})
+  res.json({snapshot})
+})
 app.get('/api/guilds/:id/recovery',(req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can access recovery.'})
   const id = req.guild.id
@@ -381,9 +404,12 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   if (kind === 'backup' && free) return res.status(403).json({error:'Server Backups require Premium or Custom Bot.'})
   const parsed = policies[kind].safeParse(req.body)
   if (!parsed.success) return res.status(400).json({error:'Check your thresholds and Discord user IDs.'})
-  if (kind === 'appeals' && parsed.data.channel &&
-      !await privateAppealChannel(activeGuild(req.guild.id),parsed.data.channel).catch(() => null))
-    return res.status(400).json({error:'Choose a text channel that denies View Channel to @everyone.'})
+  if (kind === 'appeals') {
+    for (const channel of new Set([parsed.data.channel,parsed.data.alertChannel].filter(Boolean))) {
+      if (!await privateAppealChannel(activeGuild(req.guild.id),channel).catch(() => null))
+        return res.status(400).json({error:'Appeal review and log channels must deny View Channel to @everyone.'})
+    }
+  }
   if (kind === 'verification' && parsed.data.verifiedRole && parsed.data.verifiedRole === parsed.data.unverifiedRole)
     return res.status(400).json({error:'Verified and unverified roles must be different.'})
   const config = ['moderation','lockdown','appeals'].includes(kind) ? {...db.config(req.guild.id,kind),...parsed.data} : parsed.data
@@ -407,13 +433,25 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
 })
 app.use('/api',(req,res) => res.status(404).json({error:'Route not found.'}))
 const publicDir = fileURLToPath(new URL('./public/',import.meta.url))
+const homeShell = readFileSync(new URL('./public/index.html',import.meta.url),'utf8')
+const htmlEscape = value => String(value ?? '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[character])
+function sendPage(req,res,markup) {
+  const session = openSession(cookie(req,'br_session'))
+  const user = session?.until > Date.now() ? session.user : null
+  const account = user ? '<details id="account" class="account-menu"><summary class="button small">' +
+    (user.avatar ? '<img alt="" src="https://cdn.discordapp.com/avatars/' + encodeURIComponent(user.id) + '/' + encodeURIComponent(user.avatar) + '.png?size=64">' :
+      '<span class="initial">' + htmlEscape(user.username.slice(0,1)) + '</span>') +
+    '<span>' + htmlEscape(user.username) + '</span></summary><div class="account-links"><button type="button" id="sign-out">Log Out</button><a href="/premium">Premium</a><a href="/support">Support Server</a></div></details>' : null
+  res.set('Cache-Control','private, no-store').type('html').send(account ? markup.replace(/<a [^>]*id="account">Sign In<\/a>/,() => account) : markup)
+}
+app.get(['/','/index.html'],(req,res) => sendPage(req,res,homeShell))
 app.use(express.static(publicDir))
-const appShell = readFileSync(new URL('./public/index.html',import.meta.url),'utf8')
+const appShell = homeShell
   .replace(/<main id="app">[\s\S]*?<\/main>/,'<main id="app"><div class="wrap dashboard"><p role="status">Loading…</p></div></main>')
 app.get('/support',(req,res) => res.redirect(supportInvite))
-app.get(['/premium','/documentation','/terms','/privacy'],(req,res) => res.type('html').send(appShell))
+app.get(['/premium','/documentation','/terms','/privacy'],(req,res) => sendPage(req,res,appShell))
 const dashboardShell = appShell.replace('<body>','<body class="dashboard-page">')
-app.get(['/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => res.type('html').send(dashboardShell))
+app.get(['/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => sendPage(req,res,dashboardShell))
 app.use((error,req,res,next) => {
   if (res.headersSent) return next(error)
   const status = error.status || 500

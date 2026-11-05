@@ -17,7 +17,7 @@ const rates = z.strictObject(Object.fromEntries(
   ['moderation','roleCreate','roleDelete','channelCreate','channelDelete','webhookCreate'].map(key => [key,rate.optional()])
 ))
 const snowflake = z.string().regex(/^\d{17,20}$/)
-export const premiumGuards = ['channelRename','emojiDelete','stickerDelete','soundboardDelete']
+export const premiumGuards = ['channelRename','roleRename','emojiDelete','stickerDelete','soundboardDelete']
 export const premiumFilters = ['ghost','malicious']
 const customPlans = new Set((process.env.BLACKRIDGE_CUSTOM_BOT_GUILDS ?? '').split(',').map(id => id.trim()).filter(Boolean))
 const premiumPlans = new Set((process.env.BLACKRIDGE_PREMIUM_GUILDS ?? '').split(',').map(id => id.trim()).filter(Boolean))
@@ -25,7 +25,7 @@ const lifetimeCustomPlans = new Set(['1567348176866902119','1567687590532878467'
 export function guildPlan(id) {
   return lifetimeCustomPlans.has(id) || customPlans.has(id) ? 'custom' : premiumPlans.has(id) ? 'premium' : 'free'
 }
-const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles','rolePermissions','assignments','botAdd','roleRename',...premiumGuards].map(key => [key,z.strictObject({
+const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles','rolePermissions','assignments','botAdd',...premiumGuards].map(key => [key,z.strictObject({
   enabled:z.boolean(),...ruleResponse,
   permissions:z.array(z.enum(['Administrator','KickMembers','BanMembers','ManageGuild','ManageRoles','ManageChannels','ManageWebhooks','MentionEveryone'])).max(8).optional(),
   identity:z.array(z.enum(['icon_hash','name','vanity_url_code'])).max(3).optional(),
@@ -34,7 +34,7 @@ const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles
   channels:z.array(snowflake).max(100).optional(),
   gates:z.array(z.strictObject({role:snowflake,required:z.array(snowflake).min(1).max(15)})).max(100).optional()
 }).optional()])))
-export const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history','force-verify']
+export const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history','force-verify','info']
 const principals = z.array(snowflake).max(15)
 export const permitBypasses = ['automod','nuke','raid','checkpoint']
 const permit = z.strictObject({
@@ -43,7 +43,7 @@ const permit = z.strictObject({
   roles:principals,
   commands:z.array(z.enum(commandNames)).max(commandNames.length),
   bypasses:z.array(z.enum(permitBypasses)).max(permitBypasses.length),
-  appealsManager:z.boolean().optional()
+  appealsManager:z.boolean().optional(),dashboardAccess:z.boolean().optional()
 })
 
 export function matchesPermit(permit,userId,guildId,roles) {
@@ -71,7 +71,7 @@ const timedResponse = {tempBanMinutes:duration(1,1440,60).optional(),quarantineM
 export const spamFilters = ['mentions','files','images','stickers','invites','links','caps','newlines','length','emoji','headers','duplicate','multiUser','badWords','scam','nsfw','malicious','ghost']
 const filter = z.strictObject({action:z.enum(['off','log','delete','timeout']),limit:integer(1,4000),points:integer(0,100).optional()})
 export const policies = {
-  appeals:z.strictObject({questions:z.array(z.string().trim().min(1).max(45)).min(1).max(4),channel:z.union([snowflake,z.literal('')]).optional()}),
+  appeals:z.strictObject({questions:z.array(z.union([z.string().trim().min(1).max(45),z.strictObject({label:z.string().trim().min(1).max(45),type:z.enum(['paragraph','short','checkbox'])})])).min(1).max(5),channel:z.union([snowflake,z.literal('')]).optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
   verification:z.strictObject({
     enabled:z.boolean(),mode:z.enum(['button','captcha']),channel:z.union([snowflake,z.literal('')]),
     verifiedRole:z.union([snowflake,z.literal('')]),unverifiedRole:z.union([snowflake,z.literal('')]),

@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, MessageFlags, ModalBuilder, PermissionFlagsBits as P, TextInputBuilder, TextInputStyle } from 'discord.js'
+import { ActionRowBuilder, CheckboxBuilder, LabelBuilder, ButtonBuilder, ButtonStyle, Events, MessageFlags, ModalBuilder, PermissionFlagsBits as P, TextInputBuilder, TextInputStyle } from 'discord.js'
 import { matchesPermit } from './store.js'
 import { actionCard, memberAction, mention, messageCard, safeText } from './messages.js'
 
@@ -8,6 +8,7 @@ const lifetime = 30*86400000
 export const appealMarker = id => '[Blackridge appeal ' + id + '] '
 export const appealDecisions = ['accepted','rejected','blacklisted']
 const reviews = new Set()
+const questionLabel = question => typeof question === 'string' ? question : question.label
 const invalid = (message,status=409) => Object.assign(new Error(message),{status})
 export function canReviewAppeals(guild,member,db) {
   if (!member) return false
@@ -26,11 +27,17 @@ export async function privateAppealChannel(guild,id) {
   return channel
 }
 
+async function logAppeal(guild,db,title,body,userId) {
+  try {
+    const channel = await privateAppealChannel(guild,db.config(guild.id,'appeals').alertChannel)
+    if (channel) await channel.send(messageCard(title,body,{icon:'inbox',userId}))
+  } catch { console.error('Discord appeal log delivery failed') }
+}
 function reviewCard(row) {
   const questions = JSON.parse(row.questions)
   const answers = JSON.parse(row.answers)
-  const transcript = questions.map((question,i) => question+'\n'+answers[i]).join('\n\n')
-  const details = questions.map((question,i) => '**'+safeText(question)+'**\n'+safeText(answers[i])).join('\n\n')
+  const transcript = questions.map((question,i) => questionLabel(question)+'\n'+answers[i]).join('\n\n')
+  const details = questions.map((question,i) => '**'+safeText(questionLabel(question))+'**\n'+safeText(answers[i])).join('\n\n')
   const heading = mention(row.user)+' submitted a ban appeal. · **'+row.status.toUpperCase()+'**\n\n'
   const actions = row.status === 'pending' ? [new ActionRowBuilder().addComponents(
     ...[['accepted','Accept & Unban',ButtonStyle.Success],['rejected','Reject',ButtonStyle.Secondary],['blacklisted','Blacklist',ButtonStyle.Danger]]
@@ -64,6 +71,7 @@ export async function reviewBanAppeal(guild,db,id,decision,actor) {
     }
     if (!db.reviewAppeal(id,guild.id,decision)) throw invalid('This appeal was already reviewed.')
     db.event(guild.id,'appeals','Ban appeal '+decision+' for '+row.user+' by '+actor)
+    void logAppeal(guild,db,'Ban Appeal Reviewed','Appeal ' + decision + '.',row.user)
     const delivery = db.appealDelivery(id)
     if (delivery) {
       try {
@@ -129,19 +137,25 @@ export function attachAppeals(client,db,lookupGuild = id => client.guilds.cache.
       const questions = JSON.parse(row.questions)
       if (interaction.isButton()) {
         const modal = new ModalBuilder().setCustomId(prefix+id).setTitle('Ban Appeal')
-        for (const [index,question] of questions.entries()) modal.addComponents(new ActionRowBuilder().addComponents(
-          new TextInputBuilder().setCustomId('question-'+index).setLabel(question).setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(750)
-        ))
+        for (const [index,question] of questions.entries()) {
+          const customId = 'question-'+index
+          const label = new LabelBuilder().setLabel(questionLabel(question))
+          if (question.type === 'checkbox') label.setCheckboxComponent(new CheckboxBuilder().setCustomId(customId))
+          else label.setTextInputComponent(new TextInputBuilder().setCustomId(customId)
+            .setStyle(question.type === 'short' ? TextInputStyle.Short : TextInputStyle.Paragraph).setRequired(true).setMaxLength(750))
+          modal.addLabelComponents(label)
+        }
         return await interaction.showModal(modal)
       }
       await interaction.deferReply()
       const guild = lookupGuild(row.guild)
       if (!guild?.available || !await hasAppealableBan(guild,row))
         return await interaction.editReply(messageCard('Appeal Unavailable','The original ban is no longer eligible.',{icon:'locked',tone:'warning'}))
-      const answers = questions.map((_,index) => interaction.fields.getTextInputValue('question-'+index).trim())
+      const answers = questions.map((question,index) => question.type === 'checkbox' ? (interaction.fields.getCheckbox('question-'+index) ? 'Yes' : 'No') : interaction.fields.getTextInputValue('question-'+index).trim())
       if (answers.some(answer => !answer || answer.length > 750))
         return await interaction.editReply(messageCard('Incomplete Appeal','Answer each question before submitting.',{icon:'warning',tone:'warning'}))
       if (!db.submitAppeal(id,interaction.user.id,answers)) return await interaction.editReply(messageCard('Appeal Unavailable','This appeal was already submitted or has expired.',{icon:'locked',tone:'warning'}))
+      void logAppeal(guild,db,'Ban Appeal Submitted','A new appeal is ready for review.',row.user)
       void postReview(guild,db,id).catch(() => console.error('Discord appeal delivery failed. The dashboard still has the submission.'))
       await interaction.editReply(messageCard('Appeal Submitted','The server’s appeal reviewers can now review your answers.',{icon:'check',tone:'success'}))
     } catch (error) {

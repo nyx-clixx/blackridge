@@ -89,7 +89,7 @@ test('ban appeal links are single use and accept only the original ban', async t
   assert.equal(db.reviewAppeal('appeal','guild','rejected'),false)
 })
 
-test('Anti-Nuke restores a selected role name and skips paid channel protection on Free', async t => {
+test('Anti-Nuke gates role and channel rename protection on paid plans', async t => {
   const db = createStore(':memory:')
   const client = new EventEmitter()
   client.user = {id:'bot'}
@@ -110,6 +110,9 @@ test('Anti-Nuke restores a selected role name and skips paid channel protection 
   await rename('1','different-role')
   assert.equal(channel.name,'edited')
   await rename('2','role')
+  assert.equal(channel.name,'edited')
+  db.guildPlan = () => 'premium'
+  await rename('paid-role','role')
   assert.equal(channel.name,'original')
   channel.name = 'newer'
   await rename('3','role')

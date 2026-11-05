@@ -26,7 +26,7 @@ const iconPaths = {
 const icon = key => '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (iconPaths[key] ?? iconPaths.nuke) + '</svg>'
 for (const tile of document.querySelectorAll('[data-icon]')) tile.innerHTML = icon(tile.dataset.icon)
 const sections = { overview:'Overview', premium:'Premium', custom:'Custom Bot', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups',verification:'Verification',appeals:'Ban Appeals' }
-const paidGuards = ['channelRename','emojiDelete','stickerDelete','soundboardDelete']
+const paidGuards = ['channelRename','roleRename','emojiDelete','stickerDelete','soundboardDelete']
 const paidFilters = ['ghost','malicious']
 const crown = '<span class="premium-crown" title="Premium or Custom Bot" aria-label="Premium or Custom Bot">' + icon('premium') + '</span>'
 const request = async (url, options) => {
@@ -101,6 +101,9 @@ function logList(entries,moderation = false) {
       if (event.kind === 'moderation') detail = detail.replace(new RegExp('^(\\w[\\w-]* · (?:member \\d+|channel \\d+|\\d+ messages · channel \\d+)) · moderator ' + actor + '(?= · |$)'),'$1')
       detail = detail.replace(new RegExp(' · initiated by ' + actor + '$'),'')
     }
+    if (event.kind === 'settings') detail = detail.replace(/^([a-z]+) policy updated$/i,(_,kind) =>
+      (sections[kind] ?? kind[0].toUpperCase() + kind.slice(1)) + ' Policy Updated')
+    if (command && !moderation) detail = detail.replace(command,command.split('-').map(word => word[0].toUpperCase()+word.slice(1)).join(' '))
     const action = moderation && command ? '/' + command : detail.replace(/\b(?:invites_disabled_until|dms_disabled_until)\b/g,key => key === 'invites_disabled_until' ? 'invite pause' : 'DM pause').trim()
     return '<tr><td><div class="case-user">' + avatar + '<div><strong>' + esc(event.userName ?? (event.userId ? 'Unknown user' : 'System')) + '</strong><code>' + esc(event.userId ?? '—') + '</code></div></div></td><td><span title="' + esc(detail) + '">' + esc(action) + '</span></td><td><time datetime="' + new Date(event.at).toISOString() + '">' + esc(new Date(event.at).toLocaleString()) + '</time></td></tr>'
   }).join('')
@@ -251,21 +254,74 @@ function verificationForm(config,owner,choices) {
 }
 function appealsPanel(path,config,channels) {
   const panel = document.querySelector('#appeals-panel')
-  panel.innerHTML = (config ? '<form class="card stack"><h3>Appeal Form</h3><p>Questions are sent when a moderator uses <code>/ban</code> with <code>appeal:True</code>. Use one question per line, up to four questions with 45 characters each.</p><label>Questions<textarea name="questions" rows="4" maxlength="183" required>' + esc(config.questions.join('\n')) + '</textarea></label><div class="discord-field stack"><span>Private Review Channel</span>' + discordSelect('channel',channels.filter(channel => channel.sendable),[config.channel]) + '</div><p>Deny View Channel to @everyone and grant access to your reviewers in Discord.</p><p role="status"></p></form>' : '') +
+  const row = value => {
+    const question = typeof value === 'string' ? {label:value,type:'paragraph'} : value
+    return '<div class="appeal-question card" draggable="true"><div class="fields"><label>Question<input name="label" maxlength="45" required value="' + esc(question.label) +
+      '"></label><label>Answer Type<select name="type">' + options({paragraph:'Paragraph',short:'Short Answer',checkbox:'Checkbox (Yes or No)'},question.type) +
+      '</select></label></div><div class="actions"><button type="button" class="button small" data-question="up">Move Up</button><button type="button" class="button small" data-question="down">Move Down</button><button type="button" class="button small" data-question="remove">Remove</button></div></div>'
+  }
+  const channelChoices = channels.filter(channel => channel.sendable)
+  panel.innerHTML = (config ? '<form class="card stack"><h3>Appeal Form</h3><p>Add up to five questions. Drag to reorder, or use Move Up and Move Down.</p><div class="settings-panels" id="appeal-questions">' +
+    config.questions.map(row).join('') + '</div><button type="button" class="button stack" id="add-appeal-question">Add Question</button><div class="fields"><div class="discord-field"><span>Private Review Channel</span>' +
+    discordSelect('channel',channelChoices,[config.channel]) + '</div><div class="discord-field"><span>Appeal Log Channel</span>' + discordSelect('alertChannel',channelChoices,[config.alertChannel]) +
+    '</div></div><p>Deny View Channel to @everyone on both channels. The log channel receives submission and decision notices.</p><p role="status"></p></form>' : '') +
     '<section class="card stack"><h3>Appeal Inbox</h3><div id="appeal-inbox"></div><p id="appeal-status" role="status"></p></section>'
   const form = panel.querySelector('form')
   const inbox = panel.querySelector('#appeal-inbox')
   const status = panel.querySelector('#appeal-status')
-  if (form) autosave(form,form.querySelector('[role=status]'),async () => {
-    const questions = form.elements.questions.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
-    if (!questions.length || questions.length > 4 || questions.some(line => line.length > 45)) throw new Error('Enter 1–4 questions, up to 45 characters each.')
-    const channel = new FormData(form).get('channel') ?? ''
-    await request(path + '/appeals',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({questions,channel}),keepalive:true})
-  })
+  if (form) {
+    const list = form.querySelector('#appeal-questions')
+    const add = form.querySelector('#add-appeal-question')
+    const changed = () => {
+      add.disabled = list.children.length >= 5
+      form.dispatchEvent(new Event('change'))
+    }
+    add.disabled = list.children.length >= 5
+    add.onclick = () => {
+      if (list.children.length >= 5) return
+      list.insertAdjacentHTML('beforeend',row({label:'',type:'paragraph'}))
+      list.lastElementChild.querySelector('input').focus()
+      changed()
+    }
+    list.onclick = event => {
+      const button = event.target.closest('[data-question]')
+      if (!button) return
+      const question = button.closest('.appeal-question')
+      if (button.dataset.question === 'up' && question.previousElementSibling) question.previousElementSibling.before(question)
+      if (button.dataset.question === 'down' && question.nextElementSibling) question.nextElementSibling.after(question)
+      if (button.dataset.question === 'remove' && list.children.length > 1) question.remove()
+      if (button.isConnected) button.focus()
+      else add.focus()
+      changed()
+    }
+    let dragging
+    list.ondragstart = event => {
+      dragging = event.target.closest('.appeal-question')
+      if (dragging) event.dataTransfer.setData('text/plain','appeal-question')
+    }
+    list.ondragend = () => { dragging = null }
+    list.ondragover = event => { if (dragging) event.preventDefault() }
+    list.ondrop = event => {
+      const target = event.target.closest('.appeal-question')
+      if (!dragging || !target || target === dragging) return
+      event.preventDefault()
+      const bounds = target.getBoundingClientRect()
+      if (event.clientY > bounds.top + bounds.height/2) target.after(dragging)
+      else target.before(dragging)
+      changed()
+    }
+    autosave(form,form.querySelector('[role=status]'),async () => {
+      const questions = [...list.children].map(item => ({label:item.querySelector('input').value.trim(),type:item.querySelector('select').value}))
+      const fields = new FormData(form)
+      await request(path + '/appeals',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        questions,channel:fields.get('channel') ?? '',alertChannel:fields.get('alertChannel') ?? ''
+      }),keepalive:true})
+    })
+  }
   async function refresh() {
     const {appeals} = await request(path + '/appeals')
     inbox.innerHTML = appeals.length ? appeals.map(item => '<details class="appeal-item"><summary><span>' + esc(item.user) + '</span><span class="badge">' + esc(item.status) + '</span><time>' + esc(new Date(item.submitted).toLocaleString()) + '</time></summary><dl>' + item.questions.map((question,index) =>
-      '<dt>' + esc(question) + '</dt><dd>' + esc(item.answers[index]) + '</dd>').join('') + '</dl>' +
+      '<dt>' + esc(typeof question === 'string' ? question : question.label) + '</dt><dd>' + esc(item.answers[index]) + '</dd>').join('') + '</dl>' +
       (item.status === 'pending' ? '<div class="actions">' + [['accepted','Accept and Unban'],['rejected','Reject'],['blacklisted','Blacklist']].map(([decision,label]) =>
         '<button type="button" class="button small" data-decision="' + decision + '" data-appeal="' + esc(item.id) + '">' + label + '</button>').join('') + '</div>' : '') + '</details>').join('') : '<p>No appeals submitted yet.</p>'
   }
@@ -284,9 +340,9 @@ function appealsPanel(path,config,channels) {
   refresh().catch(error => { status.textContent = error.message })
 }
 function securityScore(checks) {
-  const labels = {nuke:'Anti-Nuke enabled',raid:'Anti-Raid enabled',checkpoint:'Checkpoint enabled',quarantine:'Quarantine role configured',priority:'Highest role priority',admin:'Administrator permission'}
+  const labels = {raid:'Anti-Raid Enabled',nuke:'Anti-Nuke Enabled',checkpoint:'Checkpoint Enabled',priority:'Highest Role Priority',admin:'Administrator Permission',quarantine:'Quarantine Role Configured'}
   const passed = Object.keys(labels).filter(key => checks?.[key]).length
-  return '<section class="card security-summary"><div><h3>Security Score</h3><strong>' + Math.round(passed/6*100) + '%</strong><p>' + passed + ' of 6 checks passed</p></div><ul>' + shortestFirst(Object.entries(labels)).map(([key,label]) =>
+  return '<section class="card security-summary"><div><h3>Security Score</h3><strong>' + Math.round(passed/6*100) + '%</strong><p>' + passed + ' of 6 checks passed</p></div><ul>' + Object.entries(labels).map(([key,label]) =>
     '<li><span class="security-check' + (checks?.[key] ? ' passed' : '') + '">' + (checks?.[key] ? '✓' : '–') + '</span><span>' + label + '</span><span class="muted">' + (checks?.[key] ? 'Pass' : 'Needs attention') + '</span></li>').join('') + '</ul></section>'
 }
 function renderServerPicker(guilds,userId) {
@@ -298,7 +354,7 @@ function renderServerPicker(guilds,userId) {
   } catch {}
   function render(focusId) {
     const sorted = [...guilds].sort((a,b) => Number(pinned.has(b.id))-Number(pinned.has(a.id)))
-    shell('<h2>Select a server</h2><div class="servers">' + sorted.map(guild => '<article class="card server-card"><div class="server-card-top"><div class="server-avatar">' + (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + esc(guild.id) + '/' + esc(guild.icon) + '.png">' : esc(guild.name.slice(0,2).toUpperCase())) + '</div><button type="button" class="button small pin-server" data-pin="' + esc(guild.id) + '" aria-pressed="' + pinned.has(guild.id) + '" aria-label="Pin ' + esc(guild.name) + '">' + icon('pin') + '</button></div><h3>' + esc(guild.name) + '</h3><div class="server-access ' + (guild.owner ? 'is-owner' : '') + '">' + icon(guild.owner ? 'premium' : 'server') + (guild.owner ? 'Owner' : 'Manager') + '</div><a class="button small" href="' + (guild.installed ? base + '/' + guild.id : '/invite?guild=' + guild.id) + '">' + (guild.installed ? 'Manage' : 'Set up') + '</a></article>').join('') + '</div>' + (guilds.length ? '' : '<div class="card">No servers with management access were found.</div>'))
+    shell('<h2>Select a server</h2><div class="servers">' + sorted.map(guild => '<article class="card server-card"><div class="server-card-top"><div class="server-avatar">' + (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + esc(guild.id) + '/' + esc(guild.icon) + '.png">' : esc(guild.name.slice(0,2).toUpperCase())) + '</div><button type="button" class="button small pin-server" data-pin="' + esc(guild.id) + '" aria-pressed="' + pinned.has(guild.id) + '" aria-label="Pin ' + esc(guild.name) + '">' + icon('pin') + '</button></div><h3>' + esc(guild.name) + '</h3><div class="server-access ' + (guild.owner ? 'is-owner' : '') + '">' + icon(guild.owner ? 'premium' : 'server') + (guild.owner ? 'Owner' : 'Dashboard Access') + '</div><a class="button small" href="' + (guild.installed ? base + '/' + guild.id : '/invite?guild=' + guild.id) + '">' + (guild.installed ? 'Manage' : 'Set up') + '</a></article>').join('') + '</div>' + (guilds.length ? '' : '<div class="card">No servers with management access were found.</div>'))
     for (const button of app.querySelectorAll('[data-pin]')) {
       if (button.dataset.pin === focusId) button.focus()
       button.onclick = () => {
@@ -381,7 +437,7 @@ function protectionControls(form, section, config, paid) {
 const alerts = [['alertChannel','Discord Logging Channel'],['alertRoles','Roles to Notify']]
 const timedResponses = [['tempBanMinutes','Temporary ban duration',1,1440,'minutes'],['quarantineMinutes','Quarantine duration',1,1440,'minutes']]
 const settingFields = {
-  nuke: [['threshold','Actions per actor',2,30],['window','Detection window',5,120,'seconds'],['trusted','Trusted Discord user IDs (comma-separated)'],...alerts,...timedResponses],
+  nuke: [['threshold','Default Actions Per Actor',2,30],['window','Detection window',5,120,'seconds'],['trusted','Trusted Discord user IDs (comma-separated)'],...alerts,...timedResponses],
   raid: [['threshold','Joins to trigger',3,100],['window','Detection window',5,120,'seconds'],['duration','Protection duration',15,600,'seconds'],['age','Maximum account age (0 for all)',0,365,'days'],['timeoutMinutes','Timeout duration',1,1440,'minutes'],...alerts,...timedResponses],
   checkpoint: [['age','Young account threshold',1,365,'days'],['agePoints','Points for a young account',0,5],['avatarPoints','Points for a default avatar',0,5],['rejoinPoints','Points for 3 joins in an hour',0,5],['similarPoints','Points for a burst of similar accounts',0,5],['inviteNamePoints','Points for invite links in display names',0,5],['threshold','Minimum score to log and alert',1,25],...timedResponses,...alerts],
   automod: [['threshold','Messages per member',3,30],['window','Detection window',2,60,'seconds'],['timeoutMinutes','Timeout duration',1,1440,'minutes'],...alerts,['spamPoints','Points per spam violation',0,100]]
@@ -392,7 +448,7 @@ const actionsByKind = {
   automod:['log','timeout']
 }
 const actionLabels = {log:'Log only',timeout:'Time out',strip:'Remove dangerous roles',quarantine:'Quarantine',kick:'Kick',ban:'Ban',tempban:'Temporary ban'}
-const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history','force-verify']
+const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history','force-verify','info']
 const ids = value => value.split(',').map(id => id.trim()).filter(Boolean)
 
 const bypassLabels = {automod:'Auto Moderation',nuke:'Anti-Nuke',raid:'Anti-Raid',checkpoint:'Checkpoint'}
@@ -405,7 +461,7 @@ function permitCard(entry,roles) {
     '<section class="permit-section"><h3>Permit Name</h3><div class="fields"><label>Display name<input name="permit-name" maxlength="60" required value="' + esc(entry.name) + '"></label></div></section>' +
     '<section class="permit-section"><h3>Permit Access</h3><div class="fields"><label>Discord user IDs<input name="permit-users" data-commit-on-change maxlength="330" value="' + esc(entry.users.join(', ')) + '" placeholder="Comma-separated user IDs"></label><div class="discord-field"><span>Discord roles</span>' + discordSelect('permit-roles',roles,entry.roles,true) + '</div></div></section>' +
     '<section class="permit-section"><h3>Permit Command Access</h3><div class="permit-choices">' + choices('permit-commands',commands,entry.commands) + '</div></section>' +
-    '<section class="permit-section"><h3>Management Access</h3><div class="permit-choices permit-management"><label class="toggle"><input type="checkbox" name="appeals-manager"' + (entry.appealsManager ? ' checked' : '') + '> Ban Appeals Manager</label></div><p>Review appeals with Discord’s Ban Members permission.</p></section>' +
+    '<section class="permit-section"><h3>Management Access</h3><div class="permit-choices permit-management"><label class="toggle"><input type="checkbox" name="appeals-manager"' + (entry.appealsManager ? ' checked' : '') + '> Ban Appeals Manager</label><label class="toggle"><input type="checkbox" name="dashboard-access"' + (entry.dashboardAccess ? ' checked' : '') + '> Dashboard Access</label></div><p>Dashboard access is read-only unless another permit grants an action. Premium and Custom Bot are owner only.</p></section>' +
     '<section class="permit-section"><h3>Permit Bypass</h3><div class="permit-choices">' + choices('permit-bypasses',bypassLabels,entry.bypasses) + '</div></section>' +
     '<button type="button" class="button small remove-permit">Remove Permit</button></details>'
 }
@@ -447,16 +503,21 @@ function readPermits(form) {
       roles:selected('permit-roles'),
       commands:selected('permit-commands'),
       bypasses:selected('permit-bypasses'),
-      appealsManager:card.querySelector('[name=appeals-manager]').checked
+      appealsManager:card.querySelector('[name=appeals-manager]').checked,
+      dashboardAccess:card.querySelector('[name=dashboard-access]').checked
     }
   })}
 }
 
 async function accountMenu(me) {
-  if (!me.user) return
+  if (!me?.user && account.tagName !== 'DETAILS') return
+  if (account.tagName !== 'DETAILS') {
   const avatar = me.user.avatar ? '<img alt="" src="https://cdn.discordapp.com/avatars/' + esc(me.user.id) + '/' + esc(me.user.avatar) + '.png?size=64">' : '<span class="initial">' + esc(me.user.username.slice(0,1)) + '</span>'
   account.outerHTML = '<details class="account-menu"><summary class="button small">' + avatar + '<span>' + esc(me.user.username) + '</span></summary><div class="account-links">' + '<button type="button" id="sign-out">Log Out</button><a href="/premium">Premium</a><a href="/support">Support Server</a></div></details>'
+  }
   const menu = document.querySelector('.account-menu')
+  if (menu.dataset.wired) return
+  menu.dataset.wired = 'true'
   document.addEventListener('click',event => { if (!menu.contains(event.target)) menu.open = false })
   menu.addEventListener('keydown',event => {
     if (event.key !== 'Escape' || !menu.open) return
@@ -478,8 +539,10 @@ async function premium(me) {
     request('/api/billing').catch(() => ({}))
   ]) : [[],{}]
   const servers = guilds.filter(guild => guild.owner && guild.installed)
-  const picker = servers.length ? '<section class="card stack billing-panel"><h3>Choose a Server</h3><div class="actions">' +
-    servers.map(guild => '<a class="button small" href="/dashboard/' + encodeURIComponent(guild.id) + '/premium">' + esc(guild.name) + '</a>').join('') +
+  const picker = servers.length ? '<section class="stack billing-panel"><h3>Choose a Server</h3><div class="servers premium-servers">' +
+    servers.map(guild => '<a class="card premium-server" href="/dashboard/' + encodeURIComponent(guild.id) + '/premium"><span class="server-avatar">' +
+      (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(guild.id) + '/' + encodeURIComponent(guild.icon) + '.png?size=64">' : esc(guild.name.slice(0,2).toUpperCase())) +
+      '</span><span><strong>' + esc(guild.name) + '</strong><small>' + (guild.plan === 'free' ? 'Free' : planName(guild.plan)) + '</small></span><span class="premium-server-arrow" aria-hidden="true">›</span></a>').join('') +
     '</div></section>' : '<p class="stack"><a class="button" href="/dashboard">' + (me?.user ? 'Open Dashboard' : 'Sign In to Subscribe') + '</a></p>'
   const subscriptions = billing.subscriptions?.length ? '<section class="card stack billing-panel"><h3>Your Subscriptions</h3>' +
     billing.subscriptions.map(row => '<div class="actions stack"><span>' + esc(row.name) + ' · ' + planName(row.plan) +
@@ -560,8 +623,8 @@ async function customBotPanel(path) {
       (state.connected ? '<section class="card stack custom-profile"><form id="bot-profile"><h3>Profile</h3><div class="fields"><label>Bot Username<input name="username" required minlength="2" maxlength="32" value="' + esc(state.username) + '"></label>' +
         '<label>Status<select name="status">' + options({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'},profile.status ?? 'online') + '</select></label>' +
         '<label>Activity Type<select name="activityType">' + options({none:'Disabled',playing:'Playing',listening:'Listening',watching:'Watching',competing:'Competing'},profile.activityType ?? 'none') + '</select></label>' +
-        '<label>Activity Text<input name="activity" maxlength="100" value="' + esc(profile.activity ?? '') + '"></label></div><div class="fields stack"><label>Change Avatar<input type="file" name="avatar" accept="image/png,image/jpeg,image/webp"></label><label>Change Banner<input type="file" name="banner" accept="image/png,image/jpeg,image/webp"></label></div><p>PNG, JPEG, or WebP up to 3 MB. Verification panels posted by Blackridge should be republished after switching bots.</p><button class="button primary">Save Profile</button></form>' +
-        '<aside class="custom-preview"><div class="custom-banner">' + (state.banner ? '<img alt="" src="' + esc(state.banner) + '">' : '') + '</div><div class="custom-preview-body">' + (state.avatar ? '<img alt="" src="' + esc(state.avatar) + '">' : '') + '<h3>' + esc(state.username) + '</h3><span class="badge">' + esc(profile.status ?? 'online') + '</span></div></aside></section>' : '') +
+        '<label>Activity Text<input name="activity" maxlength="100" value="' + esc(profile.activity ?? '') + '"></label><label>Bio<textarea name="bio" maxlength="400" rows="4">' + esc(state.bio) + '</textarea></label></div><div class="fields stack"><label>Change Avatar<input type="file" name="avatar" accept="image/png,image/jpeg,image/webp"></label><label>Change Banner<input type="file" name="banner" accept="image/png,image/jpeg,image/webp"></label></div><p>PNG, JPEG, or WebP up to 3 MB. Verification panels posted by Blackridge should be republished after switching bots.</p><button class="button primary">Save Profile</button></form>' +
+        '<aside class="custom-preview"><div class="custom-banner">' + (state.banner ? '<img alt="" src="' + esc(state.banner) + '">' : '') + '</div><div class="custom-preview-body"><div class="custom-preview-avatar"><img alt="" src="' + esc(state.avatar || '/icon.png') + '"><span class="presence-dot presence-' + esc(profile.status ?? 'online') + '"></span></div><h3><span data-profile-name>' + esc(state.username) + '</span> <small class="app-badge">APP</small></h3><p data-profile-status>' + ({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'}[profile.status] ?? 'Online') + '</p><div class="custom-preview-bio"><strong>Bio</strong><p data-profile-bio>' + esc(state.bio || 'No bio set.') + '</p></div></div></aside></section>' : '') +
       '<p id="custom-status" role="status"></p>'
     const action = async (button,run,message) => {
       const status = panel.querySelector('#custom-status')
@@ -623,6 +686,13 @@ async function customBotPanel(path) {
       void action(disconnect,async () => { await request(url+'/disconnect',{method:'POST'}); return {} },'Custom Bot disconnected.')
     }
     const form = panel.querySelector('#bot-profile')
+    form?.addEventListener('input',() => {
+      const {username,status,bio} = form.elements
+      panel.querySelector('[data-profile-name]').textContent = username.value || state.username
+      panel.querySelector('[data-profile-status]').textContent = status.selectedOptions[0].text
+      panel.querySelector('.presence-dot').className = 'presence-dot presence-' + status.value
+      panel.querySelector('[data-profile-bio]').textContent = bio.value || 'No bio set.'
+    })
     if (form) form.onsubmit = event => {
       event.preventDefault()
       const fields = new FormData(form)
@@ -634,7 +704,7 @@ async function customBotPanel(path) {
             throw new Error('Choose a PNG, JPEG, or WebP image up to 3 MB.')
           return [[field,file]]
         })
-        const body = Object.fromEntries(['username','status','activityType','activity'].map(key => [key,fields.get(key)]))
+        const body = Object.fromEntries(['username','status','activityType','activity','bio'].map(key => [key,fields.get(key)]))
         let next = await request(url+'/profile',json('PUT',body))
         for (const [field,file] of images) next = await request(url+'/image/'+field,{method:'PUT',headers:{'Content-Type':file.type},body:file})
         return next
@@ -650,7 +720,33 @@ function form(kind, config, owner) {
   const response = actionsByKind[kind] ? '<label>Response<select name="action">' + options(Object.fromEntries(actionsByKind[kind].map(action => [action,actionLabels[action]])),config.action,true) + '</select></label>' : ''
   const alertFields = settingFields[kind].filter(([key]) => key.startsWith('alert'))
   const baseFields = settingFields[kind].filter(([key]) => !key.startsWith('alert'))
-  return '<form id="settings"><fieldset class="settings-panels"' + disabled + '><section class="card settings-section"><h3>' + (kind === 'automod' ? 'Anti-Spam' : sections[kind] + ' Policy') + '</h3><p>' + (owner ? 'Set detection thresholds and how Blackridge responds.' : 'Only the server owner can change this policy.') + '</p><div class="fields">' + fields(baseFields) + response + '</div></section>' + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord Alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '</fieldset><p role="status" id="notice"></p></form>'
+  return '<form id="settings"><fieldset class="settings-panels"' + disabled + '><section class="card settings-section"><h3>' + (kind === 'automod' ? 'Anti-Spam' : sections[kind] + ' Policy') + '</h3><p>' + (owner ? (kind === 'nuke' ? 'The default threshold applies to monitored actions without a per-action limit. Individual rules can override it.' : 'Set detection thresholds and how Blackridge responds.') : 'Only the server owner can change this policy.') + '</p><div class="fields">' + fields(baseFields) + response + '</div></section>' + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord Alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '</fieldset><p role="status" id="notice"></p></form>'
+}
+function wireResponseDurations(form,section) {
+  const refresh = () => {
+    const actions = new Set([form.elements.action?.value])
+    if (section === 'nuke') for (const row of form.querySelectorAll('[data-nuke]')) {
+      const key = row.dataset.nuke
+      if (form.elements[key+'-enabled'].checked) {
+        actions.add(form.elements[key+'-action'].value)
+        if (Number(form.elements[key+'-escalate'].value)) actions.add(form.elements[key+'-escalateTo'].value)
+      }
+    }
+    if (section === 'checkpoint') {
+      for (const rule of form.querySelectorAll('select[name=rule]')) actions.add(rule.value)
+      if (form.querySelector('input[name$="-quarantine"]:checked')) actions.add('quarantine')
+    }
+    if (section === 'automod' && form.querySelector('select[name$="-action"] option[value=timeout]:checked')) actions.add('timeout')
+    for (const [key,response] of Object.entries({timeoutMinutes:'timeout',tempBanMinutes:'tempban',quarantineMinutes:'quarantine'})) {
+      const input = form.elements[key]
+      if (!input) continue
+      const field = input.closest('[data-duration]')
+      field.hidden = input.disabled = !actions.has(response)
+      field.querySelector('select').disabled = input.disabled
+    }
+  }
+  form.addEventListener('change',refresh)
+  refresh()
 }
 function discordSelect(name,items,values,multiple = false) {
   const selected = new Set(values.filter(Boolean))
@@ -724,12 +820,33 @@ async function recoveryPanel(section,path,data,prepared) {
   if (section === 'backup') {
     const history = (state.backups ?? []).map(item => '<option value="' + item.id + '">' + esc(new Date(item.at).toLocaleString()) + '</option>').join('')
     controls = '<section class="card stack backup-controls"><form data-operation="backup"><h3>Manual Backup</h3><p>Save server settings, roles, channels and overwrites. The latest three backups are retained.</p><button class="button">Create Backup</button></form><form data-operation="schedule"><h3>Automatic Backups</h3><div class="fields"><label>Frequency<select name="hours">' + options({0:'Disabled',6:'Every 6 hours',12:'Every 12 hours',24:'Daily',168:'Weekly'},String(state.schedule?.hours ?? 0)) + '</select></label></div></form></section>' +
-      (history ? '<form class="card stack" data-operation="restore"><h3>Backup Manager</h3><p>Restore supported settings and recreate eligible deleted roles and channels. Messages, role memberships, member overwrites, and ordering require manual recovery.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label></div><button class="button primary">Restore Backup</button></form>' : '<section class="card stack"><h3>Backup Manager</h3><p>No backups yet.</p></section>')
+      (history ? '<form class="card stack" data-operation="restore"><h3>Backup Manager</h3><p>Restore supported settings and recreate eligible deleted roles and channels. Messages, role memberships, member overwrites, and ordering require manual recovery.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label></div><div class="actions"><button class="button" type="button" data-backup-preview>View Backup</button><button class="button primary">Restore Backup</button></div></form>' : '<section class="card stack"><h3>Backup Manager</h3><p>No backups yet.</p></section>')
   }
   const logging = '<form class="card stack" data-operation="logging"><h3>Discord Logging</h3><div class="fields"><div class="discord-field"><span>Logging Channel</span>' + channel + '</div></div></form>'
   const deleteInvites = section === 'lockdown' ? '<form class="card stack" data-operation="delete-invites"><h3>Invite Cleanup</h3><p>Enable the Lockdown module to revoke standard server invites. Lifting Lockdown cannot restore these links.</p><button class="button lockdown-submit"' + (data.config.lockdown.enabled ? '' : ' disabled') + '>Delete All Invites</button></form>' : ''
   panel.innerHTML = controls + deleteInvites + (section === 'backup' ? '' : logging) + '<p class="stack" role="status"></p>'
   const status = panel.querySelector('[role="status"]')
+  const preview = panel.querySelector('[data-backup-preview]')
+  if (preview) preview.onclick = async () => {
+    preview.disabled = true
+    try {
+      const id = preview.form.elements.id.value
+      const {snapshot} = await request(path+'/recovery/backup/'+encodeURIComponent(id))
+      const dialog = document.createElement('dialog')
+      dialog.className = 'nuke-dialog backup-preview'
+      const settingsLabels = {name:'Server Name',verificationLevel:'Verification Level',defaultMessageNotifications:'Default Notifications',explicitContentFilter:'Explicit Content Filter'}
+      const list = entries => entries.length ? '<ul>' + entries.join('') + '</ul>' : '<p>None recorded.</p>'
+      dialog.innerHTML = '<header><h3>Backup Preview</h3><form method="dialog"><button class="button small" aria-label="Close backup preview">Close</button></form></header><div class="nuke-dialog-fields"><p>Blackridge restores supported settings and eligible objects. Discord permissions and role hierarchy can limit restoration.</p><h4>Server Settings</h4>' +
+        list(Object.entries(snapshot.settings).map(([key,value]) => '<li>' + esc(settingsLabels[key] ?? key) + ' · ' + esc(value) + '</li>')) +
+        '<h4>Roles</h4>' + list(snapshot.roles.filter(role => !role.managed && role.id !== path.split('/').at(-1)).map(role => '<li>' + esc(role.name) + ' · Permission flags <code>' + esc(role.permissions) + '</code></li>')) +
+        '<h4>Channels and Categories</h4>' + list(snapshot.channels.map(channel => '<li>' + esc(channel.name) + ' · ' + ({0:'Text',2:'Voice',4:'Category',5:'Announcement',13:'Stage',15:'Forum',16:'Media'}[channel.type] ?? 'Channel') + ' · ' + channel.overwrites.filter(item => item.type === 0).length + ' role overwrites</li>')) +
+        '<p>Messages, role memberships, member overwrites, and ordering require manual recovery.</p></div>'
+      dialog.addEventListener('close',() => dialog.remove(),{once:true})
+      document.body.append(dialog)
+      dialog.showModal()
+    } catch (error) { status.textContent = error.message }
+    finally { preview.disabled = false }
+  }
   for (const form of panel.querySelectorAll('form')) {
     const operation = form.dataset.operation
     if (operation === 'logging' || operation === 'schedule') {
@@ -786,8 +903,8 @@ function setupQuarantine(settings,path) {
   panel.className = 'card quarantine-panel'
   panel.innerHTML = '<h3>Quarantine Role</h3><p>Apply view and chat denies across channels and categories. Anti-Nuke removes manageable roles and restores eligible roles when quarantine ends.</p><button type="button" class="button stack">Configure Quarantine Role</button>'
   settings.before(panel)
-  panel.querySelector('button').onclick = async event => {
-    const button = event.currentTarget
+  const open = async () => {
+    const button = panel.querySelector('button')
     button.disabled = true
     try {
       const [state,choices] = await Promise.all([request(path + '/recovery'),request(path + '/options')])
@@ -813,6 +930,8 @@ function setupQuarantine(settings,path) {
       button.disabled = false
     }
   }
+  panel.querySelector('button').onclick = open
+  void open()
 }
 async function dashboard() {
   document.body.classList.add('dashboard-page')
@@ -832,7 +951,7 @@ async function dashboard() {
     }
     const path = '/api/guilds/' + encodeURIComponent(id)
     const data = await request(path)
-    if ((section === 'permits' && !data.owner) || (section === 'appeals' && !data.appealsManager)) throw new Error('You do not have access to this page.')
+    if ((['permits','premium','custom'].includes(section) && !data.owner) || (section === 'appeals' && !data.appealsManager)) throw new Error('You do not have access to this page.')
     const paid = data.plan === 'premium' || data.plan === 'custom'
     const customAllowed = data.owner && data.plan === 'custom'
     const backupLocked = section === 'backup' && !paid
@@ -857,14 +976,14 @@ async function dashboard() {
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
     const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','appeals','verification','custom'].map(key => {
-      const restricted = key === 'permits' && !data.owner ? 'Owner only' : key === 'appeals' && !data.appealsManager ? 'Manager access required' : ''
+      const restricted = ['permits','custom'].includes(key) && !data.owner ? 'Owner only' : key === 'appeals' && !data.appealsManager ? 'Manager access required' : ''
       const enabled = key === 'appeals' ? data.appealsConfigured : key === 'custom' ? data.customConnected : data.config[key]?.enabled
       const state = enabled ? '<i class="dot"></i> Enabled' : '<i class="dot disabled-dot"></i> Disabled'
       return '<article class="card compact-module' + (key === 'verification' ? ' module-wide' : '') + '"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + (key === 'backup' ? crown : '') + '</h3><span class="badge">' + state + '</span></div></div>' + (restricted ? '<span class="button module-configure" aria-disabled="true">' + restricted + '</span>' : '<a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a>') + '</article>'
     }).join('')
     const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + navigation('premium') + navigation('custom') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('verification') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('verification') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     if (section === 'premium') wireBilling(path,id)
     if (section === 'appeals') appealsPanel(path,data.config.appeals,choices?.channels ?? [])
     if (section === 'custom' && customAllowed) void customBotPanel(path)
@@ -885,6 +1004,7 @@ async function dashboard() {
     if (section === 'permits') wirePermits(settings,choices.roles)
     if (settings && settingFields[section]) protectionControls(settings,section,data.config[section],paid)
     if (settings && section === 'nuke') nukeControls(settings,data.config.nuke,choices,paid)
+    if (settings && settingFields[section]) wireResponseDurations(settings,section)
     if (settings && section === 'nuke' && data.owner) setupQuarantine(settings,path)
     if (recoverySection) await recoveryPanel(section,path,data,[choices,recoveryState])
     if (settings && data.owner) autosave(settings,settings.querySelector('#notice'),async () => {
@@ -942,13 +1062,14 @@ async function dashboard() {
         }
       }
       for (const [key,,min,,unit] of (settingFields[section] ?? [])) {
-        payload[key] = unit ? readDuration(settings.elements[key]) : min === undefined ? fields.get(key) : Number(fields.get(key))
+        payload[key] = unit ? (settings.elements[key].disabled ? data.config[section][key] : readDuration(settings.elements[key])) : min === undefined ? fields.get(key) : Number(fields.get(key))
       }
       if (fields.has('alertChannel') && section !== 'verification') {
         payload.alertChannel = payload.alertChannel.trim()
         payload.alertRoles = fields.getAll('alertRoles')
       }
       await request(path + '/' + section,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true})
+      Object.assign(data.config[section],payload)
     })
     if (section === 'verification') {
       const mode = settings.elements.mode
@@ -987,6 +1108,7 @@ async function dashboard() {
     }
   } catch (error) { shell('<h2>Dashboard unavailable</h2><p class="error" role="alert">' + esc(error.message) + '</p><a class="button" href="/dashboard">Back to dashboard</a>') }
 }
+if (account.tagName === 'DETAILS') void accountMenu(null)
 if (location.pathname.startsWith(base)) dashboard()
 else {
   if (Object.hasOwn(resources,location.pathname)) shell('<div class="resource-page">' + resources[location.pathname] + '</div>')

@@ -1,12 +1,9 @@
 import { ComponentType as Type, MessageFlags, escapeMarkdown } from 'discord.js'
 
 const icons = {
-  bell:'<:Bell:1567545558665666771>',check:'<:CheckMark:1567545576797769769>',crown:'<:Crown:1567545590395572315>',
-  warning:'<:ExclamationMark:1567545607621447690>',gear:'<:Gear:1567545629406928897>',hammer:'<:Hammer:1567545642987954216>',
-  info:'<:Info:1567545745144291479>',locked:'<:Locked:1567545730200113332>',mail:'<:Mail:1567545700932124732>',
-  inbox:'<:Mail:1567545714895102052>',shield:'<:Shield:1567545686931800185>',support:'<:Support:1567545671517741106>',
-  sword:'<:Sword:1567545658951467138>',timer:'<:Timer:1567545831505137706>',trash:'<:Trash:1567545807849136299>',
-  unlocked:'<:Unlocked:1567545790233321583>',user:'<:User:1567545768733053089>'
+  bell:'🔔',check:'✅',crown:'👑',warning:'⚠️',gear:'⚙️',hammer:'🔨',info:'ℹ️',
+  locked:'🔒',mail:'✉️',inbox:'📥',shield:'🛡️',support:'💬',sword:'⚔️',timer:'⏱️',
+  trash:'🗑️',unlocked:'🔓',user:'👤'
 }
 export const safeText = value => escapeMarkdown(String(value ?? ''))
 const validId = id => /^\d{17,20}$/.test(id ?? '')
@@ -15,7 +12,7 @@ export const timestamp = (at,style='f') => '<t:'+Math.floor(at/1000)+':'+style+'
 export function messageCard(title,body,{tone='info',icon,actions=[],roles=[],files=[],media,ephemeral=false,fields=[],userId,at=Date.now()} = {}) {
   const symbol = icon ?? ({success:'check',warning:'warning',danger:'warning'})[tone] ?? 'info'
   const components = [
-    {type:Type.TextDisplay,content:'### '+icons[symbol]+' '+title},
+    {type:Type.TextDisplay,content:'### '+(icons[symbol] ?? icons.info)+' '+title},
     {type:Type.Separator,divider:true,spacing:1}
   ]
   if (body) components.push({type:Type.TextDisplay,content:body.slice(0,3500)})
