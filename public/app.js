@@ -211,7 +211,7 @@ function displayDuration(seconds,unit) {
 }
 function durationField(name,label,value,min,max,base) {
   return '<div class="duration-field" data-duration data-base="' + base + '" data-min="' + min + '" data-max="' + max + '"><label>' + label +
-    '<input type="number" required step="any" min="0" name="' + name + '" value="' + esc(value) + '"></label><label>Unit<select data-duration-unit data-previous="' + base + '" aria-label="' + label + ' unit">' +
+    '<input type="number" required step="any" min="0" name="' + name + '" value="' + esc(value) + '"></label><label><select data-duration-unit data-previous="' + base + '" aria-label="' + label + ' unit">' +
     options(durationLabels,base) + '</select></label></div>'
 }
 function durationValue(input) {
