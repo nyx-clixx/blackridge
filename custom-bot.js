@@ -23,7 +23,7 @@ export function missingPrivilegedIntents(flags) {
   ].filter(([,full,limited]) => !enabled.any(full | limited)).map(([name]) => name)
 }
 
-export function customBots(db,shared,key) {
+export function customBots(db,shared,key,makeClient = createBotClient) {
   const clients = new Map()
   const busy = new Set()
   const eligible = (id,owner) => db.guildPlan(id) === 'custom' && shared()?.guilds.cache.get(id)?.ownerId === owner
@@ -31,7 +31,8 @@ export function customBots(db,shared,key) {
     const iv = randomBytes(12)
     const cipher = createCipheriv('aes-256-gcm',key,iv)
     cipher.setAAD(Buffer.from(id))
-    return Buffer.concat([iv,cipher.getAuthTag(),cipher.update(token,'utf8'),cipher.final()]).toString('base64url')
+    const encrypted = Buffer.concat([cipher.update(token,'utf8'),cipher.final()])
+    return Buffer.concat([iv,cipher.getAuthTag(),encrypted]).toString('base64url')
   }
   function open(id,stored) {
     const bytes = Buffer.from(stored,'base64url')
@@ -89,7 +90,7 @@ export function customBots(db,shared,key) {
     if ((!stored || stored.intentsChecked) && missingIntents.length)
       throw error('Enable these intents in the Discord Developer Portal: ' + missingIntents.join(', ') + '.')
     const intentsChecked = !missingIntents.length
-    const client = createBotClient({messageContent:intentsChecked || process.env.ENABLE_MESSAGE_CONTENT === 'true'})
+    const client = makeClient({messageContent:intentsChecked || process.env.ENABLE_MESSAGE_CONTENT === 'true'})
     client.on(Events.Error,() => console.error('Custom Discord client error'))
     let timeout,stop
     try {
@@ -120,6 +121,7 @@ export function customBots(db,shared,key) {
       stop?.()
       await client.destroy()
       if (failure.status === 400) throw failure
+      console.error('Custom Bot startup failed:',failure.name,Number(failure.code) || '',Number(failure.status) || '')
       throw error('Discord could not start this custom bot.')
     } finally { clearTimeout(timeout) }
   }
