@@ -35,7 +35,9 @@ test('timeout action card shows moderator, non-pinging member reference, and loc
   const card = actionCard(memberAction('timeout',{userId,actor,until:200000,at:100000}))
   const components = card.components[0].components
   assert.ok(components.some(component=>component.divider === true))
-  const text = components.map(component=>component.content ?? '').join('\n')
+  const header = components[0]
+  assert.equal(header.accessory.media.url,'https://cdn.discordapp.com/emojis/1567545831505137706.webp')
+  const text = [header.components[0],...components.slice(1)].map(component=>component.content ?? '').join('\n')
   assert.match(text,/Member Timed Out/)
   assert.ok(text.includes('<@'+userId+'> was timed out until <t:200:f> (<t:200:R>)'))
   assert.ok(text.includes('**Moderator**\n<@'+actor+'>'))

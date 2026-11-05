@@ -1,9 +1,14 @@
 import { ComponentType as Type, MessageFlags, escapeMarkdown } from 'discord.js'
 
 const icons = {
-  bell:'🔔',check:'✅',crown:'👑',warning:'⚠️',gear:'⚙️',hammer:'🔨',info:'ℹ️',
-  locked:'🔒',mail:'✉️',inbox:'📥',shield:'🛡️',support:'💬',sword:'⚔️',timer:'⏱️',
-  trash:'🗑️',unlocked:'🔓',user:'👤'
+  bell:'1567545558665666771',logo:'1567655307231109185',calendar:'1567663011685081158',
+  check:'1567545576797769769',crown:'1567545590395572315',warning:'1567545607621447690',
+  gear:'1567545629406928897',hammer:'1567545642987954216',info:'1567545745144291479',
+  link:'1567655856005447781',locked:'1567545730200113332',announcement:'1567663050515947700',
+  mail:'1567545714895102052',inbox:'1567545714895102052',shield:'1567545686931800185',
+  support:'1567545671517741106',sword:'1567545658951467138',timer:'1567545831505137706',
+  trash:'1567545807849136299',unlocked:'1567545790233321583',user:'1567545768733053089',
+  wrench:'1567662985181134938'
 }
 export const safeText = value => escapeMarkdown(String(value ?? ''))
 const validId = id => /^\d{17,20}$/.test(id ?? '')
@@ -12,7 +17,8 @@ export const timestamp = (at,style='f') => '<t:'+Math.floor(at/1000)+':'+style+'
 export function messageCard(title,body,{tone='info',icon,actions=[],roles=[],files=[],media,ephemeral=false,fields=[],userId,at=Date.now()} = {}) {
   const symbol = icon ?? ({success:'check',warning:'warning',danger:'warning'})[tone] ?? 'info'
   const components = [
-    {type:Type.TextDisplay,content:'### '+(icons[symbol] ?? icons.info)+' '+title},
+    {type:Type.Section,components:[{type:Type.TextDisplay,content:'### '+title}],
+      accessory:{type:Type.Thumbnail,media:{url:'https://cdn.discordapp.com/emojis/'+(icons[symbol] ?? icons.info)+'.webp'}}},
     {type:Type.Separator,divider:true,spacing:1}
   ]
   if (body) components.push({type:Type.TextDisplay,content:body.slice(0,3500)})
