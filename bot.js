@@ -1,4 +1,4 @@
-import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, PermissionFlagsBits as P } from 'discord.js'
+import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, Partials, PermissionFlagsBits as P } from 'discord.js'
 import { attachModeration, temporaryBan } from './moderation.js'
 import { attachVerification } from './verification.js'
 import { createHash } from 'node:crypto'
@@ -141,7 +141,7 @@ export function attachProtection(client, db) {
     })
   }
   const enforce = async (member,kind,cfg) => {
-    const reason = kind === 'honeypot' ? 'Posted in the Blackridge Honey Pot channel' : 'Blackridge ' + kind + ' threshold reached'
+    const reason = kind === 'honeypot' ? 'Posted in the Blackridge Honeypot channel' : 'Blackridge ' + kind + ' threshold reached'
     const action = cfg.action
     const data = {userId:member.id,reason}
     const notify = (kind,until) => {
@@ -221,20 +221,19 @@ export function attachProtection(client, db) {
     if (bait.enabled && bait.channel === message.channelId) {
       if (message.author.id === guild.ownerId) return
       void run(guild,'honeypot',async () => {
-        const detail = 'Honey Pot triggered by member ' + message.author.id
+        const detail = 'Honeypot triggered by member ' + message.author.id
+        log(guild,'honeypot',detail)
         void sendModuleLog(guild,db,'honeypot',detail)
-        if (bait.action !== 'delete') {
-          log(guild,'honeypot',detail)
-          await enforce(message.member,'honeypot',bait)
-          return
+        if (bait.actions.includes('delete')) {
+          if (message.deletable) {
+            automodDeletes.set(message.id,Date.now())
+            try { await message.delete() }
+            catch (error) { log(guild,'honeypot',detail + ' · Message deletion failed (' + (error.code || error.name) + ')') }
+          } else log(guild,'honeypot',detail + ' · Message deletion blocked by Discord permissions')
         }
-        if (!message.deletable) {
-          log(guild,'honeypot',detail + ' · Message deletion blocked by Discord permissions')
-          return
-        }
-        automodDeletes.set(message.id,Date.now())
-        await message.delete()
-        log(guild,'honeypot',detail + ' · Message deleted')
+        if (bait.actions.includes('warn')) await enforce(message.member,'honeypot',{...bait,action:'warn'})
+        const consequence = ['ban','kick','timeout'].find(action => bait.actions.includes(action))
+        if (consequence) await enforce(message.member,'honeypot',{...bait,action:consequence})
       })
       return
     }
@@ -281,27 +280,6 @@ export function attachProtection(client, db) {
   client.on(Events.MessageDelete,message => {
     if (!message.inGuild() || message.partial || message.author?.bot || message.webhookId || automodDeletes.delete(message.id)) return
     const guild = message.guild
-    const bait = db.config(guild.id,'honeypot')
-    if (bait.enabled && bait.channel === message.channelId) {
-      if (message.author.id === guild.ownerId) return
-      void run(guild,'honeypot',async () => {
-        const detail = 'Honey Pot triggered by member ' + message.author.id
-        void sendModuleLog(guild,db,'honeypot',detail)
-        if (bait.action !== 'delete') {
-          log(guild,'honeypot',detail)
-          await enforce(message.member,'honeypot',bait)
-          return
-        }
-        if (!message.deletable) {
-          log(guild,'honeypot',detail + ' · Message deletion blocked by Discord permissions')
-          return
-        }
-        automodDeletes.set(message.id,Date.now())
-        await message.delete()
-        log(guild,'honeypot',detail + ' · Message deleted')
-      })
-      return
-    }
     void run(guild,'automod',async () => {
       const cfg = db.config(guild.id,'automod')
       const rule = cfg.filters?.ghost
@@ -593,9 +571,9 @@ export function attachProtection(client, db) {
 }
 
 export function createBotClient({messageContent = process.env.ENABLE_MESSAGE_CONTENT === 'true'} = {}) {
-  const intents = [I.Guilds,I.GuildModeration,I.GuildMembers,I.GuildMessages]
+  const intents = [I.Guilds,I.GuildModeration,I.GuildMembers,I.GuildMessages,I.GuildMessageReactions]
   if (messageContent) intents.push(I.MessageContent)
-  return new Client({intents})
+  return new Client({intents,partials:[Partials.Channel,Partials.Message,Partials.Reaction]})
 }
 export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {
   const view = new Proxy(client,{
@@ -604,7 +582,7 @@ export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {
       if (property === 'on' || property === 'once') return (event,handler) => target[property](event,(...args) => {
         const first = args[0]
         const id = event === Events.GuildAuditLogEntryCreate ? args[1]?.id
-          : event === Events.GuildCreate ? first?.id : first?.guildId ?? first?.guild?.id
+          : event === Events.GuildCreate ? first?.id : event === Events.MessageReactionAdd ? first?.message.guildId : first?.guildId ?? first?.guild?.id
         const oldReview = allowInactiveReviews && event === Events.InteractionCreate && first?.customId?.startsWith('blackridge-review:')
         if (!id || ownsGuild(id) || oldReview) handler(...args)
       })

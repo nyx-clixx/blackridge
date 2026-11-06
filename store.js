@@ -34,7 +34,7 @@ const guards = z.strictObject(Object.fromEntries(['identity','gate','publicRoles
   channels:z.array(snowflake).max(100).optional(),
   gates:z.array(z.strictObject({role:snowflake,required:z.array(snowflake).min(1).max(15)})).max(100).optional()
 }).optional()])))
-export const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history','force-verify','info']
+export const commandNames = ['ban','tempban','unban','kick','timeout','warn','lock-channel','unlock-channel','purge','history','force-verify','info','slowmode']
 const principals = z.array(snowflake).max(15)
 export const permitBypasses = ['automod','nuke','raid','checkpoint']
 const permit = z.strictObject({
@@ -73,9 +73,14 @@ const automodActions = z.array(z.enum(['delete','warn','timeout'])).max(3)
 const filter = z.strictObject({actions:automodActions.optional(),action:z.enum(['off','log','delete','warn','timeout']),limit:integer(1,4000),points:integer(0,100).optional(),response:z.enum(['log','delete','warn','timeout']).optional()})
 export const policies = {
   appeals:z.strictObject({questions:z.array(z.union([z.string().trim().min(1).max(45),z.strictObject({label:z.string().trim().min(1).max(45),type:z.enum(['paragraph','short','checkbox'])})])).min(1).max(5),channel:z.union([snowflake,z.literal('')]).optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
+  reports:z.strictObject({enabled:z.boolean(),channel:z.union([snowflake,z.literal('')]),
+    emoji:z.string().trim().max(100).refine(value => !value || /^(?:<a?:\w+:\d{17,20}>|\d{17,20})$/.test(value) ||
+      (/[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(value) &&
+        [...new Intl.Segmenter().segment(value)].length === 1))}),
   honeypot:z.strictObject({
     enabled:z.boolean(),channel:z.union([snowflake,z.literal('')]),
     action:z.enum(['delete','warn','timeout','kick','ban']),
+    actions:z.array(z.enum(['delete','warn','timeout','kick','ban'])).max(3).optional(),
     timeoutMinutes:duration(1,1440,60),alertChannel:z.union([snowflake,z.literal('')])
   }),
   verification:z.strictObject({
@@ -95,6 +100,7 @@ export const policies = {
 }
 const defaults = {
   appeals:{questions:['Why should the server lift your ban?','What would you do differently?'],channel:''},
+  reports:{enabled:false,channel:'',emoji:''},
   honeypot:{enabled:false,channel:'',action:'delete',timeoutMinutes:10,alertChannel:''},
   verification:{enabled:false,mode:'button',channel:'',verifiedRole:'',unverifiedRole:'',alertChannel:'',minAge:0,attempts:3,minutes:2,failure:'retry'},
   permits:{entries:[]},
@@ -244,6 +250,7 @@ export function createStore(file) {
       const saved = JSON.parse(read.get(guild,kind)?.config ?? '{}')
       if (kind === 'permits') return normalizePermits(saved)
       const config = {...defaults[kind],...saved}
+      if (kind === 'honeypot') config.actions ??= [config.action]
       if (kind === 'automod') config.pointRules = config.pointRules.slice(0,4)
       return config
     },

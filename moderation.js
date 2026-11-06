@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ApplicationCommandType, AuditLogEvent, ChannelType, Events, MessageFlags, PermissionFlagsBits as P, SlashCommandBuilder } from 'discord.js'
 import { commandNames, matchesPermit } from './store.js'
 import { sendModuleLog } from './recovery.js'
-import { appealMarker, attachAppeals, sendBanNotice } from './appeals.js'
+import { appealMarker, attachAppeals, privateAppealChannel, sendBanNotice } from './appeals.js'
 import { actionCard, memberAction, mention, messageCard, safeText, timestamp } from './messages.js'
 import { grantVerification } from './verification.js'
 
@@ -11,11 +11,15 @@ const timedCommands = new Set(['timeout','tempban'])
 const permissions = {
   ban:P.BanMembers, tempban:P.BanMembers, unban:P.BanMembers, kick:P.KickMembers,
   timeout:P.ModerateMembers, warn:P.ModerateMembers, 'lock-channel':P.ManageChannels, 'unlock-channel':P.ManageChannels,
-  purge:P.ManageMessages, history:P.ModerateMembers, info:P.ModerateMembers, 'force-verify':P.ManageRoles
+  purge:P.ManageMessages, history:P.ModerateMembers, info:P.ModerateMembers, 'force-verify':P.ManageRoles, slowmode:P.ManageChannels
 }
 const commands = commandNames.map(name => {
   const builder = new SlashCommandBuilder().setName(name).setDescription('Blackridge ' + name + ' moderation action')
   if (name === 'force-verify') builder.setDescription('Verify a member without a button or CAPTCHA')
+  if (name === 'slowmode') return builder.setDescription('Set slowmode for this channel')
+    .addStringOption(option => option.setName('state').setDescription('Turn slowmode on or off').setRequired(true)
+      .addChoices({name:'On',value:'on'},{name:'Off',value:'off'}))
+    .addIntegerOption(option => option.setName('seconds').setDescription('Seconds between messages when on').setMinValue(1).setMaxValue(21600))
   if (name === 'purge') return builder.setDescription('Delete recent messages in this channel').addIntegerOption(option =>
     option.setName('amount').setDescription('Number of recent messages to delete').setRequired(true).setMinValue(1).setMaxValue(100))
   if (name === 'info') return builder.setDescription('View account and server information for a Discord user')
@@ -32,6 +36,7 @@ const commands = commandNames.map(name => {
   if (name === 'ban') builder.addBooleanOption(option => option.setName('appeal').setDescription('Allow the member to appeal this ban'))
   return builder.addStringOption(option => option.setName('reason').setDescription('Reason for the action').setMaxLength(250))
 })
+const reportCommand = 'Report to Moderators'
 const commandSync = new Map()
 export function syncModerationCommands(guild,db,forceDisabled = false) {
   const previous = commandSync.get(guild.id) ?? Promise.resolve()
@@ -39,7 +44,12 @@ export function syncModerationCommands(guild,db,forceDisabled = false) {
     const enabled = !forceDisabled && db.config(guild.id,'moderation').enabled
     if (enabled) for (const command of commands) await guild.commands.create(command)
     const obsolete = enabled ? ['lock','unlock'] : [...commandNames,'lock','unlock']
-    for (const command of (await guild.commands.fetch()).values()) {
+    const reportsEnabled = !forceDisabled && db.config(guild.id,'reports').enabled
+    const registered = await guild.commands.fetch()
+    const report = [...registered.values()].find(command => command.type === ApplicationCommandType.Message && command.name === reportCommand)
+    if (reportsEnabled && !report) await guild.commands.create({name:reportCommand,type:ApplicationCommandType.Message})
+    if (!reportsEnabled && report) await report.delete()
+    for (const command of registered.values()) {
       if (command.type === ApplicationCommandType.ChatInput && obsolete.includes(command.name)) await command.delete()
     }
   }).finally(() => { if (commandSync.get(guild.id) === operation) commandSync.delete(guild.id) })
@@ -66,6 +76,61 @@ export async function temporaryBan(member, minutes, db, reason) {
 export function attachModeration(client,db,lookupGuild) {
   attachAppeals(client,db,lookupGuild)
   const channelChanges = new Set()
+  const reports = new Map()
+  const reportCooldown = new Map()
+  async function reportMessage(message,reporter,method) {
+    const guild = message.guild
+    if (!guild || reporter.bot || message.author?.id === reporter.id) return 'Choose a message from another member.'
+    const config = db.config(guild.id,'reports')
+    if (!config.enabled) return 'The Report System is disabled.'
+    if (message.channelId === config.channel) return 'Reports cannot be filed from the review channel.'
+    const now = Date.now()
+    for (const [key,until] of reports) if (until <= now) reports.delete(key)
+    for (const [key,until] of reportCooldown) if (until <= now) reportCooldown.delete(key)
+    const key = guild.id + ':' + message.id
+    const sender = guild.id + ':' + reporter.id
+    if (reports.has(key)) return 'This message was recently reported.'
+    if (reportCooldown.has(sender) || reports.size >= 5000) return 'Please wait before sending another report.'
+    reports.set(key,now+10*60000)
+    reportCooldown.set(sender,now+5000)
+    try {
+      const channel = await privateAppealChannel(guild,config.channel)
+      const current = db.config(guild.id,'reports')
+      if (!channel || !current.enabled || current.channel !== config.channel) throw new Error('Review channel unavailable')
+      const url = 'https://discord.com/channels/' + guild.id + '/' + message.channelId + '/' + message.id
+      await channel.send(messageCard('Message Report','[Open the reported message](' + url + ')',{
+        icon:'warning',userId:message.author?.id,fields:[
+          ['Reported Member',message.author ? mention(message.author.id) : 'Unknown'],
+          ['Reported By',mention(reporter.id)],['Source Channel',mention(message.channelId,'channel')],['Method',method]
+        ]
+      }))
+      db.event(guild.id,'reports','Message reported by ' + reporter.id + ' · message ' + message.id)
+      return 'Report sent to the server’s moderators.'
+    } catch {
+      reports.delete(key)
+      return 'The report could not be delivered to the review channel.'
+    }
+  }
+  client.on(Events.MessageReactionAdd,async (reaction,user) => {
+    const guild = reaction.message.guild
+    if (!guild || user.bot) return
+    const config = db.config(guild.id,'reports')
+    const emoji = config.emoji.match(/:(\d{17,20})>$/)?.[1] ?? config.emoji
+    const normalize = value => value?.replace(/\uFE0F/g,'')
+    if (!config.enabled || !emoji || normalize(emoji) !== normalize(reaction.emoji.id ?? reaction.emoji.name)) return
+    try {
+      const message = reaction.message.partial ? await reaction.message.fetch() : reaction.message
+      await reportMessage(message,user,'Emoji Reaction')
+    } catch { /* The source message may have been deleted. */ }
+  })
+  client.on(Events.InteractionCreate,async interaction => {
+    if (!interaction.isMessageContextMenuCommand?.() || !interaction.inCachedGuild() || interaction.commandName !== reportCommand) return
+    try {
+      await interaction.deferReply({flags:MessageFlags.Ephemeral})
+      const result = await reportMessage(interaction.targetMessage,interaction.user,'Message Menu')
+      await interaction.editReply(messageCard('Report Message',result,{icon:'warning'}))
+    } catch (error) { console.error('Message report failed:',error.code ?? error.name) }
+  })
   client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => {
     if (!db.config(guild.id,'moderation').enabled || !entry.targetId || !entry.executorId) return
     const data = {userId:entry.targetId,actor:entry.executorId,reason:entry.reason,at:entry.createdTimestamp}
@@ -139,6 +204,20 @@ export function attachModeration(client,db,lookupGuild) {
       const permit = permits.enabled ? permits.entries : []
       if (!canModerate(actor,guild.ownerId,name,permit,interaction.channel?.permissionsFor(actor))) {
         return await respond('You do not have access to this command.')
+      }
+      if (name === 'slowmode') {
+        const channel = await guild.channels.fetch(interaction.channelId,{force:true})
+        if (!channel?.setRateLimitPerUser) return await respond('Use this command in a channel that supports slowmode.')
+        if (!canModerate(actor,guild.ownerId,name,permit,channel.permissionsFor(actor))) return await respond('You do not have access in this channel.')
+        const on = interaction.options.getString('state',true) === 'on'
+        const seconds = on ? interaction.options.getInteger('seconds') : 0
+        if (seconds === null) return await respond('Choose a time in seconds when turning slowmode on.')
+        await channel.setRateLimitPerUser(seconds,'Blackridge slowmode by ' + actor.id)
+        const detail = 'slowmode · channel ' + channel.id + ' · moderator ' + actor.id + ' · ' + (on ? seconds + ' seconds' : 'Off')
+        db.event(guild.id,'moderation',detail)
+        const card = {title:'Slowmode ' + (on ? 'Enabled' : 'Disabled'),body:mention(channel.id,'channel') + (on ? ' now has a ' + seconds + '-second cooldown.' : ' no longer has a cooldown.'),options:{icon:'timer',fields:[['Moderator',mention(actor.id)]]}}
+        void sendModuleLog(guild,db,'moderation',card)
+        return await interaction.editReply(actionCard(card))
       }
       if (name === 'purge') {
         const channel = await guild.channels.fetch(interaction.channelId,{force:true})

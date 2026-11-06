@@ -58,7 +58,7 @@ export function memberAction(action,{userId,actor,reason,server,until,at=Date.no
 export const actionCard = (action,extra={}) => messageCard(action.title,action.body,{...action.options,...extra})
 const modules = {
   nuke:['Anti-Nuke','shield'],raid:['Anti-Raid','bell'],checkpoint:['Checkpoint','user'],
-  automod:['Auto Moderation','sword'],honeypot:['Honey Pot','bell'],moderation:['Moderation','hammer'],
+  automod:['Auto Moderation','sword'],honeypot:['Honeypot','bell'],moderation:['Moderation','hammer'],
   lockdown:['Lockdown','locked'],verification:['Verification','check'],appeals:['Ban Appeals','inbox']
 }
 export function logCard(kind,detail,roles=[]) {

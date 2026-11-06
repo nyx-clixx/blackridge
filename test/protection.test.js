@@ -4,7 +4,7 @@ import { EventEmitter, once } from 'node:events'
 import { AuditLogEvent as A, Collection, Events, PermissionFlagsBits as P } from 'discord.js'
 import { attachProtection, isDestructive, recordHit } from '../bot.js'
 import { createStore, guildPlan, policies, spamFilters } from '../store.js'
-import { canModerate, syncModerationCommands } from '../moderation.js'
+import { attachModeration, canModerate, syncModerationCommands } from '../moderation.js'
 import { recoveryTools } from '../recovery.js'
 import { attachVerification } from '../verification.js'
 import { appealMarker, canReviewAppeals, hasAppealableBan } from '../appeals.js'
@@ -487,12 +487,46 @@ test('Honey Pot enforces the configured response only in the active bait channel
   await send('moderator',channel,'moderator',true)
   await send('bait',channel)
   assert.deepEqual(deleted,['bait'])
-  db.save(guild.id,'honeypot',{...config,action:'kick'},'owner')
+  db.save(guild.id,'honeypot',{...config,action:'delete',actions:['delete','warn','kick']},'owner')
   await send('kick',channel)
   assert.deepEqual(kicked,['kick'])
+  assert.ok(db.history(guild.id,'member').some(row => row.action === 'warn'))
   db.save(guild.id,'honeypot',{...config,enabled:false},'owner')
   await send('disabled',channel)
-  assert.deepEqual(deleted,['bait'])
-  assert.equal(db.recent(guild.id).filter(row => row.kind === 'honeypot').length,3)
+  assert.deepEqual(deleted,['bait','kick'])
+  assert.equal(db.recent(guild.id).filter(row => row.kind === 'honeypot').length,4)
+})
+
+
+test('Report System delivers the selected reaction to the private review channel once', async t => {
+  const db = createStore(':memory:')
+  const client = new EventEmitter()
+  const stop = attachModeration(client,db,() => null)
+  t.after(() => { stop(); db.close() })
+  const guild = {id:'1567348176866902119',roles:{everyone:{}},members:{me:{}}}
+  const channelId = '1567687590532878467'
+  const reporter = {id:'1283471260688322611',bot:false}
+  const sent = []
+  let privateChannel = true
+  const channel = {guildId:guild.id,isSendable:() => true,isThread:() => false,
+    permissionOverwrites:{cache:new Map([[guild.id,{deny:{has:() => privateChannel}}]])},
+    permissionsFor:target => ({has:() => target !== guild.roles.everyone}),send:async card => sent.push(card)}
+  guild.channels = {fetch:async () => channel}
+  const config = {enabled:true,channel:channelId,emoji:'🚩'}
+  db.save(guild.id,'reports',policies.reports.parse(config),'owner')
+  const message = {id:'1567348176866902120',guild,channelId:'1567348176866902121',author:{id:'1567348176866902122'}}
+  const react = async (emoji,target=message,user=reporter) => {
+    client.emit(Events.MessageReactionAdd,{message:target,emoji:{name:emoji}},user)
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  await react('⭐')
+  await react(config.emoji)
+  await react(config.emoji)
+  assert.equal(sent.length,1)
+  assert.match(JSON.stringify(sent[0]),/Open the reported message/)
+  assert.deepEqual(sent[0].allowedMentions,{parse:[],roles:[]})
+  privateChannel = false
+  await react(config.emoji,{...message,id:'1567348176866902123'},{...reporter,id:'1567348176866902124'})
+  assert.equal(sent.length,1)
 })
 

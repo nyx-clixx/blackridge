@@ -325,7 +325,7 @@ app.get('/api/guilds/:id/events',async (req,res) => {
 const honeyPotUpdates = new Set()
 async function saveHoneyPot(req,res,config) {
   const {id} = req.guild
-  if (honeyPotUpdates.has(id)) return res.status(409).json({error:'A Honey Pot update is already in progress.'})
+  if (honeyPotUpdates.has(id)) return res.status(409).json({error:'A Honeypot update is already in progress.'})
   honeyPotUpdates.add(id)
   try {
     const guild = activeGuild(id)
@@ -338,10 +338,13 @@ async function saveHoneyPot(req,res,config) {
       const channel = await guild?.channels.fetch(config.channel).catch(() => null)
       if (channel?.type !== ChannelType.GuildText || channel.guildId !== id)
         return res.status(400).json({error:'Choose a text channel in this server.'})
-      const permission = {delete:P.ManageMessages,timeout:P.ModerateMembers,kick:P.KickMembers,ban:P.BanMembers}[config.action]
+      const actions = config.actions ?? [config.action]
+      if (!actions.length || actions.filter(action => ['ban','kick','timeout'].includes(action)).length > 1)
+        return res.status(400).json({error:'Choose at least one response and at most one timeout, kick, or ban.'})
+      const permission = {timeout:P.ModerateMembers,kick:P.KickMembers,ban:P.BanMembers}[actions.find(action => ['timeout','kick','ban'].includes(action))]
       const permissions = channel.permissionsFor(guild.members.me)
       if (!permissions?.has([P.ViewChannel,P.SendMessages,P.ReadMessageHistory]) ||
-          (permission && !(config.action === 'delete' ? permissions : guild.members.me.permissions).has(permission)))
+          (actions.includes('delete') && !permissions.has(P.ManageMessages)) || (permission && !guild.members.me.permissions.has(permission)))
         return res.status(400).json({error:'Blackridge needs access to the bait channel and permission to perform the selected response.'})
       let panel
       if (previous.channel === config.channel && previous.panelId) {
@@ -351,7 +354,7 @@ async function saveHoneyPot(req,res,config) {
         })
       }
       if (panel?.author.id !== guild.client.user.id) {
-        panel = createdPanel = await channel.send(messageCard('Honey Pot · Do Not Post',
+        panel = createdPanel = await channel.send(messageCard('Honeypot · Do Not Post',
           'This channel is a security trap. Posting here can trigger automatic moderation. Please use another channel.',{icon:'warning'}))
       }
       panelId = panel.id
@@ -461,6 +464,9 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   const parsed = policies[kind].safeParse(req.body)
   if (!parsed.success) return res.status(400).json({error:'Check your thresholds and Discord user IDs.'})
   if (kind === 'honeypot') return saveHoneyPot(req,res,parsed.data)
+  if (kind === 'reports' && parsed.data.enabled &&
+      !await privateAppealChannel(activeGuild(req.guild.id),parsed.data.channel).catch(() => null))
+    return res.status(400).json({error:'Choose a review channel that denies View Channel to @everyone and lets Blackridge post.'})
   if (kind === 'appeals') {
     for (const channel of new Set([parsed.data.channel,parsed.data.alertChannel].filter(Boolean))) {
       if (!await privateAppealChannel(activeGuild(req.guild.id),channel).catch(() => null))
@@ -482,9 +488,9 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
     if (kind === 'automod') config.maliciousDomains = db.config(req.guild.id,kind).maliciousDomains
   }
   db.save(req.guild.id,kind,config,req.session.user.id)
-  if (kind === 'moderation' && parsed.data.enabled !== undefined) {
+  if (['moderation','reports'].includes(kind) && parsed.data.enabled !== undefined) {
     try { await syncModerationCommands(activeGuild(req.guild.id),db) }
-    catch { return res.status(503).json({error:'Moderation changed, but Discord could not refresh the slash command list. Try toggling it again.'}) }
+    catch { return res.status(503).json({error:'Settings saved, but Discord could not refresh the command list. Save again to retry.'}) }
   }
   res.json({ok:true})
 })

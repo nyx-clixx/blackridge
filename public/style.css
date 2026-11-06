@@ -169,12 +169,12 @@ body.has-workspace .sidebar{overflow:auto}
 @media(max-width:760px){body.has-workspace .dash-layout{grid-template-rows:auto minmax(0,1fr)}}
 .fallback-avatar{display:inline-grid;place-items:center;background:#1c3049;color:var(--accent)}
 .module-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-.module-wide{grid-column:span 2}
-.compact-module.module-wide .module-head{justify-content:center}
+
+
 .duration-field{display:grid;grid-template-columns:minmax(0,1fr) minmax(78px,auto);gap:8px;align-items:end}
 #install-bot[hidden]{display:none}
-@media(max-width:1200px){.module-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.module-wide{grid-row:6}}
-@media(max-width:540px){.module-grid{grid-template-columns:minmax(0,1fr)}.module-wide{grid-column:auto;grid-row:auto}}
+@media(max-width:1200px){.module-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:540px){.module-grid{grid-template-columns:minmax(0,1fr)}}
 .compact-module{padding:0;overflow:hidden;background:linear-gradient(150deg,#202023,#171719)}
 .compact-module .module-head{justify-content:flex-start;padding:16px;gap:11px;min-height:73px}
 .compact-module .icon-tile{color:var(--text)}
@@ -417,3 +417,12 @@ body.has-workspace .sidebar{overflow:auto}
 .automod-action input{accent-color:#6ba8ff}
 @media(max-width:1160px){.automod-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:640px){.automod-grid{grid-template-columns:minmax(0,1fr)}}
+
+.raid-flow{gap:30px}
+.raid-step{position:relative}
+.raid-step+.raid-step::before{content:'';position:absolute;left:37px;top:-31px;height:30px;border-left:2px solid #41638a}
+.raid-step+.raid-step::after{content:'';position:absolute;left:33px;top:-11px;width:8px;height:8px;border:solid #78adf3;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.raid-step-heading{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px}
+.raid-step-heading>span{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:9px;background:#203754;color:#a8cbff;font-weight:700}
+.raid-step-heading h3,.raid-step-heading p{margin:0}
+.raid-step-heading p{margin-top:4px}
