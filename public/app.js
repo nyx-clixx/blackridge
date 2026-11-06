@@ -4,6 +4,7 @@ const app = document.querySelector('#app')
 const account = document.querySelector('#account')
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char])
 const iconPaths = {
+  honeypot:'<path d="m8 3-5 4.5v9L8 21h8l5-4.5v-9L16 3zM3 7.5l9 5 9-5M12 12.5V21M8 3l4 4 4-4"/>',
   verification:'<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="3" width="6" height="6" rx="1"/><rect x="3" y="15" width="6" height="6" rx="1"/><path d="M13 13h4v4h4m0-4v1m-8 3v4h4m4 0h.01"/>',
   appeals:'<path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.5-3A7.5 7.5 0 1 1 20 11.5Z"/><path d="M9 10h6m-6 3h4"/>',
   pin:'<path d="m16 3 5 5-3 1-3 5v3l-3-3-5 5-2-2 5-5-3-3h3l5-3z"/>',
@@ -25,7 +26,7 @@ const iconPaths = {
 }
 const icon = key => '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (iconPaths[key] ?? iconPaths.nuke) + '</svg>'
 for (const tile of document.querySelectorAll('[data-icon]')) tile.innerHTML = icon(tile.dataset.icon)
-const sections = { overview:'Overview', premium:'Premium', custom:'Custom Bot', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups',verification:'Verification',appeals:'Ban Appeals' }
+const sections = { overview:'Overview', premium:'Premium', custom:'Custom Bot', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups',verification:'Verification',appeals:'Ban Appeals',honeypot:'Honey Pot' }
 const paidGuards = ['channelRename','roleRename','emojiDelete','stickerDelete','soundboardDelete']
 const paidFilters = ['ghost','malicious']
 const crown = '<span class="premium-crown" title="Premium or Custom Bot" aria-label="Premium or Custom Bot">' + icon('premium') + '</span>'
@@ -243,6 +244,52 @@ document.addEventListener('change',event => {
   select.dataset.previous = select.value
   validateDuration(input)
 },true)
+function honeyPotForm(config,owner,choices) {
+  const channels = choices.channels.filter(channel => channel.type === 0 && channel.sendable)
+  const field = (name,label,items) => '<div class="discord-field"><span>' + label + '</span>' + discordSelect(name,items,[config[name]]) + '</div>'
+  const responses = {delete:'Delete Message',warn:'Warn Member',timeout:'Time Out Member',kick:'Kick Member',ban:'Ban Member'}
+  const link = config.enabled && config.panelId ? ' <a href="https://discord.com/channels/' + esc(config.guildId) + '/' + esc(config.channel) + '/' + esc(config.panelId) + '">View Bait Warning</a>' : ''
+  return '<form id="honeypot-settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') + '><section class="card settings-section"><h3>Bait Channel</h3>' +
+    '<p>Use a dedicated text channel. Blackridge posts a Do Not Post warning before activating the trap. Server owners, members with Manage Messages, bots, and webhooks are exempt.</p>' +
+    '<div class="fields">' + field('channel','Bait Channel',channels) + '<label>Response<select name="action">' + options(responses,config.action) + '</select></label>' +
+    durationField('timeoutMinutes','Timeout Duration',config.timeoutMinutes,1,1440,'minutes') + '</div>' +
+    '<label class="toggle stack"><input type="checkbox" role="switch" name="enabled"' + (config.enabled ? ' checked' : '') + '> Enable Honey Pot</label></section>' +
+    '<section class="card settings-section"><h3>Discord Logging</h3><div class="fields">' + field('alertChannel','Logging Channel (optional)',choices.channels.filter(channel => channel.sendable)) +
+    '</div></section></fieldset>' + (owner ? '<button class="button primary stack" type="submit">Save Honey Pot</button>' : '') +
+    '<p id="honeypot-result" role="status">' + (config.enabled ? 'Honey Pot is active.' + link : 'Honey Pot is disabled.') + '</p></form>'
+}
+function wireHoneyPot(path,id,config) {
+  const form = document.querySelector('#honeypot-settings')
+  const result = form.querySelector('#honeypot-result')
+  const refresh = () => {
+    const input = form.elements.timeoutMinutes
+    input.closest('[data-duration]').hidden = input.disabled = form.elements.action.value !== 'timeout'
+  }
+  form.elements.action.addEventListener('change',refresh)
+  refresh()
+  form.onsubmit = async event => {
+    event.preventDefault()
+    const button = event.submitter
+    if (!button || button.disabled) return
+    const fields = new FormData(form)
+    const timeout = form.elements.timeoutMinutes
+    const payload = {enabled:fields.has('enabled'),channel:fields.get('channel') ?? '',action:fields.get('action'),
+      alertChannel:fields.get('alertChannel') ?? '',timeoutMinutes:timeout.disabled ? config.timeoutMinutes : readDuration(timeout)}
+    button.disabled = true
+    try {
+      const saved = await request(path + '/honeypot',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      Object.assign(config,payload)
+      result.textContent = saved.warning ?? (payload.enabled ? 'Honey Pot is active. ' : 'Honey Pot is disabled.')
+      if (saved.panelId) {
+        const link = document.createElement('a')
+        link.href = 'https://discord.com/channels/' + id + '/' + payload.channel + '/' + saved.panelId
+        link.textContent = 'View Bait Warning'
+        result.append(' ',link)
+      }
+    } catch (error) { result.textContent = error.message }
+    finally { button.disabled = false }
+  }
+}
 function verificationForm(config,owner,choices) {
   const field = (name,label,items) => '<div class="discord-field"><span>' + label + '</span>' + discordSelect(name,items,[config[name]]) + '</div>'
   const channels = choices.channels.filter(channel => channel.sendable)
@@ -1025,7 +1072,7 @@ async function dashboard() {
     const customAllowed = data.owner && data.plan === 'custom'
     const backupLocked = section === 'backup' && !paid
     const recoverySection = !backupLocked && ['lockdown','backup','moderation'].includes(section)
-    const needsOptions = (section === 'appeals' && data.owner) || Object.hasOwn(settingFields,section) || ['permits','verification'].includes(section) || (recoverySection && data.owner)
+    const needsOptions = (section === 'appeals' && data.owner) || Object.hasOwn(settingFields,section) || ['permits','verification','honeypot'].includes(section) || (recoverySection && data.owner)
     const [choices,recoveryState,eventData] = await Promise.all([
       needsOptions ? request(path + '/options') : null,
       recoverySection && data.owner && section !== 'moderation' ? request(path + '/recovery') : {},
@@ -1044,7 +1091,7 @@ async function dashboard() {
     const activity = '<section class="card stack"><h3>' + 'Event History' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
-    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','appeals','verification','custom'].map(key => {
+    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','appeals','verification','honeypot','custom'].map(key => {
       const restricted = ['permits','custom'].includes(key) && !data.owner ? 'Owner only' : key === 'appeals' && !data.appealsManager ? 'Manager access required' : ''
       const enabled = key === 'appeals' ? data.appealsConfigured : key === 'custom' ? data.customConnected : data.config[key]?.enabled
       const state = enabled ? '<i class="dot"></i> Enabled' : '<i class="dot disabled-dot"></i> Disabled'
@@ -1052,7 +1099,8 @@ async function dashboard() {
     }).join('')
     const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('verification') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('verification') + navigation('checkpoint') + navigation('honeypot') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    if (section === 'honeypot') wireHoneyPot(path,id,data.config.honeypot)
     if (section === 'premium') wireBilling(path,id)
     if (section === 'appeals') appealsPanel(path,data.config.appeals,choices?.channels ?? [])
     if (section === 'custom' && customAllowed) void customBotPanel(path)

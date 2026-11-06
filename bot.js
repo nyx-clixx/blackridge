@@ -141,7 +141,7 @@ export function attachProtection(client, db) {
     })
   }
   const enforce = async (member,kind,cfg) => {
-    const reason = 'Blackridge ' + kind + ' threshold reached'
+    const reason = kind === 'honeypot' ? 'Posted in the Blackridge Honey Pot channel' : 'Blackridge ' + kind + ' threshold reached'
     const action = cfg.action
     const data = {userId:member.id,reason}
     const notify = (kind,until) => {
@@ -161,7 +161,7 @@ export function attachProtection(client, db) {
       log(member.guild,kind,'Timed out ' + member.id + ' for ' + minutes + ' minute(s) or longer',
         memberAction('timeout',{...data,actor:client.user?.id,until}))
       return
-    } else if (action !== 'warn' || kind !== 'automod') {
+    } else if (action !== 'warn' || !['automod','honeypot'].includes(kind)) {
       log(member.guild,kind,'Response blocked by Discord permissions or role hierarchy for ' + member.id)
       return
     }
@@ -217,6 +217,27 @@ export function attachProtection(client, db) {
   client.on(Events.MessageCreate,message => {
     if (!message.inGuild() || !message.member || message.author.bot || message.webhookId || message.member.permissions.has(P.ManageMessages)) return
     const guild = message.guild
+    const bait = db.config(guild.id,'honeypot')
+    if (bait.enabled && bait.channel === message.channelId) {
+      if (message.author.id === guild.ownerId) return
+      void run(guild,'honeypot',async () => {
+        const detail = 'Honey Pot triggered by member ' + message.author.id
+        void sendModuleLog(guild,db,'honeypot',detail)
+        if (bait.action !== 'delete') {
+          log(guild,'honeypot',detail)
+          await enforce(message.member,'honeypot',bait)
+          return
+        }
+        if (!message.deletable) {
+          log(guild,'honeypot',detail + ' · Message deletion blocked by Discord permissions')
+          return
+        }
+        automodDeletes.set(message.id,Date.now())
+        await message.delete()
+        log(guild,'honeypot',detail + ' · Message deleted')
+      })
+      return
+    }
     void run(guild,'automod',async () => {
       const cfg = db.config(guild.id,'automod')
       if (!cfg.enabled) return
@@ -260,6 +281,27 @@ export function attachProtection(client, db) {
   client.on(Events.MessageDelete,message => {
     if (!message.inGuild() || message.partial || message.author?.bot || message.webhookId || automodDeletes.delete(message.id)) return
     const guild = message.guild
+    const bait = db.config(guild.id,'honeypot')
+    if (bait.enabled && bait.channel === message.channelId) {
+      if (message.author.id === guild.ownerId) return
+      void run(guild,'honeypot',async () => {
+        const detail = 'Honey Pot triggered by member ' + message.author.id
+        void sendModuleLog(guild,db,'honeypot',detail)
+        if (bait.action !== 'delete') {
+          log(guild,'honeypot',detail)
+          await enforce(message.member,'honeypot',bait)
+          return
+        }
+        if (!message.deletable) {
+          log(guild,'honeypot',detail + ' · Message deletion blocked by Discord permissions')
+          return
+        }
+        automodDeletes.set(message.id,Date.now())
+        await message.delete()
+        log(guild,'honeypot',detail + ' · Message deleted')
+      })
+      return
+    }
     void run(guild,'automod',async () => {
       const cfg = db.config(guild.id,'automod')
       const rule = cfg.filters?.ghost

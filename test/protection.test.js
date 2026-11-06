@@ -461,3 +461,38 @@ test('AutoMod combines responses on one rule and respects the spam switch', asyn
   assert.deepEqual(deleted,['1','2','3','4','5','6'])
 })
 
+
+test('Honey Pot enforces the configured response only in the active bait channel', async t => {
+  const db = createStore(':memory:')
+  const client = new EventEmitter()
+  client.user = {id:'bot'}
+  const stop = attachProtection(client,db)
+  t.after(() => { stop(); db.close() })
+  const guild = {id:'guild',ownerId:'owner',name:'Test Server'}
+  const channel = '1283471260688322611'
+  const config = {...db.config(guild.id,'honeypot'),enabled:true,channel}
+  db.save(guild.id,'honeypot',policies.honeypot.parse(config),'owner')
+  const deleted = []
+  const kicked = []
+  const send = async (id,channelId,authorId='member',exempt=false) => {
+    const author = {id:authorId,bot:false,send:async () => {}}
+    const member = {id:authorId,user:author,guild,permissions:{has:() => exempt},
+      kickable:true,kick:async () => kicked.push(id)}
+    client.emit(Events.MessageCreate,{id,channelId,guild,author,member,inGuild:() => true,
+      deletable:true,delete:async () => deleted.push(id)})
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  await send('elsewhere','another-channel')
+  await send('owner',channel,'owner')
+  await send('moderator',channel,'moderator',true)
+  await send('bait',channel)
+  assert.deepEqual(deleted,['bait'])
+  db.save(guild.id,'honeypot',{...config,action:'kick'},'owner')
+  await send('kick',channel)
+  assert.deepEqual(kicked,['kick'])
+  db.save(guild.id,'honeypot',{...config,enabled:false},'owner')
+  await send('disabled',channel)
+  assert.deepEqual(deleted,['bait'])
+  assert.equal(db.recent(guild.id).filter(row => row.kind === 'honeypot').length,3)
+})
+

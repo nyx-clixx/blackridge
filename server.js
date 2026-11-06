@@ -5,7 +5,8 @@ import helmet from 'helmet'
 import { randomBytes, createHash, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { readFileSync } from 'node:fs'
-import { ChannelType } from 'discord.js'
+import { ChannelType, PermissionFlagsBits as P } from 'discord.js'
+import { messageCard } from './messages.js'
 import { createStore, matchesPermit, policies, premiumFilters, premiumGuards } from './store.js'
 import { customBots, profilePolicy } from './custom-bot.js'
 import { startBot, requiredPermissions } from './bot.js'
@@ -321,6 +322,61 @@ app.get('/api/guilds/:id/events',async (req,res) => {
     return {...event,userName:user?.username ?? null,avatar:user?.avatar ?? null}
   })})
 })
+const honeyPotUpdates = new Set()
+async function saveHoneyPot(req,res,config) {
+  const {id} = req.guild
+  if (honeyPotUpdates.has(id)) return res.status(409).json({error:'A Honey Pot update is already in progress.'})
+  honeyPotUpdates.add(id)
+  try {
+    const guild = activeGuild(id)
+    const previous = db.config(id,'honeypot')
+    let panelId = ''
+    let createdPanel
+    if (config.enabled) {
+      if (!config.channel || config.channel === config.alertChannel)
+        return res.status(400).json({error:'Choose a bait channel and keep any log channel separate.'})
+      const channel = await guild?.channels.fetch(config.channel).catch(() => null)
+      if (channel?.type !== ChannelType.GuildText || channel.guildId !== id)
+        return res.status(400).json({error:'Choose a text channel in this server.'})
+      const permission = {delete:P.ManageMessages,timeout:P.ModerateMembers,kick:P.KickMembers,ban:P.BanMembers}[config.action]
+      const permissions = channel.permissionsFor(guild.members.me)
+      if (!permissions?.has([P.ViewChannel,P.SendMessages,P.ReadMessageHistory]) ||
+          (permission && !(config.action === 'delete' ? permissions : guild.members.me.permissions).has(permission)))
+        return res.status(400).json({error:'Blackridge needs access to the bait channel and permission to perform the selected response.'})
+      let panel
+      if (previous.channel === config.channel && previous.panelId) {
+        panel = await channel.messages.fetch(previous.panelId).catch(error => {
+          if (error.code !== 10008) throw error
+          return null
+        })
+      }
+      if (panel?.author.id !== guild.client.user.id) {
+        panel = createdPanel = await channel.send(messageCard('Honey Pot · Do Not Post',
+          'This channel is a security trap. Posting here can trigger automatic moderation. Please use another channel.',{icon:'warning'}))
+      }
+      panelId = panel.id
+    }
+    try { db.save(id,'honeypot',{...config,panelId},req.session.user.id) }
+    catch (error) {
+      await createdPanel?.delete().catch(() => {})
+      throw error
+    }
+    if (previous.panelId && previous.panelId !== panelId) {
+      try {
+        const oldChannel = await guild?.channels.fetch(previous.channel)
+        await oldChannel?.messages.delete(previous.panelId)
+      } catch (error) {
+        if (![10003,10008].includes(error.code))
+          return res.json({ok:true,panelId,warning:'Settings saved. Remove the previous bait warning in Discord if it is still visible.'})
+      }
+    }
+    res.json({ok:true,panelId})
+  } catch {
+    res.status(502).json({error:'Could not publish the bait warning. Check that Blackridge can send messages in the selected channel.'})
+  } finally {
+    honeyPotUpdates.delete(id)
+  }
+}
 const verificationPublishing = new Set()
 app.get('/api/guilds/:id/appeals', (req,res) => {
   if (!req.guild.appealsManager) return res.status(403).json({error:'Ban Appeals Manager access is required.'})
@@ -348,7 +404,7 @@ app.get('/api/guilds/:id/options',async (req,res) => {
   const guild = activeGuild(req.guild.id)
   const {channels,roles} = await recovery.scope(guild)
   res.json({
-    channels:channels.filter(channel => channel?.permissionOverwrites && channel.type !== ChannelType.GuildCategory && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name,sendable:channel.isSendable()})),
+    channels:channels.filter(channel => channel?.permissionOverwrites && channel.type !== ChannelType.GuildCategory && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name,sendable:channel.isSendable(),type:channel.type})),
     renameChannels:channels.filter(channel => channel?.permissionOverwrites && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name})),
     roles:roles.filter(role => role.id !== guild.id).map(role => ({id:role.id,name:role.name}))
   })
@@ -404,6 +460,7 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   if (kind === 'backup' && free) return res.status(403).json({error:'Server Backups require Premium or Custom Bot.'})
   const parsed = policies[kind].safeParse(req.body)
   if (!parsed.success) return res.status(400).json({error:'Check your thresholds and Discord user IDs.'})
+  if (kind === 'honeypot') return saveHoneyPot(req,res,parsed.data)
   if (kind === 'appeals') {
     for (const channel of new Set([parsed.data.channel,parsed.data.alertChannel].filter(Boolean))) {
       if (!await privateAppealChannel(activeGuild(req.guild.id),channel).catch(() => null))

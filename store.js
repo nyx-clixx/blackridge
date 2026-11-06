@@ -73,6 +73,11 @@ const automodActions = z.array(z.enum(['delete','warn','timeout'])).max(3)
 const filter = z.strictObject({actions:automodActions.optional(),action:z.enum(['off','log','delete','warn','timeout']),limit:integer(1,4000),points:integer(0,100).optional(),response:z.enum(['log','delete','warn','timeout']).optional()})
 export const policies = {
   appeals:z.strictObject({questions:z.array(z.union([z.string().trim().min(1).max(45),z.strictObject({label:z.string().trim().min(1).max(45),type:z.enum(['paragraph','short','checkbox'])})])).min(1).max(5),channel:z.union([snowflake,z.literal('')]).optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
+  honeypot:z.strictObject({
+    enabled:z.boolean(),channel:z.union([snowflake,z.literal('')]),
+    action:z.enum(['delete','warn','timeout','kick','ban']),
+    timeoutMinutes:duration(1,1440,60),alertChannel:z.union([snowflake,z.literal('')])
+  }),
   verification:z.strictObject({
     enabled:z.boolean(),mode:z.enum(['button','captcha']),channel:z.union([snowflake,z.literal('')]),
     verifiedRole:z.union([snowflake,z.literal('')]),unverifiedRole:z.union([snowflake,z.literal('')]),
@@ -90,6 +95,7 @@ export const policies = {
 }
 const defaults = {
   appeals:{questions:['Why should the server lift your ban?','What would you do differently?'],channel:''},
+  honeypot:{enabled:false,channel:'',action:'delete',timeoutMinutes:10,alertChannel:''},
   verification:{enabled:false,mode:'button',channel:'',verifiedRole:'',unverifiedRole:'',alertChannel:'',minAge:0,attempts:3,minutes:2,failure:'retry'},
   permits:{entries:[]},
   automod:{enabled:false,threshold:6,window:8,action:'off',timeoutMinutes:5,badWords:'',nsfwDomains:'',maliciousDomains:'',spamPoints:0,pointRules:[]},
