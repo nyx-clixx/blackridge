@@ -8,8 +8,8 @@ const prefix = 'blackridge-verify:'
 const reason = 'Blackridge member verification'
 const roleChanges = new Set()
 function quarantined(db,guild,member) {
-  const role = db.recovery(guild.id,'quarantineRole')?.role
-  return role && (member.roles.cache.has(role) || db.hasQuarantine(guild.id,member.id,role))
+  const roles = [db.recovery(guild.id,'quarantineRole')?.role,db.recovery(guild.id,'quarantine:'+member.id)?.role]
+  return roles.some(role => role && (member.roles.cache.has(role) || db.hasQuarantine(guild.id,member.id,role)))
 }
 const forbidden = Object.entries(P).reduce((bits,[name,permission]) =>
   /^(Administrator|Manage|Moderate|Kick|Ban|MentionEveryone|ViewAuditLog)/.test(name) ? bits | permission : bits,0n)
@@ -83,7 +83,7 @@ export async function grantVerification(db,member,config,auditReason=reason) {
 
 export async function publishVerification(guild,db) {
   const config = db.config(guild.id,'verification')
-  if (!config.enabled || !config.channel) return null
+  if (!config.enabled || !config.channel || config.verifiedRole === config.unverifiedRole) return null
   const channel = await guild.channels.fetch(config.channel,{force:true})
   if (!channel?.isSendable() || channel.isThread() ||
       !await memberRole(guild,config.verifiedRole,db) ||
@@ -124,10 +124,16 @@ export function attachVerification(client,db) {
     const {guild} = member
     const config = db.config(guild.id,'verification')
     if (!config.enabled || !config.unverifiedRole || member.user.bot || quarantined(db,guild,member) || member.roles.cache.has(config.verifiedRole)) return
+    const key = guild.id + ':' + member.id
+    if (roleChanges.has(key)) return
+    roleChanges.add(key)
     try {
       const role = await memberRole(guild,config.unverifiedRole,db)
-      if (role && role.id !== config.verifiedRole) await member.roles.add(role,reason)
+      if (role && role.id !== config.verifiedRole &&
+          JSON.stringify(config) === JSON.stringify(db.config(guild.id,'verification')) &&
+          !quarantined(db,guild,member) && !member.roles.cache.has(config.verifiedRole)) await member.roles.add(role,reason)
     } catch (error) { console.error('Unverified role assignment failed:',error.code ?? error.name) }
+    finally { roleChanges.delete(key) }
   })
   client.on(Events.InteractionCreate,async interaction => {
     if (!interaction.inCachedGuild() || !(interaction.isButton() || interaction.isModalSubmit()) ||
@@ -150,7 +156,11 @@ export function attachVerification(client,db) {
         return await reply('This verification panel is inactive.')
       const now = Date.now()
       let session = sessions.get(key)
-      if (session?.until <= now) { sessions.delete(key); session = null }
+      const policy = JSON.stringify(config)
+      if (session && (session.until <= now || (!session.blocked && (session.panel !== panel.message || session.policy !== policy)))) {
+        sessions.delete(key)
+        session = null
+      }
       if (session?.blocked) return await reply('Too many attempts. Try again in 10 minutes.')
       if (action.startsWith('answer:') && interaction.isButton()) {
         if (config.mode !== 'captcha' || !session || action !== 'answer:'+session.id) return await reply('This challenge expired. Press Verify to start again.')
@@ -171,11 +181,14 @@ export function attachVerification(client,db) {
       if (start && config.mode === 'captcha') {
         if (session?.issued > now-5000) return await reply('Wait a few seconds before requesting another challenge.')
         const challenge = captcha()
-        session = {id:randomUUID(),answer:challenge.answer,failures:session?.failures ?? 0,issued:now,until:now+config.minutes*60000}
+        session = {id:randomUUID(),answer:challenge.answer,panel:panel.message,policy,failures:session?.failures ?? 0,issued:now,until:now+config.minutes*60000}
         sessions.set(key,session)
         return await interaction.editReply(messageCard('Verification Challenge','Read the six digits, then press **Enter Code**.',{
           icon:'shield',actions:[button('answer:'+session.id,'Enter Code')],media:'verification.png',files:[{attachment:challenge.image,name:'verification.png'}]}))
       }
+      if (policy !== JSON.stringify(db.config(guild.id,'verification')) ||
+          panel.message !== db.recovery(guild.id,'verificationPanel')?.message)
+        return await reply('Verification settings changed. Press Verify to try again.')
       if (submit && interaction.fields.getTextInputValue('code').trim() !== session.answer) {
         session.failures++
         if (session.failures < config.attempts) return await reply('That code is incorrect. Try again. Attempts left: ' + (config.attempts-session.failures) + '.')

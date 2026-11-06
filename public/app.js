@@ -341,14 +341,22 @@ function wireHoneyPot(path,id,config) {
     } finally { save.disabled = toggle.disabled = false }
   }
 }
+function flowStep(number,title,description,contents,classes='') {
+  return '<section class="card settings-section raid-step ' + classes +
+      '"><div class="raid-step-heading"><span aria-hidden="true">' + number + '</span><div><h3>' + title + '</h3><p>' + description +
+      '</p></div></div><div class="fields">' + contents + '</div></section>'
+}
 function verificationForm(config,owner,choices) {
   const field = (name,label,items) => '<div class="discord-field"><span>' + label + '</span>' + discordSelect(name,items,[config[name]]) + '</div>'
   const channels = choices.channels.filter(channel => channel.sendable)
-  return '<form id="settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') + '><section class="card settings-section"><h3>Verification Setup</h3><p>Give the Verified Role access to your member channels in Discord. Keep the verification channel visible to new members.</p><div class="fields"><label>Verification Mode<select name="mode">' + options({button:'One-click verification',captcha:'Image CAPTCHA'},config.mode) + '</select></label>' +
-    field('channel','Verification Channel',channels) + field('verifiedRole','Verified Role',choices.roles) +
-    field('unverifiedRole','Unverified Role (optional)',choices.roles) + durationField('minAge','Minimum Account Age',config.minAge,0,365,'days') + '</div>' +
-    (owner ? '<button class="button primary stack" type="button" id="publish-verification">Publish Verification Panel</button><p id="verification-publish-result" role="status"></p>' : '') +
-    '</section><section class="card settings-section" id="captcha-settings"><h3>CAPTCHA Settings</h3><div class="fields"><label>Max Attempts<input name="attempts" type="number" min="1" max="5" required value="' + config.attempts + '"></label>' + durationField('minutes','Challenge Duration',config.minutes,1,10,'minutes') + '<label>After Failed Attempts<select name="failure">' + options({retry:'Keep Unverified',kick:'Kick Member'},config.failure,true) + '</select></label></div></section><section class="card settings-section"><h3>Discord Logging</h3>' + field('alertChannel','Logging Channel',channels) + '</section></fieldset><p id="notice" role="status"></p></form>'
+  const captcha = '<div id="captcha-settings" class="fields flow-subfields"' + (config.mode === 'captcha' ? '' : ' hidden') + '><label>Max Attempts<input name="attempts" type="number" min="1" max="5" required value="' + config.attempts + '"></label>' + durationField('minutes','Challenge Duration',config.minutes,1,10,'minutes') + '<label>After Failed Attempts<select name="failure">' + options({retry:'Keep Unverified',kick:'Kick Member'},config.failure,true) + '</select></label></div>'
+  const publish = owner ? '<div class="flow-subfields"><button class="button primary" type="button" id="publish-verification">Publish Verification Panel</button><p id="verification-publish-result" role="status"></p></div>' : ''
+  return '<form id="settings"><fieldset class="settings-panels raid-flow"' + (owner ? '' : ' disabled') + '>' +
+    flowStep(1,'Set the Entry Channel','Keep the verification channel visible to new members.',field('channel','Verification Channel',channels) + durationField('minAge','Minimum Account Age',config.minAge,0,365,'days')) +
+    flowStep(2,'Choose a Verification Method','Use a single click or require members to solve an image CAPTCHA.','<label>Verification Mode<select name="mode">' + options({button:'One-click verification',captcha:'Image CAPTCHA'},config.mode) + '</select></label>' + captcha) +
+    flowStep(3,'Assign Member Roles','Give the Verified Role access to your member channels in Discord.',field('verifiedRole','Verified Role',choices.roles) + field('unverifiedRole','Unverified Role (optional)',choices.roles)) +
+    flowStep(4,'Publish and Log','Post the verification panel and choose where to send verification results.',field('alertChannel','Logging Channel',channels) + publish) +
+    '</fieldset><p id="notice" role="status"></p></form>'
 }
 function appealsPanel(path,config,channels) {
   const panel = document.querySelector('#appeals-panel')
@@ -886,13 +894,10 @@ function form(kind, config, owner) {
   if (kind === 'raid') {
     const detection = baseFields.filter(([key]) => ['threshold','window','age'].includes(key))
     const reactions = baseFields.filter(field => !detection.includes(field))
-    const step = (number,title,description,contents,classes='') => '<section class="card settings-section raid-step ' + classes +
-      '"><div class="raid-step-heading"><span aria-hidden="true">' + number + '</span><div><h3>' + title + '</h3><p>' + description +
-      '</p></div></div><div class="fields">' + contents + '</div></section>'
     return '<form id="settings"><fieldset class="settings-panels raid-flow"' + disabled + '>' +
-      step(1,'Detect a Join Surge','Choose how many joins within a time window trigger Anti-Raid.',fields(detection),'raid-detection') +
-      step(2,'Apply a Response','Choose what happens to eligible arrivals while protection is active.',response + fields(reactions)) +
-      step(3,'Notify Your Team','Send detections to a Discord channel and optionally ping roles.',fields(alertFields),'discord-alerts') +
+      flowStep(1,'Detect a Join Surge','Choose how many joins within a time window trigger Anti-Raid.',fields(detection),'raid-detection') +
+      flowStep(2,'Apply a Response','Choose what happens to eligible arrivals while protection is active.',response + fields(reactions)) +
+      flowStep(3,'Notify Your Team','Send detections to a Discord channel and optionally ping roles.',fields(alertFields),'discord-alerts') +
       '</fieldset><p role="status" id="notice"></p></form>'
   }
   return '<form id="settings"><fieldset class="settings-panels"' + disabled + '>' + (kind === 'automod' ? '' : '<section class="card settings-section"><h3>' + sections[kind] + ' Policy' + '</h3><p>' + (owner ? (kind === 'nuke' ? 'The default threshold applies to monitored actions without a per-action limit. Individual rules can override it.' : 'Set detection thresholds and how Blackridge responds.') : 'Only the server owner can change this policy.') + '</p><div class="fields">' + fields(baseFields) + response + '</div></section>') + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord Alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '</fieldset><p role="status" id="notice"></p></form>'

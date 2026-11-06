@@ -436,3 +436,6 @@ body.has-workspace .sidebar{overflow:auto}
 .premium-servers .server-avatar{flex:none;margin:0}
 #report-result:empty,#honeypot-result:empty,#appeals-panel form [role=status]:empty{display:none}
 @media(max-width:600px){.premium-picker{margin-top:28px}.premium-servers .premium-server{flex-basis:100%}}
+
+.flow-subfields{grid-column:1 / -1}
+.flow-subfields[hidden]{display:none}

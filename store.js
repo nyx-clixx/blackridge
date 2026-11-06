@@ -53,7 +53,7 @@ export function matchesPermit(permit,userId,guildId,roles) {
 function normalizePermits(config) {
   if (Array.isArray(config.entries)) {
     return {enabled:config.enabled ?? true,entries:config.entries.filter(entry =>
-      !(entry.name === '/kick' && entry.commands.length === 1 && entry.commands[0] === 'kick' && !entry.bypasses.length)
+      !(entry.name === '/kick' && entry.commands.length === 1 && entry.commands[0] === 'kick' && !entry.bypasses.length && !entry.appealsManager && !entry.dashboardAccess)
     ).map(entry => ({...entry,commands:[...new Set(entry.commands.map(name =>
       name === 'lock' || name === 'unlock' ? name + '-channel' : name
     ))]}))}

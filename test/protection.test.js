@@ -6,7 +6,7 @@ import { attachProtection, isDestructive, recordHit } from '../bot.js'
 import { createStore, guildPlan, policies, spamFilters } from '../store.js'
 import { attachModeration, canModerate, syncModerationCommands } from '../moderation.js'
 import { recoveryTools } from '../recovery.js'
-import { attachVerification } from '../verification.js'
+import { attachVerification, grantVerification } from '../verification.js'
 import { appealMarker, canReviewAppeals, hasAppealableBan } from '../appeals.js'
 import { actionCard, memberAction, messageCard } from '../messages.js'
 
@@ -528,5 +528,95 @@ test('Report System delivers the selected reaction to the private review channel
   privateChannel = false
   await react(config.emoji,{...message,id:'1567348176866902123'},{...reporter,id:'1567348176866902124'})
   assert.equal(sent.length,1)
+})
+
+
+test('Role Gate still removes a gated role after the grantor leaves', async t => {
+  const db = createStore(':memory:')
+  const client = new EventEmitter()
+  client.user = {id:'bot'}
+  const cleanup = attachProtection(client,db)
+  t.after(() => { cleanup(); db.close() })
+  const role = '123456789012345678'
+  const removed = []
+  const guild = {id:'guild',ownerId:'owner',roles:{cache:new Map()},members:{fetch:async ({user}) => {
+    if (user === 'actor') throw Object.assign(new Error('Unknown Member'),{code:10007})
+    return {roles:{cache:new Map([[role,{}]]),remove:async id => removed.push(id)}}
+  }}}
+  db.save(guild.id,'nuke',{enabled:true,guards:{gate:{enabled:true,action:'kick',
+    gates:[{role,required:['123456789012345679']}]}}},'owner')
+  client.emit(Events.GuildAuditLogEntryCreate,{
+    id:'left',executorId:'actor',targetId:'target',action:A.MemberRoleUpdate,createdTimestamp:Date.now(),
+    changes:[{key:'$add',new:[{id:role}]}]
+  },guild)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(removed,[role])
+  assert.ok(db.recent(guild.id).some(event => JSON.stringify(event).includes('actor is no longer in the server')))
+})
+
+test('Checkpoint enforces bot addition rules after the inviter leaves', async t => {
+  const db = createStore(':memory:')
+  const client = new EventEmitter()
+  client.user = {id:'bot'}
+  const cleanup = attachProtection(client,db)
+  t.after(() => { cleanup(); db.close() })
+  const kicked = []
+  const guild = {id:'guild',ownerId:'owner',members:{fetch:async ({user}) => {
+    if (user === 'inviter') throw Object.assign(new Error('Unknown Member'),{code:10007})
+    return {id:user,guild,user:{bot:true,fetchFlags:async () => new Set()},kickable:true,kick:async () => kicked.push(user)}
+  }}}
+  db.save(guild.id,'checkpoint',{enabled:true,unverifiedBot:{action:'kick',quarantine:true}},'owner')
+  client.emit(Events.GuildAuditLogEntryCreate,{
+    id:'bot-add',executorId:'inviter',targetId:'target',action:A.BotAdd,createdTimestamp:Date.now()
+  },guild)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(kicked,['target'])
+})
+
+test('permit migration preserves management grants on permits named /kick', t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  const grant = {name:'/kick',users:['123456789012345678'],roles:[],commands:['kick'],bypasses:[],dashboardAccess:true}
+  db.save('guild','permits',{enabled:true,entries:[grant]},'owner')
+  assert.deepEqual(db.config('guild','permits').entries,[grant])
+})
+
+test('verification does not assign an unverified role after the owner disables it', async t => {
+  const db = createStore(':memory:')
+  const client = new EventEmitter()
+  const cleanup = attachVerification(client,db)
+  t.after(() => { cleanup(); db.close() })
+  const role = {id:'unverified',editable:true,permissions:{bitfield:0n}}
+  const guild = {id:'guild',channels:{cache:[]},roles:{fetch:async () => {
+    db.save('guild','verification',{enabled:false},'owner')
+    return role
+  }}}
+  const assigned = []
+  db.save('guild','verification',{enabled:true,verifiedRole:'verified',unverifiedRole:role.id},'owner')
+  client.emit(Events.GuildMemberAdd,{id:'member',guild,user:{bot:false},
+    roles:{cache:new Map(),add:async value => assigned.push(value.id)}})
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(assigned,[])
+})
+
+test('backup storage retains the latest three snapshots per server', t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  db.saveBackup('other',{name:'private'})
+  for (let n=1;n<=4;n++) db.saveBackup('guild',{name:'snapshot '+n})
+  const ids = db.backups('guild').map(row => row.id)
+  assert.equal(ids.length,3)
+  assert.deepEqual(ids.map(id => db.backup('guild',id).name),['snapshot 4','snapshot 3','snapshot 2'])
+  assert.equal(db.backup('guild',db.backups('other')[0].id),null)
+})
+
+test('verification cannot bypass an active quarantine after the configured role changes', async t => {
+  const db = createStore(':memory:')
+  t.after(() => db.close())
+  db.saveRecovery('guild','quarantineRole',{role:'new-role'})
+  db.saveRecovery('guild','quarantine:member',{role:'old-role'})
+  const member = {id:'member',guild:{id:'guild'},user:{bot:false},isCommunicationDisabled:() => false,
+    roles:{cache:new Map([['old-role',{}]])}}
+  assert.match(await grantVerification(db,member,{enabled:true}),/quarantined/)
 })
 

@@ -105,6 +105,10 @@ export function attachProtection(client, db) {
     const config = db.config(guild.id,'permits')
     return config.enabled ? config.entries.filter(permit => permit.bypasses.includes(kind)) : []
   }
+  const fetchMember = (guild,id) => guild.members.fetch({user:id,force:true}).catch(error => {
+    if (error.code !== 10007) throw error
+    return null
+  })
   const bypass = (guild,kind,id,member) => bypasses(guild,kind).some(permit => matchesPermit(permit,id,guild.id,member?.roles.cache))
   const cleanup = setInterval(() => {
     const now = Date.now()
@@ -345,9 +349,9 @@ export function attachProtection(client, db) {
       if (Array.isArray(added) && added.length) {
         const gates = (guards.gate?.gates ?? []).filter(gate => added.some(role => role.id === gate.role))
         if (guards.gate?.enabled && gates.length) {
-          const grantor = await guild.members.fetch({user:actor,force:true})
+          const grantor = await fetchMember(guild,actor)
           const unauthorized = gates.filter(gate => !gate.required.some(id => id !== guild.id && id !== gate.role &&
-            grantor.roles.cache.has(id) && (actor !== entry.targetId || !added.some(role => role.id === id))))
+            grantor?.roles.cache.has(id) && (actor !== entry.targetId || !added.some(role => role.id === id))))
           if (unauthorized.length) hit('gate',async () => {
             const target = await guild.members.fetch({user:entry.targetId,force:true})
             for (const id of new Set(unauthorized.map(gate => gate.role))) {
@@ -424,7 +428,7 @@ export function attachProtection(client, db) {
       if (previous) await previous
       const needsMember = hits.some(({rule}) => (rule.action ?? cfg.action) !== 'log' || rule.escalateAfter) ||
         bypasses(guild,'nuke').some(permit => permit.roles.length)
-      const member = needsMember ? await guild.members.fetch({user:actor,force:true}) : null
+      const member = needsMember ? await fetchMember(guild,actor) : null
       const current = db.config(guild.id,'nuke')
       if (!current.enabled || current.action !== cfg.action || JSON.stringify(current.guards) !== JSON.stringify(cfg.guards) ||
           JSON.stringify(current.rates) !== JSON.stringify(cfg.rates) || current.trusted.split(',').some(id => id.trim() === actor) ||
@@ -442,6 +446,10 @@ export function attachProtection(client, db) {
       log(guild,'nuke',detail + ' · threshold reached')
       alert(guild,'nuke',cfg,'Blackridge Anti-Nuke: ' + detail)
       if (action === 'log') return
+      if (!member) {
+        log(guild,'nuke','Response skipped because the actor is no longer in the server: ' + actor)
+        return
+      }
       if (action !== 'strip') {
         await enforce(member,'nuke',{...current,action})
         return
@@ -470,20 +478,21 @@ export function attachProtection(client, db) {
       const now = Date.now()
       if (seen.has(key) || now-entry.createdTimestamp > 120000) return
       seen.set(key,now+120000)
-      const inviter = await guild.members.fetch({user:entry.executorId,force:true})
-      if (bypass(guild,'checkpoint',inviter.id,inviter)) return
-      const target = await guild.members.fetch({user:entry.targetId,force:true})
-      if (!target.user.bot) return
+      const inviterId = entry.executorId
+      const inviter = await fetchMember(guild,inviterId)
+      if (bypass(guild,'checkpoint',inviterId,inviter)) return
+      const target = await fetchMember(guild,entry.targetId)
+      if (!target?.user.bot) return
       const flags = await target.user.fetchFlags(true)
       const verified = flags.has('VerifiedBot')
       const current = db.config(guild.id,'checkpoint')
       const rule = verified ? current.verifiedBot : current.unverifiedBot
-      if (!current.enabled || !rule || rule.action === 'off' || bypass(guild,'checkpoint',inviter.id,inviter)) return
-      const detail = 'Checkpoint detected a ' + (verified ? 'verified' : 'non-verified') + ' bot added by ' + inviter.id
+      if (!current.enabled || !rule || rule.action === 'off' || bypass(guild,'checkpoint',inviterId,inviter)) return
+      const detail = 'Checkpoint detected a ' + (verified ? 'verified' : 'non-verified') + ' bot added by ' + inviterId
       log(guild,'checkpoint',detail)
       alert(guild,'checkpoint',current,detail)
       await enforce(target,'checkpoint',{...current,action:rule.action})
-      if (rule.quarantine && inviter.id !== guild.ownerId) {
+      if (rule.quarantine && inviter && inviterId !== guild.ownerId) {
         await isolate(inviter,current,'Blackridge Checkpoint bot addition','checkpoint')
       }
     })
