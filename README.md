@@ -8,15 +8,22 @@ Blackridge combines a Discord security bot, public landing page, and OAuth2 mana
 2. Run `pnpm install --frozen-lockfile`, then copy `.env.example` to `.env`.
 3. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications). Add `http://localhost:3000/auth/callback` as an OAuth2 redirect URI. Enable the **Server Members Intent** on the Bot tab.
 4. Set `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, and `DISCORD_BOT_TOKEN` in `.env`. Run `pnpm start` and visit [Blackridge locally](http://localhost:3000).
-5. Use **Add to Discord**, then place the bot role above the roles it should be able to moderate. Sign in and select the server. Owners edit policies. Managers can view policies and incident history.
+5. Use **Add to Discord**, then place the bot role above the roles it should be able to moderate. Sign in and select the server. Owners edit policies and can grant read-only dashboard access with a permit.
 
 The landing page and dashboard sign-in screen can be previewed before supplying Discord credentials. Run the automated checks with `pnpm test`.
 
 ## Protection behavior
 
 - **Anti-Nuke** counts relevant audit events per executor within a sliding window. It tracks channel and role deletions, dangerous role permission additions or assignments, bot additions, kicks, and bans. The server owner, Blackridge, and configured trusted accounts are exempt. The response can log, kick, or remove editable roles that confer dangerous permissions.
-- **Anti-Raid** counts joins across the server. At the threshold it starts a protection window and applies the chosen response to qualifying arrivals from that point forward. The account age filter applies to the response. A zero-day filter includes all account ages. Timeouts last ten minutes.
-- Both policies begin in log-only mode. Enforcement depends on the bot’s permissions and role hierarchy. Anti-Nuke responds after Discord records a change, so deleted channels and roles are not restored. Detection windows and sessions reset on process restart.
+- **Anti-Raid** counts joins across the server. At the threshold it starts a protection window and applies the chosen response to qualifying arrivals from that point forward. The account age filter applies to the response. A zero-day filter includes all account ages. Timeout duration is configurable.
+- Both modules start disabled with a log-only response selected. Enforcement depends on Discord permissions and role hierarchy. Anti-Nuke responds to Discord audit events. Server Backups can recreate supported roles and channels from a snapshot. In-memory detection windows reset on restart. Encrypted dashboard sessions persist until expiry when the database and encryption secret persist.
+
+- **Auto Moderation** supports combined deletion, warnings, and timeouts with optional point escalation.
+- **Honeypot** posts a warning to a dedicated text channel before acting on qualifying messages there.
+- **Report System** routes an emoji reaction or Discord message context command to a private review channel.
+- **Moderation** includes a channel slowmode command. Delegated users need the matching permit and Discord permission.
+
+See the [dashboard documentation](https://blackridgebot.xyz/documentation), [Terms of Service](https://blackridgebot.xyz/terms), and [Privacy Policy](https://blackridgebot.xyz/privacy).
 
 ## Deploy to Railway
 

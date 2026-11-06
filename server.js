@@ -489,8 +489,12 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   }
   db.save(req.guild.id,kind,config,req.session.user.id)
   if (['moderation','reports'].includes(kind) && parsed.data.enabled !== undefined) {
-    try { await syncModerationCommands(activeGuild(req.guild.id),db) }
-    catch { return res.status(503).json({error:'Settings saved, but Discord could not refresh the command list. Save again to retry.'}) }
+    try { await syncModerationCommands(activeGuild(req.guild.id),db,false,{reportsOnly:kind === 'reports'}) }
+    catch {
+      const warning = 'Settings saved, but Discord could not refresh the command list. Save again to retry.'
+      if (kind === 'reports') return res.json({ok:true,warning})
+      return res.status(503).json({error:warning})
+    }
   }
   res.json({ok:true})
 })

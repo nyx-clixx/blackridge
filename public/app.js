@@ -251,25 +251,34 @@ function reportSettings(config,owner,choices) {
     '><section class="card settings-section"><h3>Member Reports</h3><p>Members can use Apps → Report to Moderators or react with the emoji you choose. Reports include a link to the message and go to a private review channel.</p>' +
     '<div class="fields"><div class="discord-field"><span>Private Review Channel</span>' + discordSelect('channel',channels,[config.channel]) +
     '</div><label>Report Emoji (optional)<input name="emoji" maxlength="100" placeholder="🚩 or custom emoji ID" value="' + esc(config.emoji) + '"></label></div>' +
-    '<label class="toggle stack"><input type="checkbox" role="switch" name="enabled"' + (config.enabled ? ' checked' : '') + '> Enable Report System</label></section></fieldset>' +
+    '</section></fieldset>' +
     (owner ? '<button class="button primary stack" type="submit">Save Report Settings</button>' : '') +
     '<p role="status" id="report-result"></p></form>'
 }
-function wireReports(path) {
+function wireReports(path,config) {
   const form = document.querySelector('#report-settings')
+  const toggle = document.querySelector('[form=report-settings]')
+  const button = form.querySelector('button[type=submit]')
+  if (!button || !toggle) return
+  toggle.addEventListener('change',() => {
+    if (!form.reportValidity()) { toggle.checked = config.enabled; return }
+    form.requestSubmit(button)
+  })
   form.onsubmit = async event => {
     event.preventDefault()
-    const button = event.submitter
-    if (!button || button.disabled) return
+    if (button.disabled) return
     const data = new FormData(form)
     const result = form.querySelector('#report-result')
-    button.disabled = true
+    const payload = {enabled:toggle.checked,channel:data.get('channel') ?? '',emoji:data.get('emoji') ?? ''}
+    button.disabled = toggle.disabled = true
     try {
-      await request(path + '/reports',{method:'PUT',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({enabled:data.has('enabled'),channel:data.get('channel') ?? '',emoji:data.get('emoji') ?? ''})})
-      result.textContent = 'Report settings saved.'
-    } catch (error) { result.textContent = error.message }
-    finally { button.disabled = false }
+      const saved = await request(path + '/reports',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      Object.assign(config,payload)
+      result.textContent = saved.warning ?? ''
+    } catch (error) {
+      toggle.checked = config.enabled
+      result.textContent = error.message
+    } finally { button.disabled = toggle.disabled = false }
   }
 }
 function honeyPotForm(config,owner,choices) {
@@ -288,7 +297,7 @@ function honeyPotForm(config,owner,choices) {
     '<div class="fields stack">' + checkbox('delete','Delete Message') + checkbox('warn','Warn Member') + '</div></section>' +
     '<section class="card settings-section"><h3>Discord Logging</h3><div class="fields">' + field('alertChannel','Logging Channel (optional)',choices.channels.filter(channel => channel.sendable)) +
     '</div></section></fieldset>' + (owner ? '<button class="button primary stack" type="submit">Save Honeypot</button>' : '') +
-    '<p id="honeypot-result" role="status">' + (config.enabled ? 'Honeypot is active.' + link : 'Honeypot is disabled.') + '</p></form>'
+    '<p id="honeypot-result" role="status">' + link + '</p></form>'
 }
 function wireHoneyPot(path,id,config) {
   const form = document.querySelector('#honeypot-settings')
@@ -318,8 +327,8 @@ function wireHoneyPot(path,id,config) {
     save.disabled = toggle.disabled = true
     try {
       const saved = await request(path + '/honeypot',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-      Object.assign(config,payload)
-      result.textContent = saved.warning ?? (payload.enabled ? 'Honeypot is active. ' : 'Honeypot is disabled.')
+      Object.assign(config,payload,{panelId:saved.panelId})
+      result.textContent = saved.warning ?? ''
       if (saved.panelId) {
         const link = document.createElement('a')
         link.href = 'https://discord.com/channels/' + id + '/' + payload.channel + '/' + saved.panelId
@@ -350,10 +359,10 @@ function appealsPanel(path,config,channels) {
       '</select></label></div><div class="actions"><button type="button" class="button small" data-question="up">Move Up</button><button type="button" class="button small" data-question="down">Move Down</button><button type="button" class="button small" data-question="remove">Remove</button></div></div>'
   }
   const channelChoices = channels.filter(channel => channel.sendable)
-  panel.innerHTML = (config ? '<form class="card stack"><h3>Appeal Form</h3><p>Add up to five questions. Drag to reorder, or use Move Up and Move Down.</p><div class="settings-panels" id="appeal-questions">' +
-    config.questions.map(row).join('') + '</div><button type="button" class="button stack" id="add-appeal-question">Add Question</button><div class="fields"><div class="discord-field"><span>Private Review Channel</span>' +
+  panel.innerHTML = (config ? '<form class="settings-panels"><section class="card settings-section"><h3>Appeal Form</h3><p>Add up to five questions. Drag to reorder, or use Move Up and Move Down.</p><div class="settings-panels" id="appeal-questions">' +
+    config.questions.map(row).join('') + '</div><button type="button" class="button stack" id="add-appeal-question">Add Question</button></section><section class="card settings-section"><h3>Appeal Channels</h3><div class="fields"><div class="discord-field"><span>Private Review Channel</span>' +
     discordSelect('channel',channelChoices,[config.channel]) + '</div><div class="discord-field"><span>Appeal Log Channel</span>' + discordSelect('alertChannel',channelChoices,[config.alertChannel]) +
-    '</div></div><p>Deny View Channel to @everyone on both channels. The log channel receives submission and decision notices.</p><p role="status"></p></form>' : '') +
+    '</div></div><p>Deny View Channel to @everyone on both channels. The log channel receives submission and decision notices.</p></section><p role="status"></p></form>' : '') +
     '<section class="card stack"><h3>Appeal Inbox</h3><div id="appeal-inbox"></div><p id="appeal-status" role="status"></p></section>'
   const form = panel.querySelector('form')
   const inbox = panel.querySelector('#appeal-inbox')
@@ -501,7 +510,7 @@ function automodControls(config,paid) {
       esc((config[field[0]] ?? '').split(',').map(value => value.trim()).filter(Boolean).join('\n')) + '</textarea></label>' : ''
     const threshold = '<label>' + (spam ? 'Messages per member' : limits[key] ?? 'Trigger threshold') +
       '<input type="number" required min="' + (spam ? 3 : 1) + '" max="' + (spam ? 30 : 4000) + '" name="' + (spam ? 'threshold' : key + '-limit') + '" value="' + esc(rule?.limit ?? limit) + '"></label>'
-    return '<article class="automod-card" data-automod-rule="' + key + '">' + head + '<p data-rule-summary>' + (enabled ? selected.map(action => automodActions[action][0]).join(' · ') : 'Disabled') +
+    return '<article class="automod-card" data-automod-rule="' + key + '">' + head + '<p data-rule-summary>' + (enabled ? selected.map(action => automodActions[action][0]).join(' · ') : '') +
       '</p></div><label class="nuke-switch"><input type="checkbox" role="switch" name="' + key + '-enabled" aria-label="Enable ' + label + '"' + (enabled ? ' checked' : '') + '><span aria-hidden="true"></span></label></div>' +
       '<button type="button" class="button small automod-edit" data-edit-rule aria-label="Edit ' + label + '">Edit Rule</button>' +
       '<dialog class="nuke-dialog automod-dialog" aria-labelledby="automod-title-' + key + '"><header><h3 id="automod-title-' + key + '">' + label + '</h3><button type="button" class="button small" data-close-rule aria-label="Close rule editor">×</button></header>' +
@@ -531,7 +540,7 @@ function wireAutomodRules(form) {
         enabled.checked = false
       } else if (editing && event.target.checked && selected.length === 1) enabled.checked = true
       card.querySelector('[data-rule-summary]').textContent = enabled.checked ?
-        selected.map(action => automodActions[action][0]).join(' · ') : 'Disabled'
+        selected.map(action => automodActions[action][0]).join(' · ') : ''
     })
   }
 }
@@ -693,7 +702,7 @@ async function premium(me) {
     request('/api/billing').catch(() => ({}))
   ]) : [[],{}]
   const servers = guilds.filter(guild => guild.owner && guild.installed)
-  const picker = servers.length ? '<section class="stack billing-panel"><h3>Choose a Server</h3><div class="servers premium-servers">' +
+  const picker = servers.length ? '<section class="billing-panel premium-picker"><h3>Choose a Server</h3><div class="servers premium-servers">' +
     servers.map(guild => '<a class="card premium-server" href="/dashboard/' + encodeURIComponent(guild.id) + '/premium"><span class="server-avatar">' +
       (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(guild.id) + '/' + encodeURIComponent(guild.icon) + '.png?size=64">' : esc(guild.name.slice(0,2).toUpperCase())) +
       '</span><span><strong>' + esc(guild.name) + '</strong><small>' + (guild.plan === 'free' ? 'Free' : planName(guild.plan)) + '</small></span><span class="premium-server-arrow" aria-hidden="true">›</span></a>').join('') +
@@ -701,7 +710,7 @@ async function premium(me) {
   const subscriptions = billing.subscriptions?.length ? '<section class="card stack billing-panel"><h3>Your Subscriptions</h3>' +
     billing.subscriptions.map(row => '<div class="actions stack"><span>' + esc(row.name) + ' · ' + planName(row.plan) +
       '</span><button type="button" class="button small" data-portal="manage" data-guild="' + esc(row.guild) + '"' + (billing.enabled ? '' : ' disabled') + '>Manage Billing</button></div>').join('') + '</section>' : ''
-  shell('<h2>Blackridge Premium</h2>' + premiumPlans(guilds.map(guild => guild.plan)) + picker + subscriptions + '<p id="billing-status" role="status"></p>')
+  shell('<h2 class="premium-heading">Blackridge Premium</h2>' + premiumPlans([]) + picker + subscriptions + '<p id="billing-status" role="status"></p>')
   wireBilling()
 }
 const planName = plan => plan === 'custom' ? 'Custom Bot' : 'Premium'
@@ -1136,7 +1145,12 @@ async function dashboard() {
     const linkedSwitch = Object.hasOwn(settingFields,section) || ['permits','verification'].includes(section)
     const serviceSwitch = !backupLocked && ['backup','moderation','lockdown'].includes(section)
     let switchControl = ''
-    if (section === 'honeypot') switchControl = '<label class="module-switch"><input type="checkbox" role="switch" form="honeypot-settings" aria-label="Honeypot"' + (data.config.honeypot.enabled ? ' checked' : '') + (data.owner ? '' : ' disabled') + '><span></span></label>'
+    if (['honeypot','reports'].includes(section)) {
+      const settingsId = section === 'reports' ? 'report-settings' : 'honeypot-settings'
+      switchControl = '<label class="module-switch"><input type="checkbox" role="switch" form="' + settingsId +
+        '" aria-label="' + sections[section] + '"' + (data.config[section].enabled ? ' checked' : '') +
+        (data.owner ? '' : ' disabled') + '><span></span></label>'
+    }
     if (linkedSwitch || serviceSwitch) {
       const field = '<label class="module-switch"><input type="checkbox" role="switch" name="enabled" aria-label="' + sections[section] + '"' + (linkedSwitch ? ' form="settings"' : '') + (data.config[section].enabled ? ' checked' : '') + (data.owner ? '' : ' disabled') + '><span></span></label>'
       switchControl = serviceSwitch ? '<form id="module-toggle">' + field + '<p class="error" role="status"></p></form>' : field
@@ -1146,16 +1160,16 @@ async function dashboard() {
     const activity = '<section class="card stack"><h3>' + 'Event History' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
-    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','appeals','verification','honeypot','reports','custom'].map(key => {
-      const restricted = ['permits','custom'].includes(key) && !data.owner ? 'Owner only' : key === 'appeals' && !data.appealsManager ? 'Manager access required' : ''
-      const enabled = key === 'appeals' ? data.appealsConfigured : key === 'custom' ? data.customConnected : data.config[key]?.enabled
+    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','appeals','verification','honeypot','reports'].map(key => {
+      const restricted = key === 'permits' && !data.owner ? 'Owner only' : key === 'appeals' && !data.appealsManager ? 'Manager access required' : ''
+      const enabled = key === 'appeals' ? data.appealsConfigured : data.config[key]?.enabled
       const state = enabled ? '<i class="dot"></i> Enabled' : '<i class="dot disabled-dot"></i> Disabled'
       return '<article class="card compact-module"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + (key === 'backup' ? crown : '') + '</h3><span class="badge">' + state + '</span></div></div>' + (restricted ? '<span class="button module-configure" aria-disabled="true">' + restricted + '</span>' : '<a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a>') + '</article>'
     }).join('')
     const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('verification') + navigation('checkpoint') + navigation('honeypot') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + navigation('reports') + (data.appealsManager ? navigation('appeals') : '') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
-    if (section === 'reports') wireReports(path)
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('honeypot') + navigation('verification') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('reports') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    if (section === 'reports') wireReports(path,data.config.reports)
     if (section === 'honeypot') wireHoneyPot(path,id,data.config.honeypot)
     if (section === 'premium') wireBilling(path,id)
     if (section === 'appeals') appealsPanel(path,data.config.appeals,choices?.channels ?? [])

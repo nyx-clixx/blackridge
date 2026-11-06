@@ -38,17 +38,18 @@ const commands = commandNames.map(name => {
 })
 const reportCommand = 'Report to Moderators'
 const commandSync = new Map()
-export function syncModerationCommands(guild,db,forceDisabled = false) {
+export function syncModerationCommands(guild,db,forceDisabled = false,{reportsOnly = false} = {}) {
   const previous = commandSync.get(guild.id) ?? Promise.resolve()
   const operation = previous.catch(() => {}).then(async () => {
     const enabled = !forceDisabled && db.config(guild.id,'moderation').enabled
-    if (enabled) for (const command of commands) await guild.commands.create(command)
+    if (enabled && !reportsOnly) for (const command of commands) await guild.commands.create(command)
     const obsolete = enabled ? ['lock','unlock'] : [...commandNames,'lock','unlock']
     const reportsEnabled = !forceDisabled && db.config(guild.id,'reports').enabled
     const registered = await guild.commands.fetch()
     const report = [...registered.values()].find(command => command.type === ApplicationCommandType.Message && command.name === reportCommand)
     if (reportsEnabled && !report) await guild.commands.create({name:reportCommand,type:ApplicationCommandType.Message})
     if (!reportsEnabled && report) await report.delete()
+    if (reportsOnly) return
     for (const command of registered.values()) {
       if (command.type === ApplicationCommandType.ChatInput && obsolete.includes(command.name)) await command.delete()
     }
