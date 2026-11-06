@@ -69,7 +69,7 @@ const alerts = {alertChannel:z.union([snowflake,z.literal('')]).optional(),alert
 const botRule = z.strictObject({action:z.enum(['off','kick','ban']),quarantine:z.boolean()})
 const timedResponse = {tempBanMinutes:duration(1,1440,60).optional(),quarantineMinutes:duration(1,1440,60).optional()}
 export const spamFilters = ['mentions','files','images','stickers','invites','links','caps','newlines','length','emoji','headers','duplicate','multiUser','badWords','scam','nsfw','malicious','ghost']
-const filter = z.strictObject({action:z.enum(['off','log','delete','timeout']),limit:integer(1,4000),points:integer(0,100).optional()})
+const filter = z.strictObject({action:z.enum(['off','log','delete','warn','timeout']),limit:integer(1,4000),points:integer(0,100).optional(),response:z.enum(['log','delete','warn','timeout']).optional()})
 export const policies = {
   appeals:z.strictObject({questions:z.array(z.union([z.string().trim().min(1).max(45),z.strictObject({label:z.string().trim().min(1).max(45),type:z.enum(['paragraph','short','checkbox'])})])).min(1).max(5),channel:z.union([snowflake,z.literal('')]).optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
   verification:z.strictObject({
@@ -79,7 +79,7 @@ export const policies = {
     minutes:duration(1,10,60),failure:z.enum(['retry','kick'])
   }),
   permits: z.strictObject({enabled:z.boolean().optional(),entries:z.array(permit).max(30)}),
-  automod: z.strictObject({enabled:z.boolean(),threshold:integer(3,30),window:integer(2,60),action:z.enum(['log','timeout']),timeoutMinutes:duration(1,1440,60),filters:z.strictObject(Object.fromEntries(spamFilters.map(key => [key,key === 'malicious' ? filter.optional() : filter]))).optional(),badWords:z.string().max(500).optional(),nsfwDomains:z.string().max(500).optional(),maliciousDomains:z.string().max(500).optional(),spamPoints:integer(0,100).optional(),pointRules:z.array(z.strictObject({points:integer(1,1000),hours:duration(1,168,3600),action:z.enum(['timeout','kick','ban'])})).max(4).optional(),...alerts}),
+  automod: z.strictObject({enabled:z.boolean(),spamEnabled:z.boolean().optional(),threshold:integer(3,30),window:integer(2,60),action:z.enum(['log','delete','warn','timeout']),timeoutMinutes:duration(1,1440,60),filters:z.strictObject(Object.fromEntries(spamFilters.map(key => [key,key === 'malicious' ? filter.optional() : filter]))).optional(),badWords:z.string().max(500).optional(),nsfwDomains:z.string().max(500).optional(),maliciousDomains:z.string().max(500).optional(),spamPoints:integer(0,100).optional(),pointRules:z.array(z.strictObject({points:integer(1,1000),hours:duration(1,168,3600),action:z.enum(['timeout','kick','ban'])})).max(4).optional(),...alerts}),
   moderation:z.strictObject({enabled:z.boolean().optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
   lockdown:z.strictObject({enabled:z.boolean().optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
   backup:z.strictObject({enabled:z.boolean()}),

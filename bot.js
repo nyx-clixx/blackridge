@@ -89,6 +89,7 @@ export function attachProtection(client, db) {
   const joins = new Map()
   const messages = new Map()
   const repeats = new Map()
+  const automodDeletes = new Map()
   const checkpointJoins = new Map()
   const recentAccounts = new Map()
   const raids = new Map()
@@ -106,6 +107,7 @@ export function attachProtection(client, db) {
     for (const [key,hits] of longAudits) if (hits.at(-1) <= now-3600000) longAudits.delete(key)
     for (const [key,cached] of onboarding) if (cached.until <= now) onboarding.delete(key)
     for (const active of [raids,seen]) for (const [key,until] of active) if (until <= now) active.delete(key)
+    for (const [id,at] of automodDeletes) if (at <= now-60000) automodDeletes.delete(id)
     for (const [key,hits] of repeats) if (hits.at(-1).at <= now-60000) repeats.delete(key)
     for (const [key,hits] of checkpointJoins) if (hits.at(-1) <= now-3600000) checkpointJoins.delete(key)
     for (const [key,hits] of recentAccounts) if (hits.at(-1).at <= now-60000) recentAccounts.delete(key)
@@ -154,7 +156,7 @@ export function attachProtection(client, db) {
       log(member.guild,kind,'Timed out ' + member.id + ' for ' + minutes + ' minute(s) or longer',
         memberAction('timeout',{...data,actor:client.user?.id,until}))
       return
-    } else {
+    } else if (action !== 'warn' || kind !== 'automod') {
       log(member.guild,kind,'Response blocked by Discord permissions or role hierarchy for ' + member.id)
       return
     }
@@ -216,27 +218,29 @@ export function attachProtection(client, db) {
       if (bypass(guild,'automod',message.author.id,message.member)) return
       const key = guild.id + ':' + message.author.id
       const now = Date.now()
-      if (cfg.filters && Object.values(cfg.filters).some(rule => rule.action !== 'off')) {
-        const signals = messageSignals(message,repeats,now,cfg.window*1000,cfg)
-        const severity = {log:0,delete:1,timeout:2}
-        const matches = Object.entries(cfg.filters).filter(([name,rule]) => rule.action !== 'off' &&
-          (db.guildPlan(message.guild.id) !== 'free' || !premiumFilters.includes(name)) && signals[name] >= rule.limit)
-        if (matches.length) {
-          const [,rule] = matches.reduce((a,b) => severity[b[1].action] > severity[a[1].action] ? b : a)
-          log(guild,'automod','Matched ' + matches.map(([name]) => name).join(', ') + ' · member ' + message.author.id)
-          const escalated = await escalate(message,cfg,matches.reduce((total,[,match]) => total+(match.points ?? 0),0))
-          if (rule.action === 'delete') {
-            if (message.deletable) await message.delete()
-            else log(guild,'automod','Message deletion blocked by Discord permissions')
-          }
-          if (!escalated && rule.action === 'timeout') await enforce(message.member,'automod',{...cfg,action:'timeout'})
-          return
-        }
+      const plan = db.guildPlan(guild.id)
+      const rules = Object.entries(cfg.filters ?? {}).filter(([name,rule]) =>
+        name !== 'ghost' && rule.action !== 'off' && (plan !== 'free' || !premiumFilters.includes(name)))
+      const signals = rules.length ? messageSignals(message,repeats,now,cfg.window*1000,cfg) : {}
+      const matches = rules.filter(([name,rule]) => signals[name] >= rule.limit)
+      if (cfg.spamEnabled !== false && recordHit(messages,key,now,cfg.window*1000,cfg.threshold) >= cfg.threshold) {
+        messages.delete(key)
+        matches.push(['spam',{action:cfg.action,points:cfg.spamPoints}])
       }
-      if (recordHit(messages,key,now,cfg.window*1000,cfg.threshold) < cfg.threshold) return
-      messages.delete(key)
-      log(guild,'automod','Message rate exceeded by ' + message.author.id)
-      if (!await escalate(message,cfg,cfg.spamPoints) && cfg.action !== 'log') await enforce(message.member,'automod',cfg)
+      if (!matches.length) return
+      log(guild,'automod','Matched ' + matches.map(([name]) => name).join(', ') + ' · member ' + message.author.id)
+      const actions = new Set(matches.map(([,rule]) => rule.action))
+      if (actions.has('delete')) {
+        if (message.deletable) {
+          automodDeletes.set(message.id,now)
+          try { await message.delete() }
+          catch (error) { log(guild,'automod','Message deletion failed (' + (error.code || error.name) + ')') }
+        } else log(guild,'automod','Message deletion blocked by Discord permissions')
+      }
+      if (actions.has('warn')) await enforce(message.member,'automod',{...cfg,action:'warn'})
+      const points = matches.reduce((total,[,rule]) => total + (rule.points ?? 0),0)
+      if (!await escalate(message,cfg,points) && actions.has('timeout'))
+        await enforce(message.member,'automod',{...cfg,action:'timeout'})
     })
   })
   client.on(Events.ChannelCreate,channel => {
@@ -248,18 +252,19 @@ export function attachProtection(client, db) {
     }
   })
   client.on(Events.MessageDelete,message => {
-    if (!message.inGuild() || message.partial || message.author?.bot || message.webhookId) return
+    if (!message.inGuild() || message.partial || message.author?.bot || message.webhookId || automodDeletes.delete(message.id)) return
     const guild = message.guild
     void run(guild,'automod',async () => {
       const cfg = db.config(guild.id,'automod')
       const rule = cfg.filters?.ghost
       if (db.guildPlan(message.guild.id) === 'free') return
-      if (!cfg.enabled || !['log','timeout'].includes(rule?.action)) return
+      if (!cfg.enabled || !['log','warn','timeout'].includes(rule?.action)) return
       const member = message.member ?? guild.members.cache.get(message.author.id)
       if (bypass(guild,'automod',message.author.id,member)) return
       const count = message.mentions.users.size + message.mentions.roles.size + (message.mentions.everyone ? 10 : 0)
       if (count >= rule.limit) {
         log(guild,'automod','Deleted message with mentions · author ' + message.author.id)
+        if (rule.action === 'warn' && member) await enforce(member,'automod',{...cfg,action:'warn'})
         if (!await escalate(message,cfg,rule.points) && rule.action === 'timeout' && member)
           await enforce(member,'automod',{...cfg,action:'timeout'})
       }

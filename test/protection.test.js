@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter, once } from 'node:events'
 import { AuditLogEvent as A, Collection, Events, PermissionFlagsBits as P } from 'discord.js'
 import { attachProtection, isDestructive, recordHit } from '../bot.js'
-import { createStore, guildPlan, policies } from '../store.js'
+import { createStore, guildPlan, policies, spamFilters } from '../store.js'
 import { canModerate, syncModerationCommands } from '../moderation.js'
 import { recoveryTools } from '../recovery.js'
 import { attachVerification } from '../verification.js'
@@ -428,3 +428,37 @@ test('policies reject extra fields and invalid actions', () => {
   assert.equal(policies.nuke.safeParse({...config,action:'unknown'}).success,false)
   db.close()
 })
+
+test('AutoMod applies overlapping responses, records warnings, and respects the spam switch', async t => {
+  const db = createStore(':memory:')
+  const client = new EventEmitter()
+  client.user = {id:'bot'}
+  const stop = attachProtection(client,db)
+  t.after(() => { stop(); db.close() })
+  const guild = {id:'guild',ownerId:'owner',name:'Test Server'}
+  const author = {id:'member',bot:false,send:async () => {}}
+  const timeouts = []
+  const member = {id:author.id,user:author,guild,permissions:{has:() => false},moderatable:true,
+    disableCommunicationUntil:async until => timeouts.push(until)}
+  const filters = Object.fromEntries(spamFilters.map(name => [name,{action:'off',limit:1}]))
+  filters.emoji.action = 'delete'
+  filters.mentions.action = 'warn'
+  const policy = {...db.config(guild.id,'automod'),enabled:true,threshold:3,action:'timeout',filters}
+  db.save(guild.id,'automod',policies.automod.parse(policy),'owner')
+  const deleted = []
+  const send = async id => {
+    client.emit(Events.MessageCreate,{id,guild,guildId:guild.id,author,member,inGuild:() => true,content:'😀',
+      mentions:{users:new Set(['target']),roles:new Set()},attachments:new Collection(),stickers:new Collection(),
+      deletable:true,delete:async () => deleted.push(id)})
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  for (const id of ['1','2','3']) await send(id)
+  assert.deepEqual(deleted,['1','2','3'])
+  assert.equal(db.history(guild.id,author.id).filter(row => row.action === 'warn').length,3)
+  assert.equal(timeouts.length,1)
+  db.save(guild.id,'automod',{...policy,spamEnabled:false},'owner')
+  for (const id of ['4','5','6']) await send(id)
+  assert.equal(timeouts.length,1)
+  assert.deepEqual(deleted,['1','2','3','4','5','6'])
+})
+
