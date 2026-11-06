@@ -7,6 +7,11 @@ import { matchesPermit, premiumFilters, premiumGuards } from './store.js'
 import { actionCard, logCard, memberAction } from './messages.js'
 import { onDomainList, startDomainFeeds } from './domain-feeds.js'
 
+function activeAutomodActions(rule) {
+  if (!rule || rule.action === 'off' || rule.action === 'log') return []
+  return rule.actions ?? [rule.action]
+}
+
 export const requiredPermissions = P.ViewAuditLog | P.ManageRoles | P.KickMembers | P.ModerateMembers | P.BanMembers | P.ManageChannels | P.ViewChannel | P.SendMessages | P.ManageMessages | P.ManageGuild | P.ReadMessageHistory | P.EmbedLinks | P.AttachFiles
 const dangerous = P.Administrator | P.ManageGuild | P.ManageRoles | P.ManageChannels | P.BanMembers | P.KickMembers | P.ManageWebhooks | P.ModerateMembers
 const tracked = new Set([A.ChannelDelete,A.RoleDelete,A.MemberBanAdd,A.MemberKick,A.BotAdd])
@@ -220,16 +225,17 @@ export function attachProtection(client, db) {
       const now = Date.now()
       const plan = db.guildPlan(guild.id)
       const rules = Object.entries(cfg.filters ?? {}).filter(([name,rule]) =>
-        name !== 'ghost' && rule.action !== 'off' && (plan !== 'free' || !premiumFilters.includes(name)))
+        name !== 'ghost' && activeAutomodActions(rule).length && (plan !== 'free' || !premiumFilters.includes(name)))
       const signals = rules.length ? messageSignals(message,repeats,now,cfg.window*1000,cfg) : {}
       const matches = rules.filter(([name,rule]) => signals[name] >= rule.limit)
-      if (cfg.spamEnabled !== false && recordHit(messages,key,now,cfg.window*1000,cfg.threshold) >= cfg.threshold) {
+      const spamActions = activeAutomodActions({action:cfg.action,actions:cfg.spamActions})
+      if (cfg.spamEnabled !== false && spamActions.length && recordHit(messages,key,now,cfg.window*1000,cfg.threshold) >= cfg.threshold) {
         messages.delete(key)
-        matches.push(['spam',{action:cfg.action,points:cfg.spamPoints}])
+        matches.push(['spam',{action:cfg.action,actions:spamActions,points:cfg.spamPoints}])
       }
       if (!matches.length) return
       log(guild,'automod','Matched ' + matches.map(([name]) => name).join(', ') + ' · member ' + message.author.id)
-      const actions = new Set(matches.map(([,rule]) => rule.action))
+      const actions = new Set(matches.flatMap(([,rule]) => activeAutomodActions(rule)))
       if (actions.has('delete')) {
         if (message.deletable) {
           automodDeletes.set(message.id,now)
@@ -258,14 +264,15 @@ export function attachProtection(client, db) {
       const cfg = db.config(guild.id,'automod')
       const rule = cfg.filters?.ghost
       if (db.guildPlan(message.guild.id) === 'free') return
-      if (!cfg.enabled || !['log','warn','timeout'].includes(rule?.action)) return
+      const actions = activeAutomodActions(rule).filter(action => action !== 'delete')
+      if (!cfg.enabled || !actions.length) return
       const member = message.member ?? guild.members.cache.get(message.author.id)
       if (bypass(guild,'automod',message.author.id,member)) return
       const count = message.mentions.users.size + message.mentions.roles.size + (message.mentions.everyone ? 10 : 0)
       if (count >= rule.limit) {
         log(guild,'automod','Deleted message with mentions · author ' + message.author.id)
-        if (rule.action === 'warn' && member) await enforce(member,'automod',{...cfg,action:'warn'})
-        if (!await escalate(message,cfg,rule.points) && rule.action === 'timeout' && member)
+        if (actions.includes('warn') && member) await enforce(member,'automod',{...cfg,action:'warn'})
+        if (!await escalate(message,cfg,rule.points) && actions.includes('timeout') && member)
           await enforce(member,'automod',{...cfg,action:'timeout'})
       }
     })

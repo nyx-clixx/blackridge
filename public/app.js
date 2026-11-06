@@ -369,7 +369,7 @@ function renderServerPicker(guilds,userId) {
   render()
 }
 const automodActions = {
-  log:['Log Only','Record the detection in the security logs.','logs'],
+
   delete:['Delete Message','Remove the matching message after it is sent.','trash'],
   warn:['Warn Member','Record a warning and try to notify the member by DM.','warning'],
   timeout:['Time Out Member','Temporarily prevent the member from communicating.','timer']
@@ -396,26 +396,27 @@ function automodControls(config,paid) {
     const spam = key === 'spam'
     const [name,limit] = spam ? ['Anti-Spam',config.threshold] : filters[key]
     const label = titles[key] ?? name
-    const rule = spam ? {action:config.action,points:config.spamPoints,limit} : config.filters?.[key]
+    const rule = spam ? {action:config.action,actions:config.spamActions,points:config.spamPoints,limit} : config.filters?.[key]
     const gated = paidFilters.includes(key)
     const head = '<div class="automod-card-head"><span class="automod-icon">' + automodIcon(icons[key] ?? 'configure') + '</span><div><h4>' + label + (gated ? crown : '') + '</h4>'
     if (gated && !paid) return '<article class="automod-card">' + head + '<p>Premium rule</p></div></div><a class="button small automod-edit" href="premium">View Plans</a></article>' +
       '<input type="hidden" name="' + key + '-action" value="off"><input type="hidden" name="' + key + '-limit" value="' + limit + '"><input type="hidden" name="' + key + '-points" value="0">' +
       (key === 'malicious' ? '<input type="hidden" name="maliciousDomains" value="">' : '')
-    const enabled = spam ? config.spamEnabled !== false : Boolean(rule && rule.action !== 'off')
-    const response = enabled || spam ? rule.action : rule?.response ?? (key === 'ghost' ? 'log' : 'delete')
+    const savedActions = rule?.actions ?? [rule?.action === 'off' ? rule.response : rule?.action]
+    const selected = savedActions.filter(action => Object.hasOwn(automodActions,action) && (key !== 'ghost' || action !== 'delete'))
+    const enabled = selected.length > 0 && (spam ? config.spamEnabled !== false : !['off','log'].includes(rule.action))
     const actions = Object.entries(automodActions).filter(([action]) => key !== 'ghost' || action !== 'delete').map(([action,[title,description,symbol]]) =>
-      '<label class="automod-action"><span class="automod-icon">' + automodIcon(symbol) + '</span><span><strong>' + title + '</strong><small>' + description + '</small></span><input type="radio" name="' + key + '-response" value="' + action + '"' + (response === action ? ' checked' : '') + '></label>').join('')
+      '<label class="automod-action"><span class="automod-icon">' + automodIcon(symbol) + '</span><span><strong>' + title + '</strong><small>' + description + '</small></span><input type="checkbox" name="' + key + '-response" value="' + action + '"' + (selected.includes(action) ? ' checked' : '') + '></label>').join('')
     const field = fieldMap[key]
     const list = field ? '<label>' + field[1] + ' (one per line)<textarea name="' + field[0] + '" maxlength="500" rows="5" spellcheck="false">' +
       esc((config[field[0]] ?? '').split(',').map(value => value.trim()).filter(Boolean).join('\n')) + '</textarea></label>' : ''
     const threshold = '<label>' + (spam ? 'Messages per member' : limits[key] ?? 'Trigger threshold') +
       '<input type="number" required min="' + (spam ? 3 : 1) + '" max="' + (spam ? 30 : 4000) + '" name="' + (spam ? 'threshold' : key + '-limit') + '" value="' + esc(rule?.limit ?? limit) + '"></label>'
-    return '<article class="automod-card" data-automod-rule="' + key + '">' + head + '<p data-rule-summary>' + (enabled ? automodActions[response][0] : 'Disabled') +
+    return '<article class="automod-card" data-automod-rule="' + key + '">' + head + '<p data-rule-summary>' + (enabled ? selected.map(action => automodActions[action][0]).join(' · ') : 'Disabled') +
       '</p></div><label class="nuke-switch"><input type="checkbox" role="switch" name="' + key + '-enabled" aria-label="Enable ' + label + '"' + (enabled ? ' checked' : '') + '><span aria-hidden="true"></span></label></div>' +
-      '<input type="hidden" name="' + (spam ? 'action' : key + '-action') + '" value="' + (enabled || spam ? response : 'off') + '"><button type="button" class="button small automod-edit" data-edit-rule aria-label="Edit ' + label + '">Edit Rule</button>' +
+      '<button type="button" class="button small automod-edit" data-edit-rule aria-label="Edit ' + label + '">Edit Rule</button>' +
       '<dialog class="nuke-dialog automod-dialog" aria-labelledby="automod-title-' + key + '"><header><h3 id="automod-title-' + key + '">' + label + '</h3><button type="button" class="button small" data-close-rule aria-label="Close rule editor">×</button></header>' +
-      '<div class="nuke-dialog-fields"><fieldset class="automod-actions"><legend>Action</legend>' + actions + '</fieldset><div class="fields">' + threshold +
+      '<div class="nuke-dialog-fields"><fieldset class="automod-actions"><legend>Actions</legend>' + actions + '</fieldset><div class="fields">' + threshold +
       '<label>Points<input type="number" required min="0" max="100" name="' + (spam ? 'spamPoints' : key + '-points') + '" value="' + esc(rule?.points ?? 0) + '"></label></div>' + list + '</div></dialog></article>'
   }).join('')
   return '<section class="card settings-section"><h3>AutoMod Rules</h3><p>Choose what Blackridge detects and how it responds. Text and attachment rules require Message Content access.</p><div class="automod-grid">' + cards + '</div></section>' +
@@ -428,17 +429,20 @@ function wireAutomodRules(form) {
   for (const card of form.querySelectorAll('[data-automod-rule]')) {
     const key = card.dataset.automodRule
     const enabled = form.elements[key + '-enabled']
-    const action = form.elements[key === 'spam' ? 'action' : key + '-action']
+    const responses = () => [...card.querySelectorAll('.automod-action input:checked')].map(input => input.value)
     const dialog = card.querySelector('dialog')
     card.querySelector('[data-edit-rule]').onclick = () => dialog.showModal()
     card.querySelector('[data-close-rule]').onclick = () => dialog.close()
-    const update = () => {
-      const response = form.elements[key + '-response'].value
-      action.value = enabled.checked || key === 'spam' ? response : 'off'
-      card.querySelector('[data-rule-summary]').textContent = enabled.checked ? automodActions[response][0] : 'Disabled'
-    }
     card.addEventListener('change',event => {
-      if (event.target === enabled || event.target.name === key + '-response') update()
+      const editing = event.target.name === key + '-response'
+      if (!editing && event.target !== enabled) return
+      const selected = responses()
+      if (!selected.length) {
+        if (enabled.checked && !editing) dialog.showModal()
+        enabled.checked = false
+      } else if (editing && event.target.checked && selected.length === 1) enabled.checked = true
+      card.querySelector('[data-rule-summary]').textContent = enabled.checked ?
+        selected.map(action => automodActions[action][0]).join(' · ') : 'Disabled'
     })
   }
 }
@@ -798,8 +802,8 @@ function wireResponseDurations(form,section) {
       if (form.querySelector('input[name$="-quarantine"]:checked')) actions.add('quarantine')
     }
     if (section === 'automod') {
-      if (!form.elements['spam-enabled'].checked) actions.delete(form.elements.action.value)
-      if (Object.keys(filters).some(key => form.elements[key + '-action'].value === 'timeout') ||
+      if ([...form.querySelectorAll('[data-automod-rule]')].some(card =>
+            card.querySelector('[role="switch"]:checked') && card.querySelector('.automod-action input[value="timeout"]:checked')) ||
           [...form.querySelectorAll('.point-rule select[name="rule-action"]')].some(select => select.value === 'timeout')) actions.add('timeout')
     }
     for (const [key,response] of Object.entries({timeoutMinutes:'timeout',tempBanMinutes:'tempban',quarantineMinutes:'quarantine'})) {
@@ -1081,11 +1085,15 @@ async function dashboard() {
         for (const key of ['minAge','minutes']) payload[key] = readDuration(settings.elements[key])
       }
       if (fields.has('action')) payload.action = fields.get('action')
-      if (section === 'automod') payload.filters = Object.fromEntries(Object.keys(filters).map(key => [key,{
-        action:fields.get(key + '-action'),response:fields.get(key + '-response') ?? undefined,limit:Number(fields.get(key + '-limit')),points:Number(fields.get(key + '-points'))
-      }]))
       if (section === 'automod') {
-        payload.spamEnabled = fields.has('spam-enabled')
+        payload.filters = Object.fromEntries(Object.keys(filters).map(key => {
+          const actions = fields.getAll(key + '-response')
+          return [key,{action:fields.has(key + '-enabled') ? actions[0] ?? 'off' : 'off',actions,
+            limit:Number(fields.get(key + '-limit')),points:Number(fields.get(key + '-points'))}]
+        }))
+        payload.spamActions = fields.getAll('spam-response')
+        payload.spamEnabled = fields.has('spam-enabled') && payload.spamActions.length > 0
+        payload.action = payload.spamEnabled ? payload.spamActions[0] : 'off'
         for (const name of ['badWords','nsfwDomains','maliciousDomains']) payload[name] = fields.get(name).split(/[\n,]/).map(value => value.trim()).filter(Boolean).join(',')
         payload.pointRules = [...settings.querySelectorAll('.point-rule')].map(row => ({
           points:Number(row.querySelector('[name=rule-points]').value),

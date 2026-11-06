@@ -429,7 +429,7 @@ test('policies reject extra fields and invalid actions', () => {
   db.close()
 })
 
-test('AutoMod applies overlapping responses, records warnings, and respects the spam switch', async t => {
+test('AutoMod combines responses on one rule and respects the spam switch', async t => {
   const db = createStore(':memory:')
   const client = new EventEmitter()
   client.user = {id:'bot'}
@@ -441,8 +441,7 @@ test('AutoMod applies overlapping responses, records warnings, and respects the 
   const member = {id:author.id,user:author,guild,permissions:{has:() => false},moderatable:true,
     disableCommunicationUntil:async until => timeouts.push(until)}
   const filters = Object.fromEntries(spamFilters.map(name => [name,{action:'off',limit:1}]))
-  filters.emoji.action = 'delete'
-  filters.mentions.action = 'warn'
+  filters.emoji = {action:'delete',actions:['delete','warn'],limit:1}
   const policy = {...db.config(guild.id,'automod'),enabled:true,threshold:3,action:'timeout',filters}
   db.save(guild.id,'automod',policies.automod.parse(policy),'owner')
   const deleted = []

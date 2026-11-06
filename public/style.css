@@ -406,14 +406,14 @@ body.has-workspace .sidebar{overflow:auto}
 .automod-card p{color:var(--muted);font-size:.83rem;margin-top:4px}
 .automod-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#292a35;color:#dddaf0}
 .automod-card .automod-edit{justify-content:center;width:100%;background:#23232d}
-.automod-card .nuke-switch input:checked+span{background:#713bd0}
+.automod-card .nuke-switch input:checked+span{background:#3977d5}
 .automod-dialog{width:min(660px,calc(100% - 28px));background:#16161e}
 .automod-actions{display:grid;gap:8px;min-width:0;padding:0;margin:0;border:0}
 .automod-actions legend{margin-bottom:8px;color:var(--muted)}
 .automod-action{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px;border:1px solid #ffffff14;border-radius:11px;cursor:pointer}
-.automod-action:has(:checked){border-color:#9563ef;background:#211832}
-.automod-action:has(:checked) .automod-icon{background:#5628a5;color:white}
+.automod-action:has(:checked){border-color:#6ba8ff;background:#172640}
+.automod-action:has(:checked) .automod-icon{background:#245aab;color:white}
 .automod-action small{display:block;color:var(--muted);margin-top:2px}
-.automod-action input{accent-color:#9563ef}
+.automod-action input{accent-color:#6ba8ff}
 @media(max-width:1160px){.automod-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:640px){.automod-grid{grid-template-columns:minmax(0,1fr)}}
