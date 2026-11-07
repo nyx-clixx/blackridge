@@ -310,6 +310,7 @@ app.put('/api/guilds/:id/custom-bot/image/:field',customAccess,express.raw({type
   await custom.exclusive(req.guild.id,() => custom.image(req.guild.id,field,req.body))
   res.json(custom.state(req.guild.id,req.session.user.id))
 })
+app.get('/api/guilds/:id/activity',(req,res) => res.json({days:db.activity(req.guild.id)}))
 app.get('/api/guilds/:id/events',async (req,res) => {
   const events = db.recent(req.guild.id,req.query.kind).map(event => {
     const pattern = event.kind === 'moderation' ? /\bmoderator (\d{17,20})\b/

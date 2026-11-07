@@ -17,12 +17,13 @@ const iconPaths = {
   checkpoint:'<path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/><circle cx="12" cy="10" r="2.5"/><path d="M8 17a4 4 0 0 1 8 0"/>',
   automod:'<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2" fill="var(--panel)"/><circle cx="15" cy="12" r="2" fill="var(--panel)"/><circle cx="10" cy="18" r="2" fill="var(--panel)"/>',
   moderation:'<path d="M5 4h14v16H5zM8 8h8M8 12h8m-8 4h4"/>',
-  permits:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"/>',
+  permits:'<circle cx="8" cy="8" r="4"/><path d="m11 11 9 9m-4-4 3-3m-1 5 3-3"/>',
   overview:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   nuke:'<path d="M8 12V5a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v6-3a1.5 1.5 0 0 1 3 0v6a8 8 0 0 1-8 8h-1a6 6 0 0 1-5-3l-3-5a1.7 1.7 0 0 1 2.7-2L8 14"/>',
   raid:'<path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2m19 0v-2a4 4 0 0 0-3-4m-2-12a4 4 0 0 1 0 8"/><circle cx="9.5" cy="7" r="4"/>',
   logs:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+  menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',
   arrow:'<path d="M5 12h14m-6-6 6 6-6 6"/>'
 }
 const icon = key => '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (iconPaths[key] ?? iconPaths.nuke) + '</svg>'
@@ -460,7 +461,7 @@ function renderServerPicker(guilds,userId) {
   } catch {}
   function render(focusId) {
     const sorted = [...guilds].sort((a,b) => Number(pinned.has(b.id))-Number(pinned.has(a.id)))
-    shell('<h2>Select a server</h2><div class="servers">' + sorted.map(guild => '<article class="card server-card"><div class="server-card-top"><div class="server-avatar">' + (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + esc(guild.id) + '/' + esc(guild.icon) + '.png">' : esc(guild.name.slice(0,2).toUpperCase())) + '</div><button type="button" class="button small pin-server" data-pin="' + esc(guild.id) + '" aria-pressed="' + pinned.has(guild.id) + '" aria-label="Pin ' + esc(guild.name) + '">' + icon('pin') + '</button></div><h3>' + esc(guild.name) + '</h3><div class="server-access ' + (guild.owner ? 'is-owner' : '') + '">' + icon(guild.owner ? 'premium' : 'server') + (guild.owner ? 'Owner' : 'Dashboard Access') + '</div><a class="button small" href="' + (guild.installed ? base + '/' + guild.id : '/invite?guild=' + guild.id) + '">' + (guild.installed ? 'Manage' : 'Set up') + '</a></article>').join('') + '</div>' + (guilds.length ? '' : '<div class="card">No servers with management access were found.</div>'))
+    shell('<h1 class="server-picker-title">Select a server</h1><div class="servers server-picker-grid">' + sorted.map(guild => '<article class="card server-card"><div class="server-card-top"><div class="server-avatar">' + (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + esc(guild.id) + '/' + esc(guild.icon) + '.png">' : esc(guild.name.slice(0,2).toUpperCase())) + '</div><button type="button" class="button small pin-server" data-pin="' + esc(guild.id) + '" aria-pressed="' + pinned.has(guild.id) + '" aria-label="Pin ' + esc(guild.name) + '">' + icon('pin') + '</button></div><h3>' + esc(guild.name) + '</h3><div class="server-access ' + (guild.owner ? 'is-owner' : '') + '">' + icon(guild.owner ? 'premium' : 'server') + (guild.owner ? 'Owner' : 'Dashboard Access') + '</div><a class="button small" href="' + (guild.installed ? base + '/' + guild.id : '/invite?guild=' + guild.id) + '">' + (guild.installed ? 'Manage' : 'Set up') + '</a></article>').join('') + '</div>' + (guilds.length ? '' : '<div class="card">No servers with management access were found.</div>'))
     for (const button of app.querySelectorAll('[data-pin]')) {
       if (button.dataset.pin === focusId) button.focus()
       button.onclick = () => {
@@ -713,7 +714,7 @@ async function premium(me) {
   const picker = servers.length ? '<section class="billing-panel premium-picker"><h3>Choose a Server</h3><div class="servers premium-servers">' +
     servers.map(guild => '<a class="card premium-server" href="/dashboard/' + encodeURIComponent(guild.id) + '/premium"><span class="server-avatar">' +
       (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(guild.id) + '/' + encodeURIComponent(guild.icon) + '.png?size=64">' : esc(guild.name.slice(0,2).toUpperCase())) +
-      '</span><span><strong>' + esc(guild.name) + '</strong><small>' + (guild.plan === 'free' ? 'Free' : planName(guild.plan)) + '</small></span><span class="premium-server-arrow" aria-hidden="true">›</span></a>').join('') +
+      '</span><span><strong>' + esc(guild.name) + '</strong><small>' + (guild.plan === 'free' ? 'Free' : planName(guild.plan)) + '</small></span></a>').join('') +
     '</div></section>' : '<p class="stack"><a class="button" href="/dashboard">' + (me?.user ? 'Open Dashboard' : 'Sign In to Subscribe') + '</a></p>'
   const subscriptions = billing.subscriptions?.length ? '<section class="card stack billing-panel"><h3>Your Subscriptions</h3>' +
     billing.subscriptions.map(row => '<div class="actions stack"><span>' + esc(row.name) + ' · ' + planName(row.plan) +
@@ -1102,6 +1103,83 @@ function setupQuarantine(settings,path) {
   panel.querySelector('button').onclick = open
   void open()
 }
+function overviewActivity() {
+  return '<section class="card activity-card" aria-labelledby="activity-heading"><div class="activity-head">' +
+    '<div><h3 id="activity-heading">Security Activity</h3><p>Daily entries from your server’s security logs</p></div>' +
+    '<div class="period-control" role="group" aria-label="Activity period"><button type="button" data-period="7" aria-pressed="true">7 days</button>' +
+    '<button type="button" data-period="30" aria-pressed="false">30 days</button></div></div>' +
+    '<div id="activity-chart" aria-live="polite"><p class="empty">Loading activity…</p></div></section>'
+}
+
+async function loadOverview(path) {
+  const chart = document.querySelector('#activity-chart')
+  const latest = document.querySelector('#overview-events')
+  void request(path + '/events').then(({events}) => { latest.innerHTML = logList(events.slice(0,4)) })
+    .catch(() => { latest.textContent = 'Recent activity is temporarily unavailable.' })
+  try {
+    const {days} = await request(path + '/activity')
+    const buttons = document.querySelectorAll('[data-period]')
+    const date = new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',timeZone:'UTC'})
+    const number = new Intl.NumberFormat()
+    function render(period) {
+      const values = days.slice(-period)
+      const sum = key => values.reduce((total,day) => total + day[key],0)
+      const count = sum('total')
+      const peak = Math.max(1,...values.map(day => day.total))
+      const labels = values.map(day => date.format(day.at))
+      chart.innerHTML = '<div class="activity-totals"><div><strong>' + number.format(count) +
+        '</strong><span><i></i> Logged events</span></div><div><strong>' + number.format(sum('protection')) +
+        '</strong><span><i></i> Protection entries</span></div></div>' +
+        (count ? '<div class="activity-bars" aria-hidden="true">' + values.map((day,index) => {
+          const title = labels[index] + ': ' + day.total + ' logged, ' + day.protection + ' protection'
+          const height = day.total / peak * 100
+          const share = day.total ? day.protection / day.total * 100 : 0
+          return '<div class="activity-bar" title="' + esc(title) + '"><svg viewBox="0 0 1 100" preserveAspectRatio="none"><rect y="' +
+            (100-height) + '" width="1" height="' + height + '"/><rect class="protection-bar" y="' +
+            (100-height*share/100) + '" width="1" height="' + height*share/100 + '"/></svg></div>'
+        }).join('') + '</div><div class="activity-axis" aria-hidden="true"><span>' + esc(labels[0]) + '</span><span>' +
+          esc(labels.at(-1)) + '</span></div><details class="activity-data"><summary>View daily counts</summary><table class="event-table"><thead><tr>' +
+          '<th scope="col">Date (UTC)</th><th scope="col">Logged</th><th scope="col">Protection</th></tr></thead><tbody>' +
+          values.map((day,index) => '<tr><th scope="row">' + esc(labels[index]) + '</th><td>' + day.total + '</td><td>' +
+            day.protection + '</td></tr>').join('') + '</tbody></table></details>' :
+          '<p class="empty activity-empty">No events logged in this period.</p>') +
+        '<p class="activity-note">' + (count ? 'Blue shows protection entries within the total. ' : '') + 'UTC dates.</p>'
+    }
+    for (const button of buttons) button.addEventListener('click',() => {
+      for (const item of buttons) item.setAttribute('aria-pressed',String(item === button))
+      render(Number(button.dataset.period))
+    })
+    render(7)
+  } catch {
+    chart.textContent = 'Activity totals are temporarily unavailable.'
+  }
+}
+
+function wireWorkspaceMenu() {
+  const button = document.querySelector('.workspace-menu')
+  const nav = document.querySelector('#workspace-links')
+  const setOpen = open => button.setAttribute('aria-expanded',String(open))
+  button.addEventListener('click',() => setOpen(button.getAttribute('aria-expanded') !== 'true'))
+  document.querySelector('.dash-layout').addEventListener('keydown',event => {
+    if (event.key !== 'Escape' || button.getAttribute('aria-expanded') !== 'true') return
+    setOpen(false)
+    button.focus()
+  })
+  nav.addEventListener('click',event => {
+    if (event.target.closest('a[aria-current]')) setOpen(false)
+  })
+}
+
+if (document.querySelector('.landing-hero') && matchMedia('(prefers-reduced-motion: no-preference)').matches && 'IntersectionObserver' in window) {
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) if (entry.isIntersecting) {
+      entry.target.classList.add('section-arrived')
+      observer.unobserve(entry.target)
+    }
+  },{threshold:.12})
+  document.querySelectorAll('.landing-section-head,.feature-plate,.launch-steps').forEach(element => observer.observe(element))
+}
+
 async function dashboard() {
   document.body.classList.add('dashboard-page')
   const [, , id, rawSection] = location.pathname.split('/')
@@ -1109,7 +1187,7 @@ async function dashboard() {
   try {
     const me = await request('/api/me')
     if (!me.user) {
-      shell('<div class="card signin-card"><a class="button small close-signin" href="/" aria-label="Close sign-in">×</a><h2>Manage Servers</h2><p>Connect your Discord account to continue.</p><a class="button primary" href="/auth/login">Sign In with Discord</a>' + (me.configured ? '' : '<p class="muted">Discord sign-in is awaiting application setup.</p>') + (location.search ? '<p class="error">Sign-in could not be completed. Please try again.</p>' : '') + '</div>')
+      shell('<div class="card signin-card"><a class="button small close-signin" href="/" aria-label="Close sign-in">×</a><h1>Manage Servers</h1><p>Connect your Discord account to continue.</p><a class="button primary" href="/auth/login">Sign In with Discord</a>' + (me.configured ? '' : '<p class="muted">Discord sign-in is awaiting application setup.</p>') + (location.search ? '<p class="error">Sign-in could not be completed. Please try again.</p>' : '') + '</div>')
       return
     }
     await accountMenu(me)
@@ -1145,20 +1223,40 @@ async function dashboard() {
       const field = '<label class="module-switch"><input type="checkbox" role="switch" name="enabled" aria-label="' + sections[section] + '"' + (linkedSwitch ? ' form="settings"' : '') + (data.config[section].enabled ? ' checked' : '') + (data.owner ? '' : ' disabled') + '><span></span></label>'
       switchControl = serviceSwitch ? '<form id="module-toggle">' + field + '<p class="error" role="status"></p></form>' : field
     }
-    const heading = '<div class="page-heading"><span class="icon-tile">' + icon(section) + '</span><div><h2 class="dash-title">' + sections[section] + '</h2></div>' + switchControl + '</div>'
+    const heading = '<div class="page-heading"><span class="icon-tile">' + icon(section) + '</span><div><h1 class="dash-title">' + sections[section] + '</h1></div>' + switchControl + '</div>'
     const {events} = eventData
     const activity = '<section class="card stack"><h3>' + 'Event History' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
-    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','appeals','verification','honeypot','reports'].map(key => {
+    const protection = ['raid','nuke','lockdown','honeypot','verification','checkpoint']
+    const administration = ['permits','moderation','appeals','reports','backup','automod']
+    const modules = section === 'overview' ? [...protection,...administration].map(key => {
       const restricted = key === 'permits' && !data.owner ? 'Owner only' : key === 'appeals' && !data.appealsManager ? 'Manager access required' : ''
       const enabled = key === 'appeals' ? data.appealsConfigured : data.config[key]?.enabled
       const state = enabled ? '<i class="dot"></i> Enabled' : '<i class="dot disabled-dot"></i> Disabled'
       return '<article class="card compact-module"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + (key === 'backup' ? crown : '') + '</h3><span class="badge">' + state + '</span></div></div>' + (restricted ? '<span class="button module-configure" aria-disabled="true">' + restricted + '</span>' : '<a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a>') + '</article>'
-    }).join('')
-    const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
+    }).join('') : ''
+    const overview = section === 'overview' ? '<div class="overview-top">' + overviewActivity() +
+      securityScore(data.security) + '</div><section class="module-section"><h3>Modules</h3><div class="module-grid">' +
+      modules + '</div></section><section class="card overview-recent"><div class="overview-section-head"><h3>Recent Activity</h3>' +
+      '<a class="button small" href="' + serverPath + '/logs">View Security Logs</a></div>' +
+      '<div id="overview-events"><p class="empty">Loading recent activity…</p></div></section>' : ''
+    const serverSelector = '<a class="server-switch" title="Switch server" href="' + base + '">' +
+      (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' +
+        encodeURIComponent(data.icon) + '.png?size=64" alt="">' : '<span class="icon-tile">' + icon('server') + '</span>') +
+      '<span><small>Switch server</small><strong>' + esc(data.name) + '</strong></span></a>'
+    const sidebar = '<aside class="sidebar">' + serverSelector + '<button class="button small workspace-menu" type="button" ' +
+      'aria-controls="workspace-links" aria-expanded="false">' + icon('menu') + ' Modules</button>' +
+      '<nav id="workspace-links" aria-label="Server navigation"><span class="nav-label">Workspace</span>' +
+      navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') +
+      '<span class="nav-label">Protection</span>' + protection.map(navigation).join('') +
+      '<span class="nav-label">Administration</span>' + administration.filter(key =>
+        (key !== 'permits' || data.owner) && (key !== 'appeals' || data.appealsManager)).map(navigation).join('') + '</nav></aside>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('honeypot') + navigation('verification') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('reports') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout">' + sidebar + '<div class="dash-pane"><div class="workspace-rail">' +
+      icon('server') + '<span>' + esc(data.name) + '</span><i></i><strong>' + sections[section] + '</strong></div><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    wireWorkspaceMenu()
+    if (section === 'overview') void loadOverview(path)
     if (section === 'reports') wireReports(path,data.config.reports)
     if (section === 'honeypot') wireHoneyPot(path,id,data.config.honeypot)
     if (section === 'premium') wireBilling(path,id)

@@ -280,6 +280,19 @@ export function createStore(file) {
         ? db.prepare("SELECT kind,detail,at FROM event WHERE guild=? AND kind='moderation' ORDER BY at DESC,id DESC LIMIT 5").all(guild)
         : db.prepare('SELECT kind,detail,at FROM event WHERE guild=? ORDER BY at DESC,id DESC LIMIT 10').all(guild)
     },
+    activity(guild,now=Date.now()) {
+      const day = 86400000
+      const start = Math.floor(now / day) * day - 29 * day
+      const counts = db.prepare(`SELECT CAST((at - ?) / ? AS INTEGER) AS bucket,
+        COUNT(*) AS total,
+        SUM(CASE WHEN kind IN ('raid','nuke','checkpoint','automod','honeypot') THEN 1 ELSE 0 END) AS protection
+        FROM event WHERE guild=? AND at>=? AND at<=? GROUP BY bucket`).all(start,day,guild,start,now)
+      const byDay = new Map(counts.map(({bucket,total,protection}) => [bucket,{total,protection}]))
+      return Array.from({length:30},(_,index) => ({
+        at:start + index * day,
+        ...(byDay.get(index) ?? {total:0,protection:0})
+      }))
+    },
     stats(guild) { return db.prepare("SELECT COUNT(*) total,COUNT(CASE WHEN kind='nuke' THEN 1 END) nuke,COUNT(CASE WHEN kind='raid' THEN 1 END) raid FROM event WHERE guild=? AND at>=?").get(guild,Date.now()-86400000) },
     prune() {
       db.prepare('DELETE FROM event WHERE at<?').run(Date.now()-30*86400000)

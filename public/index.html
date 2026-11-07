@@ -7,49 +7,66 @@
   <link rel="icon" type="image/png" sizes="96x96" href="/favicon.png">
   <link rel="apple-touch-icon" href="/blackridge-icon.png">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/design.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <header>
     <nav class="wrap" aria-label="Main navigation">
       <a href="/" class="brand"><img src="/blackridge-logo.png" width="29" height="29" alt="">Blackridge</a>
-      <div class="navlinks"><a href="/dashboard">Dashboard</a><a href="/premium">Premium</a><a href="/support">Support</a></div>
+      <div class="navlinks"><a href="/dashboard">Dashboard</a><a href="/documentation">Documentation</a><a href="/premium">Premium</a><a href="/support">Support</a></div>
       <a class="button small" href="/auth/login" id="account">Sign In</a>
     </nav>
   </header>
   <main id="app">
-    <section class="wrap hero">
-      <div>
-        <h1>Protect your<br>Discord server.</h1>
-        <div class="actions"><a class="button primary" href="/invite">Add to Discord</a><a class="button" href="/dashboard">Open Dashboard</a></div>
-      </div>
-      <div class="preview" aria-label="Server protection preview">
-        <div class="preview-bar"><img src="/blackridge-logo.png" width="22" height="22" alt=""> Server protection</div>
-        <div class="preview-body">
-          <div class="preview-row"><span class="icon-tile" data-icon="nuke"></span><div><strong>Anti-Nuke</strong><small>Channel deletions</small></div><span class="preview-value">3 in 20s</span></div>
-          <div class="preview-row"><span class="icon-tile" data-icon="raid"></span><div><strong>Anti-Raid</strong><small>Join surge detection</small></div><span class="preview-value">10 in 10s</span></div>
-          <div class="preview-row"><span class="icon-tile" data-icon="logs"></span><div><strong>Response</strong><small>Review detections in security logs</small></div><span class="preview-value">Log only</span></div>
+<section class="landing-hero">
+      <div class="wrap landing-hero-inner">
+        <div class="hero-copy">
+          <h1>Keep your Discord<br class="desktop-break"> <span>under control.</span></h1>
+          <p>Catch join raids, respond to destructive admin activity, and give your moderation team the tools to act.</p>
+          <div class="actions"><a class="button primary" href="/invite">Add to Discord</a><a class="button" href="/dashboard">Open Dashboard</a></div>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <svg class="hero-traces" viewBox="0 0 480 390" fill="none">
+            <defs><pattern id="console-grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0v24" stroke="#293341" stroke-width=".65"/></pattern></defs>
+            <path d="M24 24h432v342H24z" fill="url(#console-grid)"/>
+            <path d="M240 24v342M24 195h432" stroke="#39475a" stroke-dasharray="2 7"/>
+            <path d="M24 45V24h21m390 0h21v21m0 300v21h-21m-390 0H24v-21" stroke="#60728a"/>
+            <path d="M64 126h74l39 39h63m0 61h70l38 38h68M84 275h58l29-29m138-99 32-32h52" stroke="#40536a"/>
+            <path class="hero-signal" d="M64 126h74l39 39h63m0 61h70l38 38h68" stroke="#a8c8ee" stroke-width="2" stroke-linecap="round" pathLength="100"/>
+            <g fill="#99b6d7"><circle cx="64" cy="126" r="3"/><circle cx="416" cy="264" r="3"/><circle cx="84" cy="275" r="2"/><circle cx="393" cy="115" r="2"/></g>
+          </svg>
+          <div class="hero-seal"><img src="/blackridge-logo.png" alt="" width="104" height="104"></div>
         </div>
       </div>
     </section>
-    <section class="wrap section" id="protection">
-      <h2>Discord Server Protection</h2>
-      <p>Blackridge is a Discord security bot with configurable anti-raid, anti-nuke, moderation, and member verification tools.</p>
-      <div class="grid">
-        <article class="card"><span class="icon-tile" data-icon="nuke"></span><h3>Anti-Nuke</h3><p>Set separate limits for channel, role, webhook, and moderation activity. Log incidents or respond automatically when an actor crosses a limit.</p></article>
-        <article class="card"><span class="icon-tile" data-icon="raid"></span><h3>Anti-Raid</h3><p>Catch sudden spikes in joins. Use a sensitivity preset or set your own threshold, then choose how to handle qualifying arrivals.</p></article>
-        <article class="card"><span class="icon-tile" data-icon="checkpoint"></span><h3>Checkpoint</h3><p>Score new accounts and flag suspicious joins.</p></article>
-        <article class="card"><span class="icon-tile" data-icon="automod"></span><h3>Auto Moderation</h3><p>Detect spam, repeated messages, and unwanted links.</p></article>
-        <article class="card"><span class="icon-tile" data-icon="verification"></span><h3>Verification</h3><p>Give new members a clear way in with one-click verification or a private image CAPTCHA.</p></article>
-        <article class="card"><span class="icon-tile" data-icon="lockdown"></span><h3>Lockdown</h3><p>Pause invites, lock channels, and restore recorded settings when an incident ends.</p></article>
+    <section class="wrap landing-section" id="protection">
+      <div class="landing-section-head"><span class="section-kicker"><i></i> Protection</span><h2>Control what happens next.</h2></div>
+      <div class="feature-composition">
+        <article class="feature-plate">
+          <div class="feature-copy"><span class="icon-tile" data-icon="nuke"></span><h3>Anti-Nuke</h3><p>Set limits on destructive actions and choose how Blackridge responds to suspicious permission changes.</p></div>
+          <div class="feature-art guard-art" aria-hidden="true">
+            <svg viewBox="0 0 360 120" fill="none"><path d="M0 30h360M0 60h360M0 90h360" stroke="#28313d" stroke-dasharray="2 5"/><path d="M5 89h84l19-20h38l17-18h25l19-20h44l24 22h80" stroke="#789bc3" stroke-width="1.5"/><path d="M205 11v98" stroke="#7193bc" stroke-dasharray="3 5"/><circle cx="207" cy="31" r="7" fill="#1e334a" stroke="#a2c4ef"/><circle cx="207" cy="31" r="2" fill="#b6d5fc"/></svg>
+            <div class="feature-label"><span></span> Action threshold</div>
+          </div>
+        </article>
+        <article class="feature-plate">
+          <div class="feature-copy"><span class="icon-tile" data-icon="raid"></span><h3>Anti-Raid</h3><p>Detect surges in new members, apply a response, and notify your team in Discord.</p></div>
+          <div class="feature-art raid-art" aria-hidden="true"><span><i data-icon="raid"></i> Detect</span><b></b><span><i data-icon="lockdown"></i> Respond</span><b></b><span><i data-icon="logs"></i> Notify</span></div>
+        </article>
       </div>
+      <dl class="feature-index">
+        <div><dt><span data-icon="checkpoint"></span> Checkpoint</dt><dd>Flag suspicious joins with configurable risk checks.</dd></div>
+        <div><dt><span data-icon="automod"></span> Auto Moderation</dt><dd>Filter spam, repeat messages, and unwanted links.</dd></div>
+        <div><dt><span data-icon="verification"></span> Verification</dt><dd>Offer one-click verification or an image CAPTCHA.</dd></div>
+        <div><dt><span data-icon="lockdown"></span> Lockdown</dt><dd>Restrict channels and restore recorded settings when the incident ends.</dd></div>
+        <div><dt><span data-icon="moderation"></span> Moderation</dt><dd>Take action in Discord and look up recorded cases.</dd></div>
+        <div><dt><span data-icon="permits"></span> Permits</dt><dd>Choose which roles and users can run each moderation command.</dd></div>
+      </dl>
     </section>
-    <section class="wrap section">
-      <h2>Built for moderation teams</h2>
-      <div class="grid">
-        <article class="card"><span class="icon-tile" data-icon="moderation"></span><h3>Act from Discord</h3><p>Clear recent spam with /purge and pull up a member’s recorded warnings, kicks, and bans with /history.</p></article>
-        <article class="card"><span class="icon-tile" data-icon="permits"></span><h3>Delegate with Permits</h3><p>Choose which Discord users and roles can use each moderation command.</p></article>
-      </div>
+    <section class="wrap landing-section launch-section" id="setup">
+      <div class="landing-section-head"><span class="section-kicker"><i></i> Setup</span><h2>Get started.</h2></div>
+      <ol class="launch-steps"><li><span>01</span><strong>Connect</strong><p>Add Blackridge to a Discord server you manage.</p></li><li><span>02</span><strong>Monitor</strong><p>Set role priority and review detections in log-only mode.</p></li><li><span>03</span><strong>Protect</strong><p>Enable the responses your team wants Blackridge to take.</p></li></ol>
     </section>
     <section class="wrap section landing-faq">
       <h2>Frequently asked questions</h2>
@@ -58,10 +75,6 @@
       <details class="card"><summary>Can I monitor a server before enforcing actions?</summary><p>Yes. Choose Log Only for a protection rule and review the detections in Security Logs before changing its response.</p></details>
       <details class="card"><summary>What can a server backup restore?</summary><p>Backups can restore supported server settings and recreate eligible roles and channels. See the documentation for recovery limits.</p></details>
       <a class="button" href="/documentation">Read Documentation</a>
-    </section>
-    <section class="wrap section" id="setup">
-      <h2>Get Started</h2>
-      <ol class="steps setup-cards"><li><strong>Connect</strong><span>Add Blackridge to a Discord server you manage.</span></li><li><strong>Monitor</strong><span>Set role priority, configure your modules, and review detections in log-only mode.</span></li><li><strong>Protect</strong><span>Enable the responses you want so Blackridge can act when it detects a threat.</span></li></ol>
     </section>
   </main>
   <footer class="wrap"><a class="brand" href="/"><img src="/blackridge-logo.png" width="29" height="29" alt="">Blackridge</a><div class="footer-links"><a href="/documentation">Documentation</a><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/support">Support Server</a></div></footer>
