@@ -1,6 +1,7 @@
 import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, Partials, PermissionFlagsBits as P } from 'discord.js'
 import { attachModeration, temporaryBan } from './moderation.js'
 import { attachVerification } from './verification.js'
+import { mountAnalytics } from './analytics.js'
 import { createHash } from 'node:crypto'
 import { hasQuarantineOverwrite, sendModuleLog, setQuarantineOverwrite } from './recovery.js'
 import { matchesPermit, premiumFilters, premiumGuards } from './store.js'
@@ -582,7 +583,7 @@ export function attachProtection(client, db) {
 export function createBotClient({messageContent = process.env.ENABLE_MESSAGE_CONTENT === 'true'} = {}) {
   const intents = [I.Guilds,I.GuildModeration,I.GuildMembers,I.GuildMessages,I.GuildMessageReactions]
   if (messageContent) intents.push(I.MessageContent)
-  return new Client({intents,partials:[Partials.Channel,Partials.Message,Partials.Reaction]})
+  return new Client({intents,partials:[Partials.Channel,Partials.Message,Partials.Reaction,Partials.GuildMember]})
 }
 export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {
   const view = new Proxy(client,{
@@ -591,7 +592,7 @@ export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {
       if (property === 'on' || property === 'once') return (event,handler) => target[property](event,(...args) => {
         const first = args[0]
         const id = event === Events.GuildAuditLogEntryCreate ? args[1]?.id
-          : event === Events.GuildCreate ? first?.id : event === Events.MessageReactionAdd ? first?.message.guildId : first?.guildId ?? first?.guild?.id
+          : [Events.GuildCreate,Events.GuildAvailable].includes(event) ? first?.id : event === Events.MessageReactionAdd ? first?.message.guildId : first?.guildId ?? first?.guild?.id
         const oldReview = allowInactiveReviews && event === Events.InteractionCreate && first?.customId?.startsWith('blackridge-review:')
         if (!id || ownsGuild(id) || oldReview) handler(...args)
       })
@@ -599,6 +600,7 @@ export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {
       return typeof value === 'function' ? value.bind(target) : value
     }
   })
+  mountAnalytics(view,db.analytics)
   const cleanup = [attachProtection(view,db),attachModeration(view,db,id => client.guilds.cache.get(id)),attachVerification(view,db)]
   return () => cleanup.forEach(stop => stop())
 }

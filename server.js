@@ -310,7 +310,11 @@ app.put('/api/guilds/:id/custom-bot/image/:field',customAccess,express.raw({type
   await custom.exclusive(req.guild.id,() => custom.image(req.guild.id,field,req.body))
   res.json(custom.state(req.guild.id,req.session.user.id))
 })
-app.get('/api/guilds/:id/activity',(req,res) => res.json({days:db.activity(req.guild.id)}))
+app.get('/api/guilds/:id/analytics',(req,res) => {
+  const period = req.query.period ?? 'week'
+  if (!['day','week','month','year'].includes(period)) return res.status(400).json({error:'Choose a valid analytics period.'})
+  res.json(db.analytics.range(req.guild.id,period))
+})
 app.get('/api/guilds/:id/events',async (req,res) => {
   const events = db.recent(req.guild.id,req.query.kind).map(event => {
     const pattern = event.kind === 'moderation' ? /\bmoderator (\d{17,20})\b/
@@ -559,7 +563,7 @@ for (const [path,body] of Object.entries(resources)) {
   const page = renderMain('<div class="resource-page">' + body + '</div>')
   app.get(path,(req,res) => sendPage(req,res,page))
 }
-const dashboardShell = renderMain('<p role="status">Loading…</p>').replace('<body>','<body class="dashboard-page">')
+const dashboardShell = renderMain('<p role="status">Loading…</p>').replace('/design.css','/analytics.css').replace('<body>','<body class="dashboard-page">')
 app.get(['/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => {
   res.set('X-Robots-Tag','noindex')
   sendPage(req,res,dashboardShell)
