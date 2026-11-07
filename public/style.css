@@ -26,6 +26,7 @@ h2{font-size:28px;line-height:1.2;letter-spacing:-.035em;margin-bottom:16px}
 h3{font-size:15px;line-height:1.35;font-weight:680}
 p,small,.muted,footer span{color:var(--muted)}
 .hero p{max-width:44ch;font-size:16px}
+#protection>p{margin-bottom:16px}
 .actions{flex-wrap:wrap;margin-top:24px}
 .preview,.card{background:var(--panel);border:1px solid var(--line);border-radius:12px}
 .preview{overflow:hidden}
@@ -427,6 +428,7 @@ body.has-workspace .sidebar{overflow:auto}
 .raid-step-heading h3,.raid-step-heading p{margin:0}
 .raid-step-heading p{margin-top:4px}
 
+.resource-page h1,.premium-heading{font-size:28px;line-height:1.2;letter-spacing:-.035em;margin:0 0 16px}
 .premium-heading,.premium-picker h3{text-align:center}
 .premium-picker{max-width:880px;margin:40px auto 0}
 .premium-picker h3{margin:0 0 22px}

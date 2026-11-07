@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Blackridge detects raids and destructive admin activity on Discord.">
-  <title>Blackridge</title>
-  <link rel="icon" href="/favicon.svg">
+  <!-- page-metadata -->
+  <link rel="icon" type="image/png" sizes="96x96" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/blackridge-icon.png">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <header>
     <nav class="wrap" aria-label="Main navigation">
-      <a href="/" class="brand"><img src="/shield.png" alt="">Blackridge</a>
+      <a href="/" class="brand"><img src="/blackridge-logo.png" width="29" height="29" alt="">Blackridge</a>
       <div class="navlinks"><a href="/dashboard">Dashboard</a><a href="/premium">Premium</a><a href="/support">Support</a></div>
       <a class="button small" href="/auth/login" id="account">Sign In</a>
     </nav>
@@ -24,7 +24,7 @@
         <div class="actions"><a class="button primary" href="/invite">Add to Discord</a><a class="button" href="/dashboard">Open Dashboard</a></div>
       </div>
       <div class="preview" aria-label="Server protection preview">
-        <div class="preview-bar"><img src="/shield.png" alt=""> Server protection</div>
+        <div class="preview-bar"><img src="/blackridge-logo.png" width="22" height="22" alt=""> Server protection</div>
         <div class="preview-body">
           <div class="preview-row"><span class="icon-tile" data-icon="nuke"></span><div><strong>Anti-Nuke</strong><small>Channel deletions</small></div><span class="preview-value">3 in 20s</span></div>
           <div class="preview-row"><span class="icon-tile" data-icon="raid"></span><div><strong>Anti-Raid</strong><small>Join surge detection</small></div><span class="preview-value">10 in 10s</span></div>
@@ -33,7 +33,8 @@
       </div>
     </section>
     <section class="wrap section" id="protection">
-      <h2>Protection</h2>
+      <h2>Discord Server Protection</h2>
+      <p>Blackridge is a Discord security bot with configurable anti-raid, anti-nuke, moderation, and member verification tools.</p>
       <div class="grid">
         <article class="card"><span class="icon-tile" data-icon="nuke"></span><h3>Anti-Nuke</h3><p>Set separate limits for channel, role, webhook, and moderation activity. Log incidents or respond automatically when an actor crosses a limit.</p></article>
         <article class="card"><span class="icon-tile" data-icon="raid"></span><h3>Anti-Raid</h3><p>Catch sudden spikes in joins. Use a sensitivity preset or set your own threshold, then choose how to handle qualifying arrivals.</p></article>
@@ -52,6 +53,7 @@
     </section>
     <section class="wrap section landing-faq">
       <h2>Frequently asked questions</h2>
+      <details class="card"><summary>How do I add Blackridge to my Discord server?</summary><p><a href="/invite">Add Blackridge to Discord</a>, select a server you manage, and authorize the bot. In the dashboard, choose which protections to enable and check that Blackridge’s role is above the roles it needs to moderate.</p></details>
       <details class="card"><summary>How do I give verified members access?</summary><p>In Discord, give the Verified Role access to member channels. Keep the verification channel visible to newcomers and publish the panel from Blackridge.</p></details>
       <details class="card"><summary>Can I monitor a server before enforcing actions?</summary><p>Yes. Choose Log Only for a protection rule and review the detections in Security Logs before changing its response.</p></details>
       <details class="card"><summary>What can a server backup restore?</summary><p>Backups can restore supported server settings and recreate eligible roles and channels. See the documentation for recovery limits.</p></details>
@@ -62,6 +64,6 @@
       <ol class="steps setup-cards"><li><strong>Connect</strong><span>Add Blackridge to a Discord server you manage.</span></li><li><strong>Monitor</strong><span>Set role priority, configure your modules, and review detections in log-only mode.</span></li><li><strong>Protect</strong><span>Enable the responses you want so Blackridge can act when it detects a threat.</span></li></ol>
     </section>
   </main>
-  <footer class="wrap"><a class="brand" href="/"><img src="/shield.png" alt="">Blackridge</a><div class="footer-links"><a href="/documentation">Documentation</a><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/support">Support Server</a></div></footer>
+  <footer class="wrap"><a class="brand" href="/"><img src="/blackridge-logo.png" width="29" height="29" alt="">Blackridge</a><div class="footer-links"><a href="/documentation">Documentation</a><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/support">Support Server</a></div></footer>
 </body>
 </html>

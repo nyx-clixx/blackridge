@@ -1,4 +1,4 @@
-import { resources } from './resources.js'
+import { planName, premiumPlans } from './plans.js'
 
 const app = document.querySelector('#app')
 const account = document.querySelector('#account')
@@ -718,23 +718,8 @@ async function premium(me) {
   const subscriptions = billing.subscriptions?.length ? '<section class="card stack billing-panel"><h3>Your Subscriptions</h3>' +
     billing.subscriptions.map(row => '<div class="actions stack"><span>' + esc(row.name) + ' · ' + planName(row.plan) +
       '</span><button type="button" class="button small" data-portal="manage" data-guild="' + esc(row.guild) + '"' + (billing.enabled ? '' : ' disabled') + '>Manage Billing</button></div>').join('') + '</section>' : ''
-  shell('<h2 class="premium-heading">Blackridge Premium</h2>' + premiumPlans([]) + picker + subscriptions + '<p id="billing-status" role="status"></p>')
+  shell('<h1 class="premium-heading">Blackridge Premium</h1>' + premiumPlans([]) + picker + subscriptions + '<p id="billing-status" role="status"></p>')
   wireBilling()
-}
-const planName = plan => plan === 'custom' ? 'Custom Bot' : 'Premium'
-function premiumPlans(plans,billing = {}) {
-  const features = ['Advanced Auto Moderation','Advanced Anti-Nuke','Server Backups']
-  return '<div class="grid pricing">' + [
-    ['premium','blue','$2.99',features],
-    ['custom','custom','$4.99',[...features,'Custom Bot']]
-  ].map(([plan,theme,price,items]) => {
-    const purchase = billing.enabled && billing.purchasable ? '<button class="button plan-purchase" type="button" data-checkout="' + plan + '">Subscribe</button>' : ''
-    const upgrade = billing.enabled && plan === 'custom' && billing.subscription?.plan === 'premium' && billing.subscription.status === 'active' && !billing.subscription.review
-      ? '<button class="button plan-purchase" type="button" data-portal="upgrade">Upgrade to Custom Bot</button>' : ''
-    return '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + icon('premium') + '</span><h3>Blackridge ' + planName(plan) + '</h3><strong>' + price + '<small> / month</small></strong><ul>' +
-      items.map(item => '<li>' + item + '</li>').join('') + '</ul>' + purchase + upgrade +
-      (plans.includes(plan) ? '<span class="badge">Your Current Active Plan</span>' : '') + '</article>'
-  }).join('') + '</div>'
 }
 function serverBilling(plan,billing) {
   const sub = billing.subscription
@@ -795,7 +780,7 @@ async function customBotPanel(path) {
         '<label>Status<select name="status">' + options({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'},profile.status ?? 'online') + '</select></label>' +
         '<label>Activity Type<select name="activityType">' + options({none:'Disabled',playing:'Playing',listening:'Listening',watching:'Watching',competing:'Competing'},profile.activityType ?? 'none') + '</select></label>' +
         '<label>Activity Text<input name="activity" maxlength="100" value="' + esc(profile.activity ?? '') + '"></label><label>Bio<textarea name="bio" maxlength="400" rows="4">' + esc(state.bio) + '</textarea></label></div><div class="fields stack"><label>Change Avatar<input type="file" name="avatar" accept="image/png,image/jpeg,image/webp"></label><label>Change Banner<input type="file" name="banner" accept="image/png,image/jpeg,image/webp"></label></div><p>PNG, JPEG, or WebP up to 3 MB. Verification panels posted by Blackridge should be republished after switching bots.</p><button class="button primary">Save Profile</button></form>' +
-        '<aside class="custom-preview"><div class="custom-banner">' + (state.banner ? '<img alt="" src="' + esc(state.banner) + '">' : '') + '</div><div class="custom-preview-body"><div class="custom-preview-avatar"><img alt="" src="' + esc(state.avatar || '/icon.png') + '"><span class="presence-dot presence-' + esc(profile.status ?? 'online') + '"></span></div><h3><span data-profile-name>' + esc(state.username) + '</span> <small class="app-badge">APP</small></h3><p data-profile-status>' + ({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'}[profile.status] ?? 'Online') + '</p><div class="custom-preview-bio"><strong>Bio</strong><p data-profile-bio>' + esc(state.bio || 'No bio set.') + '</p></div></div></aside></section>' : '') +
+        '<aside class="custom-preview"><div class="custom-banner">' + (state.banner ? '<img alt="" src="' + esc(state.banner) + '">' : '') + '</div><div class="custom-preview-body"><div class="custom-preview-avatar"><img alt="" src="' + esc(state.avatar || '/blackridge-icon.png') + '"><span class="presence-dot presence-' + esc(profile.status ?? 'online') + '"></span></div><h3><span data-profile-name>' + esc(state.username) + '</span> <small class="app-badge">APP</small></h3><p data-profile-status>' + ({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'}[profile.status] ?? 'Online') + '</p><div class="custom-preview-bio"><strong>Bio</strong><p data-profile-bio>' + esc(state.bio || 'No bio set.') + '</p></div></div></aside></section>' : '') +
       '<p id="custom-status" role="status"></p>'
     const action = async (button,run,message) => {
       const status = panel.querySelector('#custom-status')
@@ -1308,7 +1293,6 @@ async function dashboard() {
 if (account.tagName === 'DETAILS') void accountMenu(null)
 if (location.pathname.startsWith(base)) dashboard()
 else {
-  if (Object.hasOwn(resources,location.pathname)) shell('<div class="resource-page">' + resources[location.pathname] + '</div>')
   const me = request('/api/me').catch(() => null)
   if (location.pathname === '/premium') void me.then(premium)
   void me.then(data => { if (data) accountMenu(data) })

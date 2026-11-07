@@ -1,3 +1,5 @@
+import { resources } from './public/resources.js'
+import { premiumPlans } from './public/plans.js'
 import { stripeBilling } from './billing.js'
 import { billingError } from './billing-store.js'
 import express from 'express'
@@ -502,6 +504,33 @@ app.use('/api',(req,res) => res.status(404).json({error:'Route not found.'}))
 const publicDir = fileURLToPath(new URL('./public/',import.meta.url))
 const homeShell = readFileSync(new URL('./public/index.html',import.meta.url),'utf8')
 const htmlEscape = value => String(value ?? '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[character])
+const publicPages = {
+  '/': ['Blackridge | Discord Security Bot','Protect your Discord server with Blackridge. Set up anti-raid, anti-nuke, auto moderation, and member verification from one dashboard.'],
+  '/premium': ['Blackridge Premium & Custom Bot','Compare Blackridge plans for advanced Discord moderation, anti-nuke protection, server backups, and custom bot branding.'],
+  '/documentation': ['Blackridge Documentation | Discord Bot Setup','Learn to install Blackridge and configure Discord raid protection, anti-nuke rules, verification, moderation, and backups.'],
+  '/terms': ['Terms of Service | Blackridge','Read the terms for using Blackridge’s Discord security and moderation features.'],
+  '/privacy': ['Privacy Policy | Blackridge','Learn how Blackridge handles Discord account, moderation, and server configuration data.']
+}
+function pageMetadata(path) {
+  if (!Object.hasOwn(publicPages,path)) return '<title>Blackridge Dashboard</title><meta name="robots" content="noindex">'
+  const [title,description] = publicPages[path]
+  const url = base + path
+  const image = base + '/blackridge-icon.png'
+  const siteData = {'@context':'https://schema.org','@graph':[
+    {'@type':'WebSite','name':'Blackridge','url':base + '/'},
+    {'@type':'Organization','name':'Blackridge','url':base + '/','logo':image}
+  ]}
+  return [
+    '<title>' + htmlEscape(title) + '</title>',
+    '<meta name="description" content="' + htmlEscape(description) + '">',
+    '<link rel="canonical" href="' + htmlEscape(url) + '">',
+    ...Object.entries({'og:type':'website','og:site_name':'Blackridge','og:title':title,'og:description':description,'og:url':url,'og:image':image,
+      'og:image:alt':'Blackridge logo','og:image:width':'256','og:image:height':'256'}).map(([key,value]) =>
+      '<meta property="' + key + '" content="' + htmlEscape(value) + '">'),
+    '<meta name="twitter:card" content="summary">',
+    path === '/' ? '<script type="application/ld+json">' + JSON.stringify(siteData) + '</script>' : ''
+  ].join('\n  ')
+}
 function sendPage(req,res,markup) {
   const session = openSession(cookie(req,'br_session'))
   const user = session?.until > Date.now() ? session.user : null
@@ -509,16 +538,31 @@ function sendPage(req,res,markup) {
     (user.avatar ? '<img alt="" src="https://cdn.discordapp.com/avatars/' + encodeURIComponent(user.id) + '/' + encodeURIComponent(user.avatar) + '.png?size=64">' :
       '<span class="initial">' + htmlEscape(user.username.slice(0,1)) + '</span>') +
     '<span>' + htmlEscape(user.username) + '</span></summary><div class="account-links"><button type="button" id="sign-out">Log Out</button><a href="/premium">Premium</a><a href="/support">Support Server</a></div></details>' : null
+  markup = markup.replace('<!-- page-metadata -->',() => pageMetadata(req.path.toLowerCase().replace(/\/$/,'') || '/'))
   res.set('Cache-Control','private, no-store').type('html').send(account ? markup.replace(/<a [^>]*id="account">Sign In<\/a>/,() => account) : markup)
 }
-app.get(['/','/index.html'],(req,res) => sendPage(req,res,homeShell))
+app.get('/',(req,res) => sendPage(req,res,homeShell))
+app.get('/index.html',(req,res) => res.redirect(301,'/'))
+app.get('/robots.txt',(req,res) => res.type('text/plain').send('User-agent: *\nDisallow: /api/\nDisallow: /auth/\nSitemap: ' + base + '/sitemap.xml\n'))
+app.get('/sitemap.xml',(req,res) => res.type('application/xml').send(
+  '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+  Object.keys(publicPages).map(path => '  <url><loc>' + htmlEscape(base + path) + '</loc></url>').join('\n') + '\n</urlset>\n'))
 app.use(express.static(publicDir))
-const appShell = homeShell
-  .replace(/<main id="app">[\s\S]*?<\/main>/,'<main id="app"><div class="wrap dashboard"><p role="status">Loading…</p></div></main>')
+const renderMain = body => homeShell
+  .replace(/<main id="app">[\s\S]*?<\/main>/,() => '<main id="app"><div class="wrap dashboard">' + body + '</div></main>')
+const premiumShell = renderMain('<h1 class="premium-heading">Blackridge Premium</h1>' + premiumPlans() +
+  '<p class="stack"><a class="button" href="/dashboard">Open Dashboard</a></p>')
 app.get('/support',(req,res) => res.redirect(supportInvite))
-app.get(['/premium','/documentation','/terms','/privacy'],(req,res) => sendPage(req,res,appShell))
-const dashboardShell = appShell.replace('<body>','<body class="dashboard-page">')
-app.get(['/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => sendPage(req,res,dashboardShell))
+app.get('/premium',(req,res) => sendPage(req,res,premiumShell))
+for (const [path,body] of Object.entries(resources)) {
+  const page = renderMain('<div class="resource-page">' + body + '</div>')
+  app.get(path,(req,res) => sendPage(req,res,page))
+}
+const dashboardShell = renderMain('<p role="status">Loading…</p>').replace('<body>','<body class="dashboard-page">')
+app.get(['/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => {
+  res.set('X-Robots-Tag','noindex')
+  sendPage(req,res,dashboardShell)
+})
 app.use((error,req,res,next) => {
   if (res.headersSent) return next(error)
   const status = error.status || 500
