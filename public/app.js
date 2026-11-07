@@ -448,10 +448,7 @@ function appealsPanel(path,config,channels) {
 function securityScore(checks) {
   const labels = {raid:'Anti-Raid Enabled',nuke:'Anti-Nuke Enabled',checkpoint:'Checkpoint Enabled',priority:'Highest Role Priority',admin:'Administrator Permission',quarantine:'Quarantine Role Configured'}
   const passed = Object.keys(labels).filter(key => checks?.[key]).length
-  const percent = Math.round(passed / Object.keys(labels).length * 100)
-  return '<section class="card security-summary"><div class="score-visual"><div class="score-ring"><svg viewBox="0 0 100 100" aria-hidden="true">' +
-    '<circle cx="50" cy="50" r="41" class="score-track"/><circle cx="50" cy="50" r="41" pathLength="100" stroke-dasharray="' + percent + ' 100" class="score-progress"/></svg>' +
-    '<strong>' + percent + '%</strong></div><div><h3>Security Score</h3><p>' + passed + ' of ' + Object.keys(labels).length + ' checks passed</p></div></div><ul>' + Object.entries(labels).map(([key,label]) =>
+  return '<section class="card security-summary"><div><h3>Security Score</h3><strong>' + Math.round(passed/6*100) + '%</strong><p>' + passed + ' of 6 checks passed</p></div><ul>' + Object.entries(labels).map(([key,label]) =>
     '<li><span class="security-check' + (checks?.[key] ? ' passed' : '') + '">' + (checks?.[key] ? '✓' : '–') + '</span><span>' + label + '</span><span class="muted">' + (checks?.[key] ? 'Pass' : 'Needs attention') + '</span></li>').join('') + '</ul></section>'
 }
 function renderServerPicker(guilds,userId) {
@@ -463,7 +460,7 @@ function renderServerPicker(guilds,userId) {
   } catch {}
   function render(focusId) {
     const sorted = [...guilds].sort((a,b) => Number(pinned.has(b.id))-Number(pinned.has(a.id)))
-    shell('<div class="page-intro"><p class="eyebrow">Dashboard</p><h1>Select a server</h1><p>Choose a Discord server to manage with Blackridge.</p></div><div class="servers workspace-servers">' + sorted.map(guild => '<article class="card server-card"><div class="server-card-top"><div class="server-avatar">' + (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + esc(guild.id) + '/' + esc(guild.icon) + '.png">' : esc(guild.name.slice(0,2).toUpperCase())) + '</div><button type="button" class="button small pin-server" data-pin="' + esc(guild.id) + '" aria-pressed="' + pinned.has(guild.id) + '" aria-label="Pin ' + esc(guild.name) + '">' + icon('pin') + '</button></div><h3>' + esc(guild.name) + '</h3><div class="server-access ' + (guild.owner ? 'is-owner' : '') + '">' + icon(guild.owner ? 'premium' : 'server') + (guild.owner ? 'Owner' : 'Dashboard Access') + '</div><a class="button small" href="' + (guild.installed ? base + '/' + guild.id : '/invite?guild=' + guild.id) + '">' + (guild.installed ? 'Manage' : 'Set up') + '</a></article>').join('') + '</div>' + (guilds.length ? '' : '<div class="card">No servers with management access were found.</div>'))
+    shell('<h2>Select a server</h2><div class="servers">' + sorted.map(guild => '<article class="card server-card"><div class="server-card-top"><div class="server-avatar">' + (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + esc(guild.id) + '/' + esc(guild.icon) + '.png">' : esc(guild.name.slice(0,2).toUpperCase())) + '</div><button type="button" class="button small pin-server" data-pin="' + esc(guild.id) + '" aria-pressed="' + pinned.has(guild.id) + '" aria-label="Pin ' + esc(guild.name) + '">' + icon('pin') + '</button></div><h3>' + esc(guild.name) + '</h3><div class="server-access ' + (guild.owner ? 'is-owner' : '') + '">' + icon(guild.owner ? 'premium' : 'server') + (guild.owner ? 'Owner' : 'Dashboard Access') + '</div><a class="button small" href="' + (guild.installed ? base + '/' + guild.id : '/invite?guild=' + guild.id) + '">' + (guild.installed ? 'Manage' : 'Set up') + '</a></article>').join('') + '</div>' + (guilds.length ? '' : '<div class="card">No servers with management access were found.</div>'))
     for (const button of app.querySelectorAll('[data-pin]')) {
       if (button.dataset.pin === focusId) button.focus()
       button.onclick = () => {
@@ -1112,7 +1109,7 @@ async function dashboard() {
   try {
     const me = await request('/api/me')
     if (!me.user) {
-      shell('<div class="card signin-card"><a class="button small close-signin" href="/" aria-label="Close sign-in">×</a><img class="signin-mark" src="/blackridge-logo.png" alt="" width="42" height="42"><h1>Manage your servers</h1><p>Connect your Discord account to open the Blackridge dashboard.</p><a class="button primary" href="/auth/login">Sign In with Discord</a>' + (me.configured ? '' : '<p class="muted">Discord sign-in is awaiting application setup.</p>') + (location.search ? '<p class="error">Sign-in could not be completed. Please try again.</p>' : '') + '</div>')
+      shell('<div class="card signin-card"><a class="button small close-signin" href="/" aria-label="Close sign-in">×</a><h2>Manage Servers</h2><p>Connect your Discord account to continue.</p><a class="button primary" href="/auth/login">Sign In with Discord</a>' + (me.configured ? '' : '<p class="muted">Discord sign-in is awaiting application setup.</p>') + (location.search ? '<p class="error">Sign-in could not be completed. Please try again.</p>' : '') + '</div>')
       return
     }
     await accountMenu(me)
@@ -1148,47 +1145,20 @@ async function dashboard() {
       const field = '<label class="module-switch"><input type="checkbox" role="switch" name="enabled" aria-label="' + sections[section] + '"' + (linkedSwitch ? ' form="settings"' : '') + (data.config[section].enabled ? ' checked' : '') + (data.owner ? '' : ' disabled') + '><span></span></label>'
       switchControl = serviceSwitch ? '<form id="module-toggle">' + field + '<p class="error" role="status"></p></form>' : field
     }
-    const heading = '<div class="page-heading"><span class="icon-tile">' + icon(section) + '</span><div><h1 class="dash-title">' + sections[section] + '</h1></div>' + switchControl + '</div>'
+    const heading = '<div class="page-heading"><span class="icon-tile">' + icon(section) + '</span><div><h2 class="dash-title">' + sections[section] + '</h2></div>' + switchControl + '</div>'
     const {events} = eventData
     const activity = '<section class="card stack"><h3>' + 'Event History' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
-    const protection = ['raid','nuke','lockdown','honeypot','verification','checkpoint']
-    const administration = ['permits','moderation','appeals','reports','backup','automod']
-    const modules = keys => keys.map(key => {
+    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','appeals','verification','honeypot','reports'].map(key => {
       const restricted = key === 'permits' && !data.owner ? 'Owner only' : key === 'appeals' && !data.appealsManager ? 'Manager access required' : ''
       const enabled = key === 'appeals' ? data.appealsConfigured : data.config[key]?.enabled
       const state = enabled ? '<i class="dot"></i> Enabled' : '<i class="dot disabled-dot"></i> Disabled'
       return '<article class="card compact-module"><div class="module-head"><span class="icon-tile">' + icon(key) + '</span><div><h3>' + sections[key] + (key === 'backup' ? crown : '') + '</h3><span class="badge">' + state + '</span></div></div>' + (restricted ? '<span class="button module-configure" aria-disabled="true">' + restricted + '</span>' : '<a class="button module-configure" href="' + serverPath + '/' + key + '" aria-label="Configure ' + sections[key] + '">' + icon('configure') + ' Configure</a>') + '</article>'
     }).join('')
-    const overview = securityScore(data.security) +
-      '<section class="module-section"><h2>Protection</h2><div class="module-grid">' + modules(protection) + '</div></section>' +
-      '<section class="module-section"><h2>Administration</h2><div class="module-grid">' + modules(administration) + '</div></section>'
-    const serverAvatar = data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' +
-      encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')
-    const visibleAdmin = administration.filter(key => key === 'permits' ? data.owner : key !== 'appeals' || data.appealsManager)
-    const sidebar = '<nav class="sidebar" aria-label="Server navigation"><div class="sidebar-top">' +
-      '<a class="server-switch" title="Switch server" href="' + base + '">' + serverAvatar + '<span>' + esc(data.name) + '</span></a>' +
-      '<button type="button" class="button small workspace-menu" aria-controls="workspace-links" aria-expanded="false">Modules</button></div>' +
-      '<div class="workspace-links" id="workspace-links"><span class="nav-label">Workspace</span>' + navigation('overview') +
-      navigation('logs') + (data.owner ? navigation('premium') + navigation('custom') : '') +
-      '<span class="nav-label">Protection</span>' + protection.map(navigation).join('') +
-      '<span class="nav-label">Administration</span>' + visibleAdmin.map(navigation).join('') + '</div></nav>'
-    const content = (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner))
+    const overview = securityScore(data.security) + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout">' + sidebar + '<div class="dash-pane"><div class="dash-main">' +
-      heading + content + '<p id="refresh" role="status"></p></div></div></div>')
-    const menuToggle = app.querySelector('.workspace-menu')
-    const setMenuOpen = open => {
-      menuToggle.setAttribute('aria-expanded', String(open))
-      app.querySelector('.sidebar').classList.toggle('workspace-open', open)
-    }
-    menuToggle.onclick = () => setMenuOpen(menuToggle.getAttribute('aria-expanded') === 'false')
-    app.querySelector('.sidebar').addEventListener('keydown', event => {
-      if (event.key !== 'Escape' || menuToggle.getAttribute('aria-expanded') !== 'true') return
-      setMenuOpen(false)
-      menuToggle.focus()
-    })
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('honeypot') + navigation('verification') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('reports') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     if (section === 'reports') wireReports(path,data.config.reports)
     if (section === 'honeypot') wireHoneyPot(path,id,data.config.honeypot)
     if (section === 'premium') wireBilling(path,id)

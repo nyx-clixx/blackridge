@@ -13,64 +13,46 @@
   <header>
     <nav class="wrap" aria-label="Main navigation">
       <a href="/" class="brand"><img src="/blackridge-logo.png" width="29" height="29" alt="">Blackridge</a>
-      <div class="navlinks"><a href="/#protection">Features</a><a href="/documentation">Docs</a><a href="/premium">Premium</a><a href="/support">Support</a></div>
+      <div class="navlinks"><a href="/dashboard">Dashboard</a><a href="/premium">Premium</a><a href="/support">Support</a></div>
       <a class="button small" href="/auth/login" id="account">Sign In</a>
     </nav>
   </header>
   <main id="app">
     <section class="wrap hero">
-      <div class="hero-copy">
-        <p class="hero-label"><span></span> Discord server security</p>
-        <h1>Defend your<br><em>Discord server.</em></h1>
-        <p class="hero-description">Set the rules for raids, destructive admin activity, and spam. Blackridge watches for threats and responds the way you choose.</p>
-        <div class="actions">
-          <a class="button primary" href="/invite">Add to Discord <span aria-hidden="true">↗</span></a>
-          <a class="button" href="/dashboard">Open Dashboard</a>
-        </div>
+      <div>
+        <h1>Protect your<br>Discord server.</h1>
+        <div class="actions"><a class="button primary" href="/invite">Add to Discord</a><a class="button" href="/dashboard">Open Dashboard</a></div>
       </div>
-      <div class="product-window" aria-label="Illustrative Blackridge dashboard preview">
-        <div class="product-chrome"><img src="/blackridge-logo.png" width="20" height="20" alt=""> Blackridge <span>Dashboard preview</span></div>
-        <div class="product-grid">
-          <div class="product-nav" aria-hidden="true">
-            <div class="product-server"><span>O</span> Orbit Studio</div>
-            <span class="product-selected"><i data-icon="overview"></i> Overview</span>
-            <span><i data-icon="logs"></i> Security Logs</span>
-            <small>PROTECTION</small>
-            <span><i data-icon="raid"></i> Anti-Raid</span>
-            <span><i data-icon="nuke"></i> Anti-Nuke</span>
-            <span><i data-icon="verification"></i> Verification</span>
-          </div>
-          <div class="product-content">
-            <div class="product-title"><strong>Security overview</strong><span class="product-state"><i class="dot"></i> Monitoring</span></div>
-            <div class="product-score"><div><small>Security score</small><strong>83<small>%</small></strong><p>5 of 6 checks passed</p></div>
-              <svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="41" class="score-track"/><circle cx="50" cy="50" r="41" pathLength="100" stroke-dasharray="83 100" class="score-progress"/><path d="M36 51l9 9 19-21"/></svg>
-            </div>
-            <div class="product-module"><span class="icon-tile" data-icon="raid"></span><div><strong>Anti-Raid</strong><small>Join surge detection</small></div><span class="dot"></span></div>
-            <div class="product-module"><span class="icon-tile" data-icon="nuke"></span><div><strong>Anti-Nuke</strong><small>Destructive action limits</small></div><span class="dot"></span></div>
-          </div>
+      <div class="preview" aria-label="Server protection preview">
+        <div class="preview-bar"><img src="/blackridge-logo.png" width="22" height="22" alt=""> Server protection</div>
+        <div class="preview-body">
+          <div class="preview-row"><span class="icon-tile" data-icon="nuke"></span><div><strong>Anti-Nuke</strong><small>Channel deletions</small></div><span class="preview-value">3 in 20s</span></div>
+          <div class="preview-row"><span class="icon-tile" data-icon="raid"></span><div><strong>Anti-Raid</strong><small>Join surge detection</small></div><span class="preview-value">10 in 10s</span></div>
+          <div class="preview-row"><span class="icon-tile" data-icon="logs"></span><div><strong>Response</strong><small>Review detections in security logs</small></div><span class="preview-value">Log only</span></div>
         </div>
       </div>
     </section>
     <section class="wrap section" id="protection">
-      <div class="section-heading"><p class="eyebrow">Protection</p><h2>Discord Server Protection</h2><p>Cover the ways a server can be disrupted, from a sudden wave of joins to a compromised admin account.</p></div>
-      <div class="feature-grid">
-        <article class="card feature-lead"><div><span class="icon-tile" data-icon="raid"></span><h3>Anti-Raid</h3><p>Catch sudden spikes in joins. Set the threshold, choose a response, and send alerts to your moderation team.</p></div><div class="feature-radar" aria-hidden="true"><i></i><i></i><i></i><span data-icon="raid"></span></div></article>
-        <article class="card feature-lead"><div><span class="icon-tile" data-icon="nuke"></span><h3>Anti-Nuke</h3><p>Set limits for channel, role, webhook, and moderation activity. Review detections or respond automatically.</p></div><div class="feature-activity" aria-hidden="true"><span><i data-icon="nuke"></i> Channel deletions <b>3 / 20s</b></span><span><i data-icon="shield"></i> Role permissions <b>Watched</b></span><span><i data-icon="logs"></i> Security log <b>Recorded</b></span></div></article>
+      <h2>Discord Server Protection</h2>
+      <p>Blackridge is a Discord security bot with configurable anti-raid, anti-nuke, moderation, and member verification tools.</p>
+      <div class="grid">
+        <article class="card"><span class="icon-tile" data-icon="nuke"></span><h3>Anti-Nuke</h3><p>Set separate limits for channel, role, webhook, and moderation activity. Log incidents or respond automatically when an actor crosses a limit.</p></article>
+        <article class="card"><span class="icon-tile" data-icon="raid"></span><h3>Anti-Raid</h3><p>Catch sudden spikes in joins. Use a sensitivity preset or set your own threshold, then choose how to handle qualifying arrivals.</p></article>
         <article class="card"><span class="icon-tile" data-icon="checkpoint"></span><h3>Checkpoint</h3><p>Score new accounts and flag suspicious joins.</p></article>
-        <article class="card"><span class="icon-tile" data-icon="automod"></span><h3>Auto Moderation</h3><p>Detect spam, repeat messages, and unwanted links.</p></article>
-        <article class="card"><span class="icon-tile" data-icon="verification"></span><h3>Verification</h3><p>Verify members with one click or a private image CAPTCHA.</p></article>
-        <article class="card"><span class="icon-tile" data-icon="lockdown"></span><h3>Lockdown</h3><p>Pause invites, lock channels, and restore recorded settings afterward.</p></article>
+        <article class="card"><span class="icon-tile" data-icon="automod"></span><h3>Auto Moderation</h3><p>Detect spam, repeated messages, and unwanted links.</p></article>
+        <article class="card"><span class="icon-tile" data-icon="verification"></span><h3>Verification</h3><p>Give new members a clear way in with one-click verification or a private image CAPTCHA.</p></article>
+        <article class="card"><span class="icon-tile" data-icon="lockdown"></span><h3>Lockdown</h3><p>Pause invites, lock channels, and restore recorded settings when an incident ends.</p></article>
       </div>
     </section>
     <section class="wrap section">
-      <div class="section-heading"><p class="eyebrow">Moderation</p><h2>Give your team the right access.</h2></div>
-      <div class="grid team-grid">
-        <article class="card"><span class="icon-tile" data-icon="moderation"></span><h3>Act from Discord</h3><p>Clear recent spam with <code>/purge</code> and see a member’s recorded warnings, kicks, and bans with <code>/history</code>.</p></article>
+      <h2>Built for moderation teams</h2>
+      <div class="grid">
+        <article class="card"><span class="icon-tile" data-icon="moderation"></span><h3>Act from Discord</h3><p>Clear recent spam with /purge and pull up a member’s recorded warnings, kicks, and bans with /history.</p></article>
         <article class="card"><span class="icon-tile" data-icon="permits"></span><h3>Delegate with Permits</h3><p>Choose which Discord users and roles can use each moderation command.</p></article>
       </div>
     </section>
     <section class="wrap section landing-faq">
-      <div class="section-heading"><h2>Frequently asked questions</h2></div>
+      <h2>Frequently asked questions</h2>
       <details class="card"><summary>How do I add Blackridge to my Discord server?</summary><p><a href="/invite">Add Blackridge to Discord</a>, select a server you manage, and authorize the bot. In the dashboard, choose which protections to enable and check that Blackridge’s role is above the roles it needs to moderate.</p></details>
       <details class="card"><summary>How do I give verified members access?</summary><p>In Discord, give the Verified Role access to member channels. Keep the verification channel visible to newcomers and publish the panel from Blackridge.</p></details>
       <details class="card"><summary>Can I monitor a server before enforcing actions?</summary><p>Yes. Choose Log Only for a protection rule and review the detections in Security Logs before changing its response.</p></details>
@@ -78,10 +60,9 @@
       <a class="button" href="/documentation">Read Documentation</a>
     </section>
     <section class="wrap section" id="setup">
-      <div class="section-heading"><p class="eyebrow">Setup</p><h2>Get started with Blackridge.</h2></div>
+      <h2>Get Started</h2>
       <ol class="steps setup-cards"><li><strong>Connect</strong><span>Add Blackridge to a Discord server you manage.</span></li><li><strong>Monitor</strong><span>Set role priority, configure your modules, and review detections in log-only mode.</span></li><li><strong>Protect</strong><span>Enable the responses you want so Blackridge can act when it detects a threat.</span></li></ol>
     </section>
-    <div class="wrap"><section class="landing-cta"><img src="/blackridge-logo.png" width="44" height="44" alt=""><div><h2>Ready to protect your server?</h2><p>Add Blackridge and choose the protections your team needs.</p></div><a class="button primary" href="/invite">Add to Discord</a></section></div>
   </main>
   <footer class="wrap"><a class="brand" href="/"><img src="/blackridge-logo.png" width="29" height="29" alt="">Blackridge</a><div class="footer-links"><a href="/documentation">Documentation</a><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/support">Support Server</a></div></footer>
 </body>
