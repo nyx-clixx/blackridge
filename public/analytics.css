@@ -105,12 +105,12 @@
 .backup-preview-group dt { overflow-wrap:anywhere; }
 .backup-preview-group dd { margin:0; color:var(--muted); }
 .backup-preview-note { font-size:.875rem; }
-.lockdown-channels {
-  display:grid; grid-template-columns:auto minmax(0,370px); align-items:center; gap:12px;
-  margin-top:20px;
-}
+.lockdown-channels { display:grid; gap:10px; max-width:420px; margin-top:20px; }
+.lockdown-channels h4 { margin:0; }
+.lockdown-channels .discord-options { position:static; margin-top:6px; }
+.lockdown-divider { border:0; border-top:1px solid var(--line); margin:20px 0; }
 .lockdown-tiles {
-  display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin-top:24px;
+  display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px;
 }
 .lockdown-tile {
   position:relative; display:grid; justify-items:center; grid-template-rows:auto 1fr auto; gap:10px;
@@ -133,5 +133,4 @@
 @media(max-width:1040px) { .lockdown-tiles { grid-template-columns:repeat(3,minmax(0,1fr)); } }
 @media(max-width:520px) {
   .lockdown-tiles { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .lockdown-channels { grid-template-columns:1fr; }
 }

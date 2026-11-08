@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { AuditLogEvent as A, ChannelType, Collection, Events, WebhookType } from 'discord.js'
 import { attachActivityLogging } from '../activity-logging.js'
+import { messageCard } from '../messages.js'
 import { createLogDispatcher } from '../discord-logs.js'
 import { attachModeration } from '../moderation.js'
 import { createStore, policies } from '../store.js'
@@ -29,7 +30,7 @@ test('activity logging validates routes, separates moderation, and sends message
   assert.equal(policies.logging.safeParse(config).success,true)
   assert.equal(policies.logging.safeParse({enabled:true,channels:{typo:roleLog}}).success,false)
   db.save(id,'moderation',{enabled:true,alertChannel:modLog})
-  attachActivityLogging(client,db,createLogDispatcher(1))
+  const stopActivity = attachActivityLogging(client,db,createLogDispatcher(1),1)
   const stop = attachModeration(client,db)
   try {
     const audit = (action,extra={}) => client.emit(Events.GuildAuditLogEntryCreate,{
@@ -57,7 +58,8 @@ test('activity logging validates routes, separates moderation, and sends message
     audit(A.EmojiCreate)
     audit(A.StickerDelete)
     audit(A.SoundboardSoundUpdate)
-    await new Promise(resolve => setTimeout(resolve,25))
+    for (let attempt = 0; delivered.length < 2 && attempt < 20; attempt++)
+      await new Promise(resolve => setTimeout(resolve,10))
     const details = delivered.map(([,payload]) => payload).join('')
     for (const title of ['Server Name Updated','Server Logo Updated','Server Settings Updated','Emoji Created','Sticker Deleted','Soundboard Sound Updated'])
       assert.ok(details.includes(title),title)
@@ -66,7 +68,7 @@ test('activity logging validates routes, separates moderation, and sends message
     db.save(id,'logging',{...config,enabled:false})
     client.emit(Events.MessageDelete,message)
     assert.equal(delivered.length,count)
-  } finally { stop(); db.close() }
+  } finally { stopActivity(); stop(); db.close() }
 })
 
 test('Discord logs batch Components V2, reuse the owned webhook, and fall back when permissions change',async () => {
@@ -85,7 +87,7 @@ test('Discord logs batch Components V2, reuse the owned webhook, and fall back w
     send:async payload => fallback.push(payload)}
   const guild = {id,client,channels:{cache:new Map([[channelId,channel]])}}
   const enqueue = createLogDispatcher(1)
-  const card = {flags:32768,components:[{type:17,components:[{type:10,content:'Test'}]}],allowedMentions:{parse:[],roles:[]}}
+  const card = {flags:32768,components:[{type:17,components:[{type:10,content:'### <:User:1567545768733053089> Test'}]}],allowedMentions:{parse:[],roles:[]}}
   const flush = () => new Promise(resolve => setTimeout(resolve,20))
   enqueue(guild,channelId,card)
   enqueue(guild,channelId,card)
@@ -93,6 +95,7 @@ test('Discord logs batch Components V2, reuse the owned webhook, and fall back w
   assert.equal(sent.length,1)
   assert.equal(sent[0].components.length,2)
   assert.equal(sent[0].withComponents,true)
+  assert.equal(sent[0].components[0].components[0].content,'### 👤 Test')
   enqueue(guild,channelId,card)
   await flush()
   assert.equal(sent.length,2)
@@ -102,4 +105,51 @@ test('Discord logs batch Components V2, reuse the owned webhook, and fall back w
   await flush()
   assert.equal(fallback.length,1)
   assert.deepEqual(fallback[0].allowedMentions,{parse:[],roles:[]})
+  for (let index = 0; index < 50; index++) enqueue(guild,channelId,messageCard('Message Filter Triggered','Action '+index,{icon:'sword'}))
+  await flush()
+  assert.equal(fallback.length,2)
+  assert.equal(fallback[1].components.length,1)
+  const body = fallback[1].components[0].components[2].content
+  assert.equal(body.split('\n').length,50)
+  assert.match(body,/Action 49/)
+})
+
+test('role changes group by member and actor within one window and use a new card after it',async () => {
+  const client = new EventEmitter()
+  client.user = {id:'10000000000000009'}
+  const guild = {id:'10000000000000000'}
+  const target = '10000000000000001'
+  const actor = '10000000000000002'
+  const firstRole = '10000000000000003'
+  const secondRole = '10000000000000004'
+  const destination = '10000000000000005'
+  const deliveries = []
+  let enabled = true
+  const db = {config:() => ({enabled,channels:{roleUpdate:destination}})}
+  const stop = attachActivityLogging(client,db,(_,channel,card) => deliveries.push({channel,card}),10)
+  const change = (role,key = '$add') => client.emit(Events.GuildAuditLogEntryCreate,{
+    action:A.MemberRoleUpdate,executorId:actor,targetId:target,createdTimestamp:Date.now(),changes:[{key,new:[{id:role}]}]
+  },guild)
+  const finishWindow = () => new Promise(resolve => setTimeout(resolve,25))
+  try {
+    change(firstRole)
+    change(secondRole)
+    change(firstRole,'$remove')
+    assert.equal(deliveries.length,0)
+    await finishWindow()
+    assert.equal(deliveries.length,1)
+    assert.equal(deliveries[0].channel,destination)
+    const card = JSON.stringify(deliveries[0].card)
+    assert.match(card,/3 changes/)
+    assert.ok(card.includes('<@&'+secondRole+'>'))
+    assert.match(card,/Roles Removed/)
+    assert.match(card,/<:User:/)
+    change(secondRole,'$remove')
+    await finishWindow()
+    assert.equal(deliveries.length,2)
+    change(firstRole)
+    enabled = false
+    await finishWindow()
+    assert.equal(deliveries.length,2)
+  } finally { stop() }
 })

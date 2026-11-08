@@ -49,6 +49,7 @@ const iconPaths = {
   shield:'<path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6zM9 12l2 2 4-4"/>',
   warning:'<path d="M10 5 3 18a1 1 0 0 0 1 2h16a1 1 0 0 0 1-2L14 5a2 2 0 0 0-4 0Zm2 4v4m0 3h.01"/>',
   play:'<path fill="currentColor" d="m8 5 11 7-11 7z"/>',
+  logging:'<rect x="5" y="5" width="14" height="16" rx="2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M8 14h2l1.5-3 2 5 1.5-2H17"/>',
   logs:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
   arrow:'<path d="M5 12h14m-6-6 6 6-6 6"/>'
@@ -1052,7 +1053,7 @@ function lockdownControls(channels) {
     '">' + icon(symbol) + '<span>' + label + '</span><span class="lockdown-state" aria-hidden="true"></span></label>').join('')
   return '<form class="card stack lockdown-controls" data-operation="enable"><h3>Lockdown Controls</h3>' +
     '<p>Channel locks modify @everyone. Invite and DM pauses are applied for one hour where Discord exposes the current state.</p>' +
-    '<div class="lockdown-channels discord-field"><span>Channels</span>' + discordSelect('channels',channels,[],true) + '</div>' +
+    '<section class="lockdown-channels" aria-labelledby="lockdown-selection"><h4 id="lockdown-selection">Channel Lockdown Selection</h4>' + discordSelect('channels',channels,[],true) + '</section><hr class="lockdown-divider">' +
     '<div class="lockdown-tiles">' + tiles + '</div><button class="button primary lockdown-submit">' +
     icon('play') + ' Start Lockdown</button></form>'
 }

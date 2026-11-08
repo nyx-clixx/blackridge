@@ -599,8 +599,7 @@ export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {
     }
   })
   mountAnalytics(view,db.analytics)
-  attachActivityLogging(view,db)
-  const cleanup = [attachProtection(view,db),attachModeration(view,db,id => client.guilds.cache.get(id)),attachVerification(view,db)]
+  const cleanup = [attachActivityLogging(view,db),attachProtection(view,db),attachModeration(view,db,id => client.guilds.cache.get(id)),attachVerification(view,db)]
   return () => cleanup.forEach(stop => stop())
 }
 export function startBot(token,db,ownsGuild = () => true) {

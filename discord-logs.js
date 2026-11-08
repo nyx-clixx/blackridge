@@ -1,7 +1,33 @@
 import { isTextDestination } from './text-channel.js'
-import { PermissionFlagsBits as P, WebhookType } from 'discord.js'
+import { standardLogEmoji } from './messages.js'
+import { ComponentType as Type, PermissionFlagsBits as P, WebhookType } from 'discord.js'
 
 const cardWeight = card => card.components[0].components.reduce((sum,component) => sum + (component.content?.length ?? 0),0)
+function compactCards(queue) {
+  const first = queue.shift()
+  const container = first.components[0]
+  const [heading,separator] = container.components
+  const compatible = card => card?.components.length === 1 && !card.allowedMentions.roles.length &&
+    card.components[0].components[0]?.content === heading.content &&
+    card.components[0].components[1]?.type === Type.Separator &&
+    card.components[0].components.slice(2).every(component => component.type === Type.TextDisplay)
+  if (!compatible(first) || !compatible(queue[0])) return first
+  const line = card => card.components[0].components.slice(2).map(component =>
+    component.content.replace(/^-# /,'').replaceAll('\n',' · ')).join(' · ')
+  const rows = [line(first)]
+  let length = rows[0].length + 3
+  while (compatible(queue[0])) {
+    const row = line(queue[0])
+    if (length + row.length + 3 > 3000) break
+    queue.shift()
+    rows.push(row)
+    length += row.length + 3
+  }
+  if (rows.length === 1) return first
+  return {...first,components:[{...container,components:[heading,separator,
+    {type:Type.TextDisplay,content:rows.map(row => '• ' + row).join('\n')}]}]}
+}
+
 const webhookName = 'Blackridge Logs'
 const permanentWebhookErrors = new Set([10015,50001,50013,50027])
 
@@ -16,7 +42,10 @@ export function createLogDispatcher(delay = 1500) {
     if (permissions && !permissions.has(P.ViewChannel | P.SendMessages)) return
     const payload = {flags:items[0].flags,components:items.flatMap(item => item.components),
       allowedMentions:{parse:[],roles:[...new Set(items.flatMap(item => item.allowedMentions.roles))]}}
-    if (permissions && !permissions.has(P.ManageWebhooks)) { await channel.send(payload); return }
+    const mainAppId = process.env.DISCORD_CLIENT_ID
+    const forSender = sender => sender && sender === mainAppId ? payload :
+      {...payload,components:standardLogEmoji(payload.components)}
+    if (permissions && !permissions.has(P.ManageWebhooks)) { await channel.send(forSender(guild.client.user.id)); return }
     if (state.resolveChannel) state.webhook = null
     try {
       if (!state.webhook && Date.now() >= state.retryAt && channel.fetchWebhooks && channel.createWebhook) {
@@ -26,7 +55,7 @@ export function createLogDispatcher(delay = 1500) {
           await channel.createWebhook({name:webhookName,reason:'Blackridge Discord log delivery'})
       }
       if (state.webhook?.token) {
-        await state.webhook.send({...payload,withComponents:true})
+        await state.webhook.send({...forSender(state.webhook.applicationId),withComponents:true})
         return
       }
     } catch (error) {
@@ -34,7 +63,7 @@ export function createLogDispatcher(delay = 1500) {
       state.webhook = null
       state.retryAt = Date.now() + 60000
     }
-    await channel.send(payload)
+    await channel.send(forSender(guild.client.user.id))
   }
 
   return function enqueue(guild,id,card,resolveChannel) {
@@ -57,7 +86,7 @@ export function createLogDispatcher(delay = 1500) {
     state.busy = true
 
     const schedule = () => setTimeout(async () => {
-      const batch = [state.queue.shift()]
+      const batch = [compactCards(state.queue)]
       let size = cardWeight(batch[0])
       let components = batch[0].components[0].components.length + 1
       while (state.queue.length && batch.length < 5) {

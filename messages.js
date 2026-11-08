@@ -10,6 +10,22 @@ const icons = {
   trash:'<:Trash:1567545807849136299>',unlocked:'<:Unlocked:1567545790233321583>',user:'<:User:1567545768733053089>',
   wrench:'<:Wrench:1567662985181134938>'
 }
+const standardIcons = {
+  bell:'🔔',logo:'🛡️',calendar:'📅',check:'✅',crown:'👑',warning:'⚠️',gear:'⚙️',hammer:'🔨',
+  info:'ℹ️',link:'🔗',locked:'🔒',announcement:'📢',mail:'✉️',inbox:'✉️',shield:'🛡️',
+  support:'❔',sword:'⚔️',timer:'⏱️',trash:'🗑️',unlocked:'🔓',user:'👤',wrench:'🔧'
+}
+const emojiFallback = new Map(Object.entries(icons).map(([key,value]) => [value,standardIcons[key]]))
+
+export function standardLogEmoji(containers) {
+  return containers.map(container => ({
+    ...container,components:container.components.map(component => {
+      if (component.type !== Type.TextDisplay || !component.content.startsWith('### <:')) return component
+      return {...component,content:component.content.replace(/^### (<:[^>]+>)/,(_,emoji) => '### ' + (emojiFallback.get(emoji) ?? standardIcons.info))}
+    })
+  }))
+}
+
 export const safeText = value => escapeMarkdown(String(value ?? ''))
 const validId = id => /^\d{17,20}$/.test(id ?? '')
 export const mention = (id,type='user') => validId(id) ? '<'+({user:'@',role:'@&',channel:'#'})[type]+id+'>' : 'Unknown'
