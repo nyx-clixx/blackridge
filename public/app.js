@@ -3,6 +3,29 @@ import { planName, premiumPlans } from './plans.js'
 
 const app = document.querySelector('#app')
 const account = document.querySelector('#account')
+const nav = document.querySelector('.navlinks')
+const navHighlight = nav?.querySelector('.nav-highlight')
+if (navHighlight && !document.body.classList.contains('dashboard-page')) {
+  let pointerLink = null
+  const updateHighlight = () => {
+    const link = nav.querySelector('a:focus-visible') ?? pointerLink
+    if (link) {
+      navHighlight.style.width = link.offsetWidth + 'px'
+      navHighlight.style.height = link.offsetHeight + 'px'
+      navHighlight.style.transform = 'translate(' + link.offsetLeft + 'px,' + link.offsetTop + 'px)'
+    }
+    navHighlight.classList.toggle('is-visible',Boolean(link))
+  }
+  nav.addEventListener('pointerover',event => {
+    if (event.pointerType === 'touch') return
+    const link = event.target.closest('a')
+    if (link) { pointerLink = link; updateHighlight() }
+  })
+  nav.addEventListener('pointerleave',() => { pointerLink = null; updateHighlight() })
+  nav.addEventListener('focusin',updateHighlight)
+  nav.addEventListener('focusout',() => queueMicrotask(updateHighlight))
+  new ResizeObserver(updateHighlight).observe(nav)
+}
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char])
 const iconPaths = {
   honeypot:'<rect x="8" y="3" width="8" height="4" rx="1"/><path d="M8 7c-3 2-4 5-4 8 0 4 2 6 8 6s8-2 8-6c0-3-1-6-4-8M5 12h14m-8 0v3a1.5 1.5 0 0 0 3 0v-3"/>',
@@ -351,21 +374,24 @@ function wireHoneyPot(path,id,config) {
     } finally { save.disabled = toggle.disabled = false }
   }
 }
-function flowStep(number,title,description,contents,classes='') {
-  return '<section class="card settings-section raid-step ' + classes +
-      '"><div class="raid-step-heading"><span aria-hidden="true">' + number + '</span><div><h3>' + title + '</h3><p>' + description +
-      '</p></div></div><div class="fields">' + contents + '</div></section>'
+function configHeading(number,title,description,symbol,badge) {
+  return '<div class="config-step-heading"><span class="icon-tile">' + icon(symbol) + '</span><div><h3>' +
+    number + '. ' + title + '</h3><p>' + description + '</p></div><span class="config-badge">' + badge + '</span></div>'
+}
+function flowStep(number,title,description,symbol,badge,contents,classes='') {
+  return '<section class="card settings-section config-step ' + classes + '">' +
+    configHeading(number,title,description,symbol,badge) + '<div class="fields">' + contents + '</div></section>'
 }
 function verificationForm(config,owner,choices) {
   const field = (name,label,items) => '<div class="discord-field"><span>' + label + '</span>' + discordSelect(name,items,[config[name]]) + '</div>'
   const channels = choices.channels.filter(channel => channel.sendable)
   const captcha = '<div id="captcha-settings" class="fields flow-subfields"' + (config.mode === 'captcha' ? '' : ' hidden') + '><label>Max Attempts<input name="attempts" type="number" min="1" max="5" required value="' + config.attempts + '"></label>' + durationField('minutes','Challenge Duration',config.minutes,1,10,'minutes') + '<label>After Failed Attempts<select name="failure">' + options({retry:'Keep Unverified',kick:'Kick Member'},config.failure,true) + '</select></label></div>'
   const publish = owner ? '<div class="flow-subfields"><button class="button primary" type="button" id="publish-verification">Publish Verification Panel</button><p id="verification-publish-result" role="status"></p></div>' : ''
-  return '<form id="settings"><fieldset class="settings-panels raid-flow"' + (owner ? '' : ' disabled') + '>' +
-    flowStep(1,'Set the Entry Channel','Keep the verification channel visible to new members.',field('channel','Verification Channel',channels) + durationField('minAge','Minimum Account Age',config.minAge,0,365,'days')) +
-    flowStep(2,'Choose a Verification Method','Use a single click or require members to solve an image CAPTCHA.','<label>Verification Mode<select name="mode">' + options({button:'One-click verification',captcha:'Image CAPTCHA'},config.mode) + '</select></label>' + captcha) +
-    flowStep(3,'Assign Member Roles','Give the Verified Role access to your member channels in Discord.',field('verifiedRole','Verified Role',choices.roles) + field('unverifiedRole','Unverified Role (optional)',choices.roles)) +
-    flowStep(4,'Publish and Log','Post the verification panel and choose where to send verification results.',field('alertChannel','Logging Channel',channels) + publish) +
+  return '<form id="settings"><fieldset class="settings-panels config-flow"' + (owner ? '' : ' disabled') + '>' +
+    flowStep(1,'Set the Entry Channel','Keep the verification channel visible to new members.','server','Entry',field('channel','Verification Channel',channels) + durationField('minAge','Minimum Account Age',config.minAge,0,365,'days')) +
+    flowStep(2,'Choose a Verification Method','Use a single click or require members to solve an image CAPTCHA.','verification','Challenge','<label>Verification Mode<select name="mode">' + options({button:'One-click verification',captcha:'Image CAPTCHA'},config.mode) + '</select></label>' + captcha) +
+    flowStep(3,'Assign Member Roles','Give the Verified Role access to your member channels in Discord.','permits','Roles',field('verifiedRole','Verified Role',choices.roles) + field('unverifiedRole','Unverified Role (optional)',choices.roles)) +
+    flowStep(4,'Publish and Log','Post the verification panel and choose where to send verification results.','logs','Publishing',field('alertChannel','Logging Channel',channels) + publish) +
     '</fieldset><p id="notice" role="status"></p></form>'
 }
 function appealsPanel(path,config,channels) {
@@ -570,7 +596,12 @@ function extraControls(section,config,paid) {
       const rule = config[key] ?? {action:'off',quarantine:false}
       return '<article class="filter-card"><h3>' + (key === 'verifiedBot' ? 'Verified Bot Addition' : 'Unverified Bot Addition') + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options({off:'Disabled',kick:'Kick Bot',ban:'Ban Bot'},rule.action,true) + '</select></label></div><label class="toggle"><input type="checkbox" name="' + key + '-quarantine"' + (rule.quarantine ? ' checked' : '') + '> Quarantine the Inviter</label></article>'
     }).join('')
-    return '<section class="card settings-section"><h3>Risk Score Rules</h3><p>The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.</p><div class="grid filter-grid" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section><section class="card settings-section"><h3>Bot Addition Rules</h3><p>Quarantining the inviter uses the quarantine role configured in Anti-Nuke.</p><div class="grid filter-grid">' + botRules + '</div></section>'
+    return '<section class="card settings-section config-step">' +
+      configHeading(2,'Risk Score Rules','The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.','configure','Response') +
+      '<div class="grid filter-grid" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section>' +
+      '<section class="card settings-section config-step">' +
+      configHeading(3,'Bot Addition Rules','Quarantining the inviter uses the quarantine role configured in Anti-Nuke.','custom','Bot Screening') +
+      '<div class="grid filter-grid">' + botRules + '</div></section>'
   }
   return ''
 }
@@ -605,7 +636,7 @@ function protectionControls(form, section, config, paid) {
   }
   if (section !== 'raid') return
   const matched = sensitivity.find(([,count]) => count && config.window === 10 && config.threshold === count)?.[1] ?? 0
-  form.querySelector('.fields').insertAdjacentHTML('beforebegin','<div class="fields"><label>Detection sensitivity<select name="sensitivity">' + sensitivity.map(([label,count]) => '<option value="' + count + '"' + (matched === count ? ' selected' : '') + '>' + label + (count ? ' · ' + count + ' joins / 10 s' : '') + '</option>').join('') + '</select></label></div>')
+  form.querySelector('.raid-detection .fields').insertAdjacentHTML('beforebegin','<div class="fields raid-preset"><label>Detection sensitivity<select name="sensitivity">' + sensitivity.map(([label,count]) => '<option value="' + count + '"' + (matched === count ? ' selected' : '') + '>' + label + (count ? ' · ' + count + ' joins / 10 s' : '') + '</option>').join('') + '</select></label></div>')
   const preset = form.elements.sensitivity
   preset.onchange = () => {
     if (!Number(preset.value)) return
@@ -886,13 +917,19 @@ function form(kind, config, owner) {
   const response = actionsByKind[kind] ? '<label>Response<select name="action">' + options(Object.fromEntries(actionsByKind[kind].map(action => [action,actionLabels[action]])),config.action,true) + '</select></label>' : ''
   const alertFields = settingFields[kind].filter(([key]) => key.startsWith('alert'))
   const baseFields = settingFields[kind].filter(([key]) => !key.startsWith('alert'))
+  if (kind === 'checkpoint') {
+    return '<form id="settings"><fieldset class="settings-panels config-flow"' + disabled + '>' +
+      flowStep(1,'Score New Accounts','Choose which account signals contribute to a member’s risk score.','checkpoint','Detection',fields(baseFields)) +
+      flowStep(4,'Notify Your Team','Send Checkpoint alerts to a Discord channel and optionally ping roles.','logs','Notifications',fields(alertFields),'discord-alerts') +
+      '</fieldset><p role="status" id="notice"></p></form>'
+  }
   if (kind === 'raid') {
     const detection = baseFields.filter(([key]) => ['threshold','window','age'].includes(key))
     const reactions = baseFields.filter(field => !detection.includes(field))
-    return '<form id="settings"><fieldset class="settings-panels raid-flow"' + disabled + '>' +
-      flowStep(1,'Detect a Join Surge','Choose how many joins within a time window trigger Anti-Raid.',fields(detection),'raid-detection') +
-      flowStep(2,'Apply a Response','Choose what happens to eligible arrivals while protection is active.',response + fields(reactions)) +
-      flowStep(3,'Notify Your Team','Send detections to a Discord channel and optionally ping roles.',fields(alertFields),'discord-alerts') +
+    return '<form id="settings"><fieldset class="settings-panels config-flow"' + disabled + '>' +
+      flowStep(1,'Detect a Join Surge','Choose how many joins within a time window trigger Anti-Raid.','raid','Detection',fields(detection),'raid-detection') +
+      flowStep(2,'Apply a Response','Choose what happens to eligible arrivals while protection is active.','lockdown','Response',response + fields(reactions)) +
+      flowStep(3,'Notify Your Team','Send detections to a Discord channel and optionally ping roles.','logs','Notifications',fields(alertFields),'discord-alerts') +
       '</fieldset><p role="status" id="notice"></p></form>'
   }
   return '<form id="settings"><fieldset class="settings-panels"' + disabled + '>' + (kind === 'automod' ? '' : '<section class="card settings-section"><h3>' + sections[kind] + ' Policy' + '</h3><p>' + (owner ? (kind === 'nuke' ? 'The default threshold applies to monitored actions without a per-action limit. Individual rules can override it.' : 'Set detection thresholds and how Blackridge responds.') : 'Only the server owner can change this policy.') + '</p><div class="fields">' + fields(baseFields) + response + '</div></section>') + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord Alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '</fieldset><p role="status" id="notice"></p></form>'
@@ -1161,7 +1198,14 @@ async function dashboard() {
       const field = '<label class="module-switch"><input type="checkbox" role="switch" name="enabled" aria-label="' + sections[section] + '"' + (linkedSwitch ? ' form="settings"' : '') + (data.config[section].enabled ? ' checked' : '') + (data.owner ? '' : ' disabled') + '><span></span></label>'
       switchControl = serviceSwitch ? '<form id="module-toggle">' + field + '<p class="error" role="status"></p></form>' : field
     }
-    const heading = '<div class="page-heading"><span class="icon-tile">' + icon(section) + '</span><div><h2 class="dash-title">' + sections[section] + '</h2></div>' + switchControl + '</div>'
+    const configDescription = {
+      raid:'Detect and respond to suspicious surges in server joins.',
+      verification:'Verify new members with a button or an image CAPTCHA.',
+      checkpoint:'Screen new accounts and bot additions before they disrupt your server.'
+    }[section]
+    const heading = '<div class="page-heading' + (configDescription ? ' config-page-heading' : '') +
+      '"><span class="icon-tile">' + icon(section) + '</span><div><h2 class="dash-title">' + sections[section] + '</h2>' +
+      (configDescription ? '<p>' + configDescription + '</p>' : '') + '</div>' + switchControl + '</div>'
     const {events} = eventData
     const activity = '<section class="card stack"><h3>' + 'Event History' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)

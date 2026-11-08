@@ -43,7 +43,7 @@ export async function wireAnalytics(panel,path,request) {
       if (rows.length < 7) card.querySelector('p').textContent = 'Since ' + date.format(since)
       card.querySelector('.analytics-spark').innerHTML = sparkline(rows,key)
     }
-    note.textContent = rows.length ? 'UTC · Today is in progress. Messages count visible human posts. Leaves include kicks and bans.' :
+    note.textContent = rows.length ? '' :
       'Weekly activity will appear once Blackridge starts tracking this server.'
   } catch {
     note.textContent = 'Weekly analytics are temporarily unavailable.'
