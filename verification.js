@@ -1,3 +1,4 @@
+import { isTextDestination } from './text-channel.js'
 import { randomInt, randomUUID } from 'node:crypto'
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, MessageFlags, ModalBuilder, PermissionFlagsBits as P, TextInputBuilder, TextInputStyle } from 'discord.js'
 import png from 'pngjs'
@@ -85,7 +86,7 @@ export async function publishVerification(guild,db) {
   const config = db.config(guild.id,'verification')
   if (!config.enabled || !config.channel || config.verifiedRole === config.unverifiedRole) return null
   const channel = await guild.channels.fetch(config.channel,{force:true})
-  if (!channel?.isSendable() || channel.isThread() ||
+  if (!isTextDestination(channel) ||
       !await memberRole(guild,config.verifiedRole,db) ||
       (config.unverifiedRole && !await memberRole(guild,config.unverifiedRole,db))) return null
   const saved = db.recovery(guild.id,'verificationPanel')

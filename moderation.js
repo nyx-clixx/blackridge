@@ -1,3 +1,4 @@
+import { activityDestination } from './activity-logging.js'
 import { randomUUID } from 'node:crypto'
 import { ApplicationCommandType, AuditLogEvent, ChannelType, Events, MessageFlags, PermissionFlagsBits as P, SlashCommandBuilder } from 'discord.js'
 import { commandNames, matchesPermit } from './store.js'
@@ -136,6 +137,7 @@ export function attachModeration(client,db,lookupGuild) {
     if (!db.config(guild.id,'moderation').enabled || !entry.targetId || !entry.executorId) return
     const data = {userId:entry.targetId,actor:entry.executorId,reason:entry.reason,at:entry.createdTimestamp}
     if (entry.action === AuditLogEvent.MemberRoleUpdate) {
+      if (activityDestination(db,guild.id,'memberRoles')) return
       const changes = (entry.changes ?? []).flatMap(change => {
         if (!['$add','$remove'].includes(change.key) || !Array.isArray(change.new)) return []
         const roles = change.new.map(role=>mention(role.id,'role')).join(', ')
@@ -230,7 +232,7 @@ export function attachModeration(client,db,lookupGuild) {
         db.event(guild.id,'moderation',detail)
         const result = {title:'Messages Purged',body:'Deleted **'+deleted.size+'** of '+amount+' requested messages in '+mention(channel.id,'channel')+'.',
           options:{icon:'trash',fields:[['Moderator',mention(actor.id)],['Limit','Messages older than 14 days are skipped.']]}}
-        void sendModuleLog(guild,db,'moderation',result)
+        if (!deleted.size || !activityDestination(db,guild.id,'messageDelete')) void sendModuleLog(guild,db,'moderation',result)
         return await interaction.editReply(actionCard(result))
       }
       if (name === 'info') {

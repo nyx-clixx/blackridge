@@ -88,3 +88,35 @@
   .config-page-heading { flex-wrap:wrap; }
   .config-page-heading > div { flex:1; }
 }
+
+.logging-intro { margin:0 0 16px; }
+.lockdown-channels {
+  display:grid; grid-template-columns:auto minmax(0,370px); align-items:center; gap:12px;
+  margin-top:20px;
+}
+.lockdown-tiles {
+  display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin-top:24px;
+}
+.lockdown-tile {
+  position:relative; display:grid; justify-items:center; grid-template-rows:auto 1fr auto; gap:10px;
+  min-width:0; padding:14px 8px; text-align:center; cursor:pointer; border:1px solid #66404b;
+  border-radius:12px; background:#37232a; color:#f1dbe0;
+}
+.lockdown-tile input[type=checkbox] {
+  position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:0; cursor:pointer;
+}
+.lockdown-tile .icon { width:25px; height:25px; color:#f09ca8; }
+.lockdown-tile:has(input:checked) { background:#17382b; border-color:#57a77a; color:#e1f8eb; }
+.lockdown-tile:has(input:checked) .icon { color:#84d8a8; }
+.lockdown-tile:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:3px; }
+.lockdown-tile:hover { filter:brightness(1.13); }
+.lockdown-state { padding:2px 11px; border-radius:999px; background:#61333e; font-size:12px; font-weight:700; }
+.lockdown-state::after { content:'Off'; }
+.lockdown-tile input:checked ~ .lockdown-state { background:#276345; }
+.lockdown-tile input:checked ~ .lockdown-state::after { content:'On'; }
+.lockdown-controls .lockdown-submit { display:flex; align-items:center; gap:7px; margin:24px auto 0; }
+@media(max-width:1040px) { .lockdown-tiles { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media(max-width:520px) {
+  .lockdown-tiles { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .lockdown-channels { grid-template-columns:1fr; }
+}

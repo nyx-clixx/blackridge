@@ -1,3 +1,4 @@
+import { loggingGroups } from './public/logging-events.js'
 import { analyticsStore } from './analytics.js'
 import { billingStore } from './billing-store.js'
 import { DatabaseSync } from 'node:sqlite'
@@ -92,6 +93,9 @@ export const policies = {
   }),
   permits: z.strictObject({enabled:z.boolean().optional(),entries:z.array(permit).max(30)}),
   automod: z.strictObject({enabled:z.boolean(),spamEnabled:z.boolean().optional(),spamActions:automodActions.optional(),threshold:integer(3,30),window:integer(2,60),action:z.enum(['off','log','delete','warn','timeout']),timeoutMinutes:duration(1,1440,60),filters:z.strictObject(Object.fromEntries(spamFilters.map(key => [key,key === 'malicious' ? filter.optional() : filter]))).optional(),badWords:z.string().max(500).optional(),nsfwDomains:z.string().max(500).optional(),maliciousDomains:z.string().max(500).optional(),spamPoints:integer(0,100).optional(),pointRules:z.array(z.strictObject({points:integer(1,1000),hours:duration(1,168,3600),action:z.enum(['timeout','kick','ban'])})).max(4).optional(),...alerts}),
+  logging:z.strictObject({enabled:z.boolean(),channels:z.strictObject(Object.fromEntries(
+    Object.keys(Object.assign({},...Object.values(loggingGroups))).map(key => [key,snowflake.optional()])
+  ))}),
   moderation:z.strictObject({enabled:z.boolean().optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
   lockdown:z.strictObject({enabled:z.boolean().optional(),alertChannel:z.union([snowflake,z.literal('')]).optional()}),
   backup:z.strictObject({enabled:z.boolean()}),
@@ -106,6 +110,7 @@ const defaults = {
   verification:{enabled:false,mode:'button',channel:'',verifiedRole:'',unverifiedRole:'',alertChannel:'',minAge:0,attempts:3,minutes:2,failure:'retry'},
   permits:{entries:[]},
   automod:{enabled:false,threshold:6,window:8,action:'off',timeoutMinutes:5,badWords:'',nsfwDomains:'',maliciousDomains:'',spamPoints:0,pointRules:[]},
+  logging:{enabled:false,channels:{}},
   moderation:{enabled:false,alertChannel:''},
   backup:{enabled:false},
   lockdown:{enabled:false,alertChannel:''},

@@ -1,3 +1,4 @@
+import { isTextDestination } from './text-channel.js'
 import { resources } from './public/resources.js'
 import { premiumPlans } from './public/plans.js'
 import { stripeBilling } from './billing.js'
@@ -414,7 +415,7 @@ app.get('/api/guilds/:id/options',async (req,res) => {
   const guild = activeGuild(req.guild.id)
   const {channels,roles} = await recovery.scope(guild)
   res.json({
-    channels:channels.filter(channel => channel?.permissionOverwrites && channel.type !== ChannelType.GuildCategory && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name,sendable:channel.isSendable(),type:channel.type})),
+    channels:channels.filter(channel => channel?.permissionOverwrites && channel.type !== ChannelType.GuildCategory && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name,sendable:isTextDestination(channel),type:channel.type})),
     renameChannels:channels.filter(channel => channel?.permissionOverwrites && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name})),
     roles:roles.filter(role => role.id !== guild.id).map(role => ({id:role.id,name:role.name}))
   })
@@ -470,6 +471,17 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   if (kind === 'backup' && free) return res.status(403).json({error:'Server Backups require Premium or Custom Bot.'})
   const parsed = policies[kind].safeParse(req.body)
   if (!parsed.success) return res.status(400).json({error:'Check your thresholds and Discord user IDs.'})
+  const existing = db.config(req.guild.id,kind)
+  const destinationKeys = kind === 'logging' ? Object.keys(parsed.data.channels) : ['channel','alertChannel']
+  const destinations = kind === 'logging' ? parsed.data.channels : parsed.data
+  const previous = kind === 'logging' ? existing.channels : existing
+  const changed = new Set(destinationKeys.filter(key => destinations[key] && destinations[key] !== previous[key]).map(key => destinations[key]))
+  if (changed.size) {
+    const guild = activeGuild(req.guild.id)
+    const channels = await guild?.channels.fetch().catch(() => null)
+    if (!channels || [...changed].some(id => !isTextDestination(channels.get(id))))
+      return res.status(400).json({error:'Choose a text or announcement channel from this server.'})
+  }
   if (kind === 'honeypot') return saveHoneyPot(req,res,parsed.data)
   if (kind === 'reports' && parsed.data.enabled &&
       !await privateAppealChannel(activeGuild(req.guild.id),parsed.data.channel).catch(() => null))
@@ -482,7 +494,7 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   }
   if (kind === 'verification' && parsed.data.verifiedRole && parsed.data.verifiedRole === parsed.data.unverifiedRole)
     return res.status(400).json({error:'Verified and unverified roles must be different.'})
-  const config = ['moderation','lockdown','appeals'].includes(kind) ? {...db.config(req.guild.id,kind),...parsed.data} : parsed.data
+  const config = ['moderation','lockdown','appeals'].includes(kind) ? {...existing,...parsed.data} : parsed.data
   const restricted = kind === 'nuke' ? ['guards',premiumGuards] : kind === 'automod' ? ['filters',premiumFilters] : null
   if (free && restricted) {
     const [field,keys] = restricted

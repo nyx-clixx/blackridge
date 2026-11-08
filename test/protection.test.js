@@ -508,7 +508,7 @@ test('Report System delivers the selected reaction to the private review channel
   const reporter = {id:'1283471260688322611',bot:false}
   const sent = []
   let privateChannel = true
-  const channel = {guildId:guild.id,isSendable:() => true,isThread:() => false,
+  const channel = {type:0,guildId:guild.id,isSendable:() => true,isThread:() => false,
     permissionOverwrites:{cache:new Map([[guild.id,{deny:{has:() => privateChannel}}]])},
     permissionsFor:target => ({has:() => target !== guild.roles.everyone}),send:async card => sent.push(card)}
   guild.channels = {fetch:async () => channel}
@@ -619,4 +619,3 @@ test('verification cannot bypass an active quarantine after the configured role 
     roles:{cache:new Map([['old-role',{}]])}}
   assert.match(await grantVerification(db,member,{enabled:true}),/quarantined/)
 })
-

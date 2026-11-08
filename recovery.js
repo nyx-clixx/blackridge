@@ -1,3 +1,4 @@
+import { isTextDestination } from './text-channel.js'
 import { ChannelType as C, PermissionFlagsBits as P, Routes } from 'discord.js'
 import { z } from 'zod'
 import { messageCard, logCard, mention, safeText } from './messages.js'
@@ -32,7 +33,7 @@ export async function sendModuleLog(guild,db,kind,detail) {
   if (!id) return
   try {
     const channel = await guild.channels.fetch(id)
-    if (channel?.isSendable() && channel.guildId === guild.id) await channel.send(logCard(kind,detail))
+    if (isTextDestination(channel) && channel.guildId === guild.id) await channel.send(logCard(kind,detail))
   } catch { console.error('Discord module log delivery failed:',kind) }
 }
 

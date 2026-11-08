@@ -1,3 +1,5 @@
+import { attachActivityLogging } from './activity-logging.js'
+import { isTextDestination } from './text-channel.js'
 import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, Partials, PermissionFlagsBits as P } from 'discord.js'
 import { attachModeration, temporaryBan } from './moderation.js'
 import { attachVerification } from './verification.js'
@@ -141,7 +143,7 @@ export function attachProtection(client, db) {
     void run(guild,kind,async () => {
       const roles = [...new Set(cfg.alertRoles)].filter(id => id !== guild.id && guild.roles.cache.has(id))
       const channel = await guild.channels.fetch(cfg.alertChannel)
-      if (!channel?.isSendable() || channel.guildId !== guild.id) throw new Error('Invalid alert channel')
+      if (!isTextDestination(channel) || channel.guildId !== guild.id) throw new Error('Invalid alert channel')
       await channel.send(logCard(kind,detail,roles))
     })
   }
@@ -592,6 +594,7 @@ export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {
       if (property === 'on' || property === 'once') return (event,handler) => target[property](event,(...args) => {
         const first = args[0]
         const id = event === Events.GuildAuditLogEntryCreate ? args[1]?.id
+          : event === Events.MessageBulkDelete ? args[1]?.guild?.id
           : [Events.GuildCreate,Events.GuildAvailable].includes(event) ? first?.id : event === Events.MessageReactionAdd ? first?.message.guildId : first?.guildId ?? first?.guild?.id
         const oldReview = allowInactiveReviews && event === Events.InteractionCreate && first?.customId?.startsWith('blackridge-review:')
         if (!id || ownsGuild(id) || oldReview) handler(...args)
@@ -601,6 +604,7 @@ export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {
     }
   })
   mountAnalytics(view,db.analytics)
+  attachActivityLogging(view,db)
   const cleanup = [attachProtection(view,db),attachModeration(view,db,id => client.guilds.cache.get(id)),attachVerification(view,db)]
   return () => cleanup.forEach(stop => stop())
 }

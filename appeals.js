@@ -1,3 +1,4 @@
+import { isTextDestination } from './text-channel.js'
 import { ActionRowBuilder, CheckboxBuilder, LabelBuilder, ButtonBuilder, ButtonStyle, Events, MessageFlags, ModalBuilder, PermissionFlagsBits as P, TextInputBuilder, TextInputStyle } from 'discord.js'
 import { matchesPermit } from './store.js'
 import { actionCard, memberAction, mention, messageCard, safeText } from './messages.js'
@@ -20,7 +21,7 @@ export function canReviewAppeals(guild,member,db) {
 export async function privateAppealChannel(guild,id) {
   if (!id) return null
   const channel = await guild.channels.fetch(id,{force:true})
-  if (channel?.guildId !== guild.id || !channel.isSendable() || channel.isThread() ||
+  if (channel?.guildId !== guild.id || !isTextDestination(channel) ||
       !channel.permissionOverwrites?.cache.get(guild.id)?.deny.has(P.ViewChannel) ||
       channel.permissionsFor(guild.roles.everyone)?.has(P.ViewChannel) ||
       !channel.permissionsFor(guild.members.me)?.has(P.ViewChannel | P.SendMessages)) return null

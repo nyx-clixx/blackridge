@@ -1,3 +1,4 @@
+import { loggingGroups } from './logging-events.js'
 import { analyticsPanel, wireAnalytics } from './analytics.js'
 import { planName, premiumPlans } from './plans.js'
 
@@ -45,6 +46,9 @@ const iconPaths = {
   overview:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   nuke:'<path d="M8 12V5a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v6-3a1.5 1.5 0 0 1 3 0v6a8 8 0 0 1-8 8h-1a6 6 0 0 1-5-3l-3-5a1.7 1.7 0 0 1 2.7-2L8 14"/>',
   raid:'<path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2m19 0v-2a4 4 0 0 0-3-4m-2-12a4 4 0 0 1 0 8"/><circle cx="9.5" cy="7" r="4"/>',
+  shield:'<path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6zM9 12l2 2 4-4"/>',
+  warning:'<path d="M10 5 3 18a1 1 0 0 0 1 2h16a1 1 0 0 0 1-2L14 5a2 2 0 0 0-4 0Zm2 4v4m0 3h.01"/>',
+  play:'<path fill="currentColor" d="m8 5 11 7-11 7z"/>',
   logs:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
   arrow:'<path d="M5 12h14m-6-6 6 6-6 6"/>'
@@ -60,7 +64,7 @@ if (document.querySelector('.landing-hero') && matchMedia('(prefers-reduced-moti
   },{threshold:.12})
   document.querySelectorAll('.landing-section-head,.feature-plate,.launch-steps').forEach(element => observer.observe(element))
 }
-const sections = { overview:'Overview', premium:'Premium', custom:'Custom Bot', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', lockdown:'Lockdown', backup:'Server Backups',verification:'Verification',appeals:'Ban Appeals',honeypot:'Honeypot',reports:'Report System' }
+const sections = { overview:'Overview', premium:'Premium', custom:'Custom Bot', nuke:'Anti-Nuke', raid:'Anti-Raid', logs:'Security Logs', checkpoint:'Checkpoint', automod:'Auto Moderation', moderation:'Moderation', permits:'Permits', logging:'Logging', lockdown:'Lockdown', backup:'Server Backups',verification:'Verification',appeals:'Ban Appeals',honeypot:'Honeypot',reports:'Report System' }
 const paidGuards = ['channelRename','roleRename','emojiDelete','stickerDelete','soundboardDelete']
 const paidFilters = ['ghost','malicious']
 const crown = '<span class="premium-crown" title="Premium or Custom Bot" aria-label="Premium or Custom Bot">' + icon('premium') + '</span>'
@@ -191,9 +195,15 @@ function nukeControls(form,config,{roles,channels,renameChannels},paid) {
       select('action','Response',shortestFirst([['','Use Default Response'],...actionOptions]),rule.action ?? '') + '<div class="fields">' +
       number(key + '-escalate','Escalate After',rule.escalateAfter ?? 0,100) + select('escalateTo','Escalate To',actionOptions,rule.escalateTo ?? 'ban') + '</div><p>Detections by the same actor within 24 hours. Use 0 to disable escalation.</p>' + time + permissions + extras + '</div></dialog></article>'
   }
-  const guards = Object.entries(nukeGuards).map(([key,[label,description]]) => row(key,label,description,config.guards?.[key],false)).join('')
+  const groups = [
+    ['Roles & Permissions',['assignments','rolePermissions','publicRoles','gate']],
+    ['Server Identity & Bot Access',['identity','botAdd']],
+    ['Channels, Roles & Server Assets',['channelRename','roleRename','emojiDelete','stickerDelete','soundboardDelete']]
+  ]
+  const guards = groups.map(([title,keys]) => '<section class="card nuke-rules"><h3>' + title + '</h3>' +
+    keys.map(key => row(key,...nukeGuards[key],config.guards?.[key],false)).join('') + '</section>').join('')
   const rates = Object.entries(rateLabels).map(([key,label]) => row(key,label,'Track repeated actions by the same actor.',config.rates?.[key],true)).join('')
-  form.querySelector('fieldset').insertAdjacentHTML('afterbegin','<section class="card nuke-rules"><h3>Permissions & Identity</h3>' + guards + '</section><section class="card nuke-rules"><h3>Per-Action Rate Limits</h3><p>Rules without their own limits use the default policy where applicable.</p>' + rates + '</section>')
+  form.querySelector('fieldset').insertAdjacentHTML('afterbegin',guards + '<section class="card nuke-rules"><h3>Per-Action Rate Limits</h3><p>Rules without their own limits use the default policy where applicable.</p>' + rates + '</section>')
   const trackRule = event => {
     const row = event.target.closest('[data-nuke]')
     if (!row || !event.target.name) return
@@ -1020,6 +1030,32 @@ function wireDiscordSelectors(form,choices) {
   const roles = form.elements.alertRoles
   if (roles) replaceDiscordInput(roles,discordSelect('alertRoles',choices.roles,ids(roles.value),true))
 }
+function loggingForm(config,owner,channels) {
+  const destinations = channels.filter(channel => channel.sendable)
+  const groups = Object.entries(loggingGroups).map(([group,events]) =>
+    '<section class="card settings-section"><h3>' + group + '</h3><div class="fields">' +
+    Object.entries(events).map(([key,label]) => '<div class="discord-field"><span>' + label + '</span>' +
+      discordSelect(key,destinations,[config.channels[key]]) + '</div>').join('') + '</div></section>').join('')
+  return '<form id="settings"><p class="logging-intro">Choose where each Discord event is logged. Select None to skip an event. Use private staff channels for activity logs.</p>' +
+    '<fieldset class="settings-panels"' + (owner ? '' : ' disabled') + '>' + groups +
+    '</fieldset><p id="notice" role="status"></p></form>'
+}
+
+function lockdownControls(channels) {
+  const controls = [
+    ['all','Lock all supported channels','lockdown'],['verification','Raise verification to highest','shield'],
+    ['invites','Pause invites','raid'],['dms','Pause direct messages','appeals'],
+    ['strip','Strip dangerous permissions','warning']
+  ]
+  const tiles = controls.map(([key,label,symbol]) =>
+    '<label class="lockdown-tile"><input type="checkbox" role="switch" name="' + key + '" aria-label="' + label +
+    '">' + icon(symbol) + '<span>' + label + '</span><span class="lockdown-state" aria-hidden="true"></span></label>').join('')
+  return '<form class="card stack lockdown-controls" data-operation="enable"><h3>Lockdown Controls</h3>' +
+    '<p>Channel locks modify @everyone. Invite and DM pauses are applied for one hour where Discord exposes the current state.</p>' +
+    '<div class="lockdown-channels discord-field"><span>Channels</span>' + discordSelect('channels',channels,[],true) + '</div>' +
+    '<div class="lockdown-tiles">' + tiles + '</div><button class="button primary lockdown-submit">' +
+    icon('play') + ' Start Lockdown</button></form>'
+}
 async function recoveryPanel(section,path,data,prepared) {
   const panel = document.querySelector('#recovery')
   if (!data.owner) {
@@ -1034,14 +1070,14 @@ async function recoveryPanel(section,path,data,prepared) {
   if (section === 'lockdown') {
     controls = state.lockdown
       ? '<form class="card stack" data-operation="lift"><h3>Lockdown Controls</h3><p class="badge">Active</p><p>Started ' + esc(new Date(state.lockdown).toLocaleString()) + '</p><button class="button primary lockdown-submit">Deactivate Lockdown</button></form>'
-      : '<form class="card stack" data-operation="enable"><h3>Lockdown Controls</h3><p>Channel locks modify @everyone. Invite and DM pauses are applied for one hour where Discord exposes the current state.</p><div class="fields"><div class="discord-field"><span>Channels</span>' + discordSelect('channels',channels,[],true) + '</div></div><label class="toggle"><input type="checkbox" name="all"> Lock all supported channels</label><label class="toggle"><input type="checkbox" name="verification"> Raise verification to highest</label><label class="toggle"><input type="checkbox" name="invites"> Pause invites</label><label class="toggle"><input type="checkbox" name="dms"> Pause Direct Messages</label><label class="toggle"><input type="checkbox" name="strip"> Strip Dangerous Permissions</label><button class="button primary lockdown-submit">Start Lockdown</button></form>'
+      : lockdownControls(channels)
   }
   if (section === 'backup') {
     const history = (state.backups ?? []).map(item => '<option value="' + item.id + '">' + esc(new Date(item.at).toLocaleString()) + '</option>').join('')
     controls = '<section class="card stack backup-controls"><form data-operation="backup"><h3>Manual Backup</h3><p>Save server settings, roles, channels and overwrites. The latest three backups are retained.</p><button class="button">Create Backup</button></form><form data-operation="schedule"><h3>Automatic Backups</h3><div class="fields"><label>Frequency<select name="hours">' + options({0:'Disabled',6:'Every 6 hours',12:'Every 12 hours',24:'Daily',168:'Weekly'},String(state.schedule?.hours ?? 0)) + '</select></label></div></form></section>' +
       (history ? '<form class="card stack" data-operation="restore"><h3>Backup Manager</h3><p>Restore supported settings and recreate eligible deleted roles and channels. Messages, role memberships, member overwrites, and ordering require manual recovery.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label></div><div class="actions"><button class="button" type="button" data-backup-preview>View Backup</button><button class="button primary">Restore Backup</button></div></form>' : '<section class="card stack"><h3>Backup Manager</h3><p>No backups yet.</p></section>')
   }
-  const logging = '<form class="card stack" data-operation="logging"><h3>Discord Logging</h3><div class="fields"><div class="discord-field"><span>Logging Channel</span>' + channel + '</div></div></form>'
+  const logging = '<form class="card stack" data-operation="logging"><h3>' + (section === 'moderation' ? 'Moderation Action Logs' : 'Discord Logging') + '</h3><div class="fields"><div class="discord-field"><span>Logging Channel</span>' + channel + '</div></div></form>'
   const deleteInvites = section === 'lockdown' ? '<form class="card stack" data-operation="delete-invites"><h3>Invite Cleanup</h3><p>Enable the Lockdown module to revoke standard server invites. Lifting Lockdown cannot restore these links.</p><button class="button lockdown-submit"' + (data.config.lockdown.enabled ? '' : ' disabled') + '>Delete All Invites</button></form>' : ''
   panel.innerHTML = controls + deleteInvites + (section === 'backup' ? '' : logging) + '<p class="stack" role="status"></p>'
   const status = panel.querySelector('[role="status"]')
@@ -1181,14 +1217,14 @@ async function dashboard() {
     const customAllowed = data.owner && data.plan === 'custom'
     const backupLocked = section === 'backup' && !paid
     const recoverySection = !backupLocked && ['lockdown','backup','moderation'].includes(section)
-    const needsOptions = (section === 'appeals' && data.owner) || Object.hasOwn(settingFields,section) || ['permits','verification','honeypot','reports'].includes(section) || (recoverySection && data.owner)
+    const needsOptions = (section === 'appeals' && data.owner) || Object.hasOwn(settingFields,section) || ['permits','verification','honeypot','reports','logging'].includes(section) || (recoverySection && data.owner)
     const [choices,recoveryState,eventData] = await Promise.all([
       needsOptions ? request(path + '/options') : null,
       recoverySection && data.owner && section !== 'moderation' ? request(path + '/recovery') : {},
       ['logs','moderation'].includes(section) ? request(path + '/events' + (section === 'moderation' ? '?kind=moderation' : '')) : {events:[]}
     ])
     const billing = section === 'premium' ? await request(path + '/billing') : null
-    const linkedSwitch = Object.hasOwn(settingFields,section) || ['permits','verification'].includes(section)
+    const linkedSwitch = Object.hasOwn(settingFields,section) || ['permits','verification','logging'].includes(section)
     const serviceSwitch = !backupLocked && ['backup','moderation','lockdown'].includes(section)
     let switchControl = ''
     if (['honeypot','reports'].includes(section)) {
@@ -1214,7 +1250,7 @@ async function dashboard() {
     const activity = '<section class="card stack"><h3>' + 'Event History' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
-    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','appeals','verification','honeypot','reports'].map(key => {
+    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','logging','appeals','verification','honeypot','reports'].map(key => {
       const restricted = key === 'permits' && !data.owner ? 'Owner only' : key === 'appeals' && !data.appealsManager ? 'Manager access required' : ''
       const enabled = key === 'appeals' ? data.appealsConfigured : data.config[key]?.enabled
       const state = enabled ? '<i class="dot"></i> Enabled' : '<i class="dot disabled-dot"></i> Disabled'
@@ -1222,7 +1258,7 @@ async function dashboard() {
     }).join('')
     const overview = securityScore(data.security) + analyticsPanel() + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('honeypot') + navigation('verification') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('reports') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main' + (modulePage ? ' module-page' : '') + '">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('honeypot') + navigation('verification') + navigation('checkpoint') + navigation('automod') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('logging') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('reports') + navigation('backup') + '</nav><div class="dash-pane"><div class="dash-main' + (modulePage ? ' module-page' : '') + '">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'logging' ? loggingForm(data.config.logging,data.owner,choices.channels) : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     if (section === 'overview') wireAnalytics(document.querySelector('.server-analytics'),path,request)
     if (section === 'reports') wireReports(path,data.config.reports)
     if (section === 'honeypot') wireHoneyPot(path,id,data.config.honeypot)
@@ -1252,6 +1288,7 @@ async function dashboard() {
     if (settings && data.owner) autosave(settings,settings.querySelector('#notice'),async () => {
       const fields = new FormData(settings)
       const payload = section === 'permits' ? {...readPermits(settings),enabled:fields.has('enabled')} : {enabled:fields.has('enabled')}
+      if (section === 'logging') payload.channels = Object.fromEntries([...fields].filter(([key,value]) => key !== 'enabled' && value))
       if (section === 'verification') {
         for (const key of ['mode','channel','verifiedRole','unverifiedRole','alertChannel','failure']) payload[key] = fields.get(key)
         payload.attempts = Number(fields.get('attempts'))
