@@ -578,11 +578,14 @@ function wireAutomodRules(form) {
     card.addEventListener('change',event => {
       const editing = event.target.name === key + '-response'
       if (!editing && event.target !== enabled) return
+      if (event.target === enabled && enabled.checked && !responses().length) {
+        // A ghost mention is detected after the message is deleted.
+        const fallback = key === 'ghost' ? 'warn' : 'delete'
+        card.querySelector('.automod-action input[value="' + fallback + '"]').checked = true
+      }
       const selected = responses()
-      if (!selected.length) {
-        if (enabled.checked && !editing) dialog.showModal()
-        enabled.checked = false
-      } else if (editing && event.target.checked && selected.length === 1) enabled.checked = true
+      if (!selected.length) enabled.checked = false
+      else if (editing && event.target.checked && selected.length === 1) enabled.checked = true
       card.querySelector('[data-rule-summary]').textContent = enabled.checked ?
         selected.map(action => automodActions[action][0]).join(' · ') : ''
     })
@@ -597,11 +600,11 @@ function extraControls(section,config,paid) {
       return '<article class="filter-card"><h3>' + (key === 'verifiedBot' ? 'Verified Bot Addition' : 'Unverified Bot Addition') + '</h3><div class="fields"><label>Response<select name="' + key + '-action">' + options({off:'Disabled',kick:'Kick Bot',ban:'Ban Bot'},rule.action,true) + '</select></label></div><label class="toggle"><input type="checkbox" name="' + key + '-quarantine"' + (rule.quarantine ? ' checked' : '') + '> Quarantine the Inviter</label></article>'
     }).join('')
     return '<section class="card settings-section config-step">' +
-      configHeading(2,'Risk Score Rules','The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.','configure','Response') +
-      '<div class="grid filter-grid" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section>' +
+      configHeading(2,'Bot Addition Rules','Quarantining the inviter uses the quarantine role configured in Anti-Nuke.','custom','Bot Screening') +
+      '<div class="grid filter-grid">' + botRules + '</div></section>' +
       '<section class="card settings-section config-step">' +
-      configHeading(3,'Bot Addition Rules','Quarantining the inviter uses the quarantine role configured in Anti-Nuke.','custom','Bot Screening') +
-      '<div class="grid filter-grid">' + botRules + '</div></section>'
+      configHeading(3,'Risk Score Rules','The highest matching threshold wins. Without rules, the minimum score controls logging and alerts.','configure','Response') +
+      '<div class="grid filter-grid" id="checkpoint-rules">' + rows + '</div><button type="button" class="button small stack" id="add-checkpoint-rule">Add Rule</button></section>'
   }
   return ''
 }
@@ -1192,10 +1195,10 @@ async function dashboard() {
       const settingsId = section === 'reports' ? 'report-settings' : 'honeypot-settings'
       switchControl = '<label class="module-switch"><input type="checkbox" role="switch" form="' + settingsId +
         '" aria-label="' + sections[section] + '"' + (data.config[section].enabled ? ' checked' : '') +
-        (data.owner ? '' : ' disabled') + '><span></span></label>'
+        (data.owner ? '' : ' disabled') + '><span aria-hidden="true"></span></label>'
     }
     if (linkedSwitch || serviceSwitch) {
-      const field = '<label class="module-switch"><input type="checkbox" role="switch" name="enabled" aria-label="' + sections[section] + '"' + (linkedSwitch ? ' form="settings"' : '') + (data.config[section].enabled ? ' checked' : '') + (data.owner ? '' : ' disabled') + '><span></span></label>'
+      const field = '<label class="module-switch"><input type="checkbox" role="switch" name="enabled" aria-label="' + sections[section] + '"' + (linkedSwitch ? ' form="settings"' : '') + (data.config[section].enabled ? ' checked' : '') + (data.owner ? '' : ' disabled') + '><span aria-hidden="true"></span></label>'
       switchControl = serviceSwitch ? '<form id="module-toggle">' + field + '<p class="error" role="status"></p></form>' : field
     }
     const configDescription = {
@@ -1203,7 +1206,8 @@ async function dashboard() {
       verification:'Verify new members with a button or an image CAPTCHA.',
       checkpoint:'Screen new accounts and bot additions before they disrupt your server.'
     }[section]
-    const heading = '<div class="page-heading' + (configDescription ? ' config-page-heading' : '') +
+    const modulePage = section !== 'overview'
+    const heading = '<div class="page-heading' + (modulePage ? ' config-page-heading' : '') +
       '"><span class="icon-tile">' + icon(section) + '</span><div><h2 class="dash-title">' + sections[section] + '</h2>' +
       (configDescription ? '<p>' + configDescription + '</p>' : '') + '</div>' + switchControl + '</div>'
     const {events} = eventData
@@ -1218,7 +1222,7 @@ async function dashboard() {
     }).join('')
     const overview = securityScore(data.security) + analyticsPanel() + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('honeypot') + navigation('verification') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('reports') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('honeypot') + navigation('verification') + navigation('checkpoint') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('reports') + navigation('backup') + navigation('automod') + '</nav><div class="dash-pane"><div class="dash-main' + (modulePage ? ' module-page' : '') + '">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     if (section === 'overview') wireAnalytics(document.querySelector('.server-analytics'),path,request)
     if (section === 'reports') wireReports(path,data.config.reports)
     if (section === 'honeypot') wireHoneyPot(path,id,data.config.honeypot)

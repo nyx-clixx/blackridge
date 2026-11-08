@@ -246,13 +246,29 @@ body.has-workspace .sidebar{overflow:auto}
 #module-toggle{margin-left:auto;position:relative}
 #module-toggle [role=status]{position:absolute;right:0;top:100%;width:min(260px,70vw);z-index:1;background:var(--panel);border-radius:6px;padding:6px}
 #module-toggle [role=status]:empty{display:none}
-.dashboard-page .module-switch input[type=checkbox]{position:absolute;inset:0;width:100%;height:100%;opacity:0}
-.module-switch span{display:flex;align-items:center;justify-content:center;min-width:55px;min-height:31px;padding:4px 10px;border:1px solid #a84646;border-radius:999px;background:#351e20;color:#ffb2b2;box-shadow:0 0 10px #e6505029;font-weight:700;cursor:pointer}
-.module-switch span::after{content:'Off'}
-.module-switch input:checked+span,.module-switch[aria-checked=true] span{border-color:#489367;background:#173627;color:#a1efb9;box-shadow:0 0 10px #5ad48638}
-.module-switch input:checked+span::after,.module-switch[aria-checked=true] span::after{content:'On'}
+.dashboard-page .module-switch input[type=checkbox]{
+  position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer
+}
+.module-switch span{
+  position:relative;display:block;width:80px;height:32px;border:1px solid #434d5e;border-radius:999px;
+  background:#252a33;color:#cbd3df;font-size:13px;font-weight:700;pointer-events:none
+}
+.module-switch span::before{
+  content:'';position:absolute;top:5px;left:5px;width:20px;height:20px;border-radius:50%;background:currentColor
+}
+.module-switch span::after{
+  content:'Off';position:absolute;top:50%;left:32px;transform:translateY(-50%)
+}
+.module-switch input:checked+span{border-color:#6498f4;background:#274fb3;color:#f1f6ff}
+.module-switch input:checked+span::before{transform:translateX(48px)}
+.module-switch input:checked+span::after{content:'On';transform:translate(-15px,-50%)}
 .module-switch input:focus-visible+span{outline:2px solid var(--accent);outline-offset:3px}
-.module-switch input:disabled+span,.module-switch:disabled span{cursor:default;opacity:.65}
+.module-switch input:disabled{cursor:default}
+.module-switch input:disabled+span{opacity:.65}
+@media(prefers-reduced-motion:no-preference){
+  .module-switch span{transition:background-color .2s ease,border-color .2s ease,color .2s ease}
+  .module-switch span::before,.module-switch span::after{transition:transform .2s ease}
+}
 .backup-controls{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 .backup-controls form+form{border-left:1px solid var(--line);padding-left:18px}
 .backup-controls button{margin-top:10px}
