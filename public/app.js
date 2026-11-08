@@ -724,7 +724,7 @@ async function premium(me) {
     servers.map(guild => '<a class="card premium-server" href="/dashboard/' + encodeURIComponent(guild.id) + '/premium"><span class="server-avatar">' +
       (guild.icon ? '<img alt="" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(guild.id) + '/' + encodeURIComponent(guild.icon) + '.png?size=64">' : esc(guild.name.slice(0,2).toUpperCase())) +
       '</span><span><strong>' + esc(guild.name) + '</strong><small>' + (guild.plan === 'free' ? 'Free' : planName(guild.plan)) + '</small></span><span class="premium-server-arrow" aria-hidden="true">›</span></a>').join('') +
-    '</div></section>' : '<p class="stack"><a class="button" href="/dashboard">' + (me?.user ? 'Open Dashboard' : 'Sign In to Subscribe') + '</a></p>'
+    '</div></section>' : '<p class="stack premium-cta"><a class="button" href="/dashboard">' + (me?.user ? 'Open Dashboard' : 'Sign In to Subscribe') + '</a></p>'
   const subscriptions = billing.subscriptions?.length ? '<section class="card stack billing-panel"><h3>Your Subscriptions</h3>' +
     billing.subscriptions.map(row => '<div class="actions stack"><span>' + esc(row.name) + ' · ' + planName(row.plan) +
       '</span><button type="button" class="button small" data-portal="manage" data-guild="' + esc(row.guild) + '"' + (billing.enabled ? '' : ' disabled') + '>Manage Billing</button></div>').join('') + '</section>' : ''
@@ -1119,7 +1119,13 @@ async function dashboard() {
   try {
     const me = await request('/api/me')
     if (!me.user) {
-      shell('<div class="card signin-card"><a class="button small close-signin" href="/" aria-label="Close sign-in">×</a><h2>Manage Servers</h2><p>Connect your Discord account to continue.</p><a class="button primary" href="/auth/login">Sign In with Discord</a>' + (me.configured ? '' : '<p class="muted">Discord sign-in is awaiting application setup.</p>') + (location.search ? '<p class="error">Sign-in could not be completed. Please try again.</p>' : '') + '</div>')
+      shell('<section class="signin-screen"><div class="signin-side"><div class="signin-content"><h1>Sign in</h1>' +
+        '<p>Connect Discord to manage your Blackridge servers.</p><a class="button signin-discord" href="/auth/login">Sign In with Discord</a>' +
+        '<p class="signin-legal">By continuing, you agree to the <a href="/terms">Terms of Service</a> and <a href="/privacy">Privacy Policy</a>.</p>' +
+        (me.configured ? '' : '<p class="muted">Discord sign-in is awaiting application setup.</p>') +
+        (location.search ? '<p class="error">Sign-in could not be completed. Please try again.</p>' : '') +
+        '</div><p class="signin-help">Need help? <a href="/support">Join the support server</a>.</p></div>' +
+        '<div class="signin-brand"><a class="brand" href="/"><img src="/blackridge-logo.png" width="52" height="52" alt="">Blackridge</a></div></section>')
       return
     }
     await accountMenu(me)

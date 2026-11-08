@@ -22,14 +22,14 @@
 <section class="landing-hero">
       <div class="wrap landing-hero-inner">
         <div class="hero-copy">
-          <h1>Keep your Discord<br class="desktop-break"> <span>under control.</span></h1>
-          <p>Catch join raids, respond to destructive admin activity, and give your moderation team the tools to act.</p>
+          <h1>Server Security<br class="desktop-break"> <span>Reimagined.</span></h1>
+          <p>Detect raids, stop destructive actions by rogue admins and moderators, guard against malicious bots, and keep your chats clean with Auto Moderation.</p>
           <div class="actions"><a class="button primary" href="/invite">Add to Discord</a><a class="button" href="/dashboard">Open Dashboard</a></div>
         </div>
         <div class="hero-art" aria-hidden="true">
           <svg class="hero-traces" viewBox="0 0 480 390" fill="none">
             <defs><pattern id="console-grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0v24" stroke="#293341" stroke-width=".65"/></pattern></defs>
-            <path d="M24 24h432v342H24z" fill="url(#console-grid)"/>
+            <path class="hero-grid" d="M24 24h432v342H24z" fill="url(#console-grid)"/>
             <path d="M24 45V24h21m390 0h21v21m0 300v21h-21m-390 0H24v-21" stroke="#60728a"/>
           </svg>
           <div class="hero-seal"><img src="/blackridge-logo.png" alt="" width="104" height="104"></div>
@@ -43,7 +43,6 @@
           <div class="feature-copy"><span class="icon-tile" data-icon="nuke"></span><h3>Anti-Nuke</h3><p>Set limits on destructive actions and choose how Blackridge responds to suspicious permission changes.</p></div>
           <div class="feature-art guard-art" aria-hidden="true">
             <svg viewBox="0 0 360 120" fill="none"><path d="M0 30h360M0 60h360M0 90h360" stroke="#28313d" stroke-dasharray="2 5"/><path d="M5 89h84l19-20h38l17-18h25l19-20h44l24 22h80" stroke="#789bc3" stroke-width="1.5"/><path d="M205 11v98" stroke="#7193bc" stroke-dasharray="3 5"/><circle cx="207" cy="31" r="7" fill="#1e334a" stroke="#a2c4ef"/><circle cx="207" cy="31" r="2" fill="#b6d5fc"/></svg>
-            <div class="feature-label"><span></span> Action threshold</div>
           </div>
         </article>
         <article class="feature-plate">
@@ -52,32 +51,36 @@
         </article>
         <article class="feature-plate">
           <div class="feature-copy"><span class="icon-tile" data-icon="automod"></span><h3>Auto Moderation</h3><p>Set rules for spam, repeat messages, and unwanted links. Choose how Blackridge responds to each rule.</p></div>
-          <div class="feature-art filter-art" aria-hidden="true"><span><i data-icon="logs"></i> Repeat messages</span><span><i data-icon="automod"></i> Spam</span><span><i data-icon="reports"></i> Unwanted links</span></div>
+          <div class="feature-art" aria-hidden="true"><div class="art-list"><span><i data-icon="logs"></i> Repeated messages <b>Filter</b></span><span><i data-icon="automod"></i> Spam <b>Filter</b></span><span><i data-icon="reports"></i> Unwanted links <b>Filter</b></span></div></div>
         </article>
         <article class="feature-plate">
           <div class="feature-copy"><span class="icon-tile" data-icon="verification"></span><h3>Verification</h3><p>Give members a clear way into your server with one-click verification or an image CAPTCHA.</p></div>
-          <div class="feature-art raid-art" aria-hidden="true"><span><i data-icon="verification"></i> Verify</span><b></b><span><i data-icon="checkpoint"></i> Assign role</span></div>
+          <div class="feature-art verify-art" aria-hidden="true"><div class="art-pass"><i data-icon="verification"></i><span><strong>Member verified</strong><small>Role assigned</small></span><b>✓</b></div></div>
         </article>
         <article class="feature-plate">
           <div class="feature-copy"><span class="icon-tile" data-icon="checkpoint"></span><h3>Checkpoint</h3><p>Review suspicious joins using configurable risk checks for new accounts.</p></div>
-          <div class="feature-art filter-art" aria-hidden="true"><span><i data-icon="checkpoint"></i> Account age</span><span><i data-icon="raid"></i> Default avatar</span><span><i data-icon="logs"></i> Repeated joins</span></div>
+          <div class="feature-art radar-art" aria-hidden="true"><svg viewBox="0 0 200 112" fill="none"><path d="M100 8v96M36 56h128" stroke="#354458" stroke-dasharray="3 5"/><g stroke="#405770"><circle cx="100" cy="56" r="18"/><circle cx="100" cy="56" r="34"/><circle cx="100" cy="56" r="48"/></g><path d="M100 56l33-33" stroke="#7ba8df"/><circle cx="133" cy="23" r="4" fill="#afd3ff"/><circle cx="83" cy="74" r="2" fill="#7498c2"/></svg></div>
         </article>
         <article class="feature-plate">
           <div class="feature-copy"><span class="icon-tile" data-icon="lockdown"></span><h3>Lockdown</h3><p>Restrict selected channels or pause invites, then restore recorded settings when the incident ends.</p></div>
-          <div class="feature-art raid-art" aria-hidden="true"><span><i data-icon="server"></i> Select</span><b></b><span><i data-icon="lockdown"></i> Lock</span><b></b><span><i data-icon="configure"></i> Restore</span></div>
+          <div class="feature-art" aria-hidden="true"><div class="art-list"><span><i data-icon="lockdown"></i> Channel permissions <b>Restricted</b></span><span><i data-icon="server"></i> New invites <b>Paused</b></span></div></div>
+        </article>
+        <article class="feature-plate">
+          <div class="feature-copy"><span class="icon-tile" data-icon="moderation"></span><h3>Moderation</h3><p>Take action in Discord and look up recorded cases with slash commands.</p></div>
+          <div class="feature-art terminal-art" aria-hidden="true"><div><code>/timeout</code><code>/history</code><span>Discord commands</span></div></div>
+        </article>
+        <article class="feature-plate">
+          <div class="feature-copy"><span class="icon-tile" data-icon="permits"></span><h3>Permits</h3><p>Choose which roles and users can run each moderation command.</p></div>
+          <div class="feature-art permit-art" aria-hidden="true"><div class="art-pass"><i data-icon="permits"></i><span><strong>Moderator role</strong><small>Command access</small></span><b>✓</b></div></div>
         </article>
       </div>
-      <dl class="feature-index">
-        <div><dt><span data-icon="moderation"></span> Moderation</dt><dd>Take action in Discord and look up recorded cases.</dd></div>
-        <div><dt><span data-icon="permits"></span> Permits</dt><dd>Choose which roles and users can run each moderation command.</dd></div>
-      </dl>
     </section>
     <section class="wrap landing-section launch-section" id="setup">
       <div class="landing-section-head"><h2>Get started.</h2></div>
       <ol class="launch-steps">
-        <li><span class="step-number">1</span><div><strong>Connect</strong><p>Add Blackridge to a Discord server you manage.</p><a class="button small" href="/invite">Add to Discord</a></div></li>
-        <li><span class="step-number">2</span><div><strong>Monitor</strong><p>Set role priority and review detections before enabling automatic responses.</p><a class="button small" href="/documentation">Read Documentation</a></div></li>
-        <li><span class="step-number">3</span><div><strong>Protect</strong><p>Choose how Blackridge should respond when a rule is triggered.</p><a class="button small" href="/dashboard">Open Dashboard</a></div></li>
+        <li><span class="step-number">1</span><div><strong>Connect</strong><p>Add Blackridge to a Discord server you manage.</p></div></li>
+        <li><span class="step-number">2</span><div><strong>Monitor</strong><p>Set role priority and review detections before enabling automatic responses.</p></div></li>
+        <li><span class="step-number">3</span><div><strong>Protect</strong><p>Choose how Blackridge should respond when a rule is triggered.</p></div></li>
       </ol>
     </section>
   </main>

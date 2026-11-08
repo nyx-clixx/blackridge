@@ -556,14 +556,14 @@ app.use(express.static(publicDir))
 const renderMain = body => homeShell
   .replace(/<main id="app">[\s\S]*?<\/main>/,() => '<main id="app"><div class="wrap dashboard">' + body + '</div></main>')
 const premiumShell = renderMain('<h1 class="premium-heading">Blackridge Premium</h1>' + premiumPlans() +
-  '<p class="stack"><a class="button" href="/dashboard">Open Dashboard</a></p>')
+  '<p class="stack premium-cta"><a class="button" href="/dashboard">Open Dashboard</a></p>')
 app.get('/support',(req,res) => res.redirect(supportInvite))
 app.get('/premium',(req,res) => sendPage(req,res,premiumShell))
 for (const [path,body] of Object.entries(resources)) {
   const page = renderMain('<div class="resource-page">' + body + '</div>')
   app.get(path,(req,res) => sendPage(req,res,page))
 }
-const dashboardShell = renderMain('<p role="status">Loading…</p>').replace('/design.css','/analytics.css').replace('<body>','<body class="dashboard-page">')
+const dashboardShell = renderMain('<div class="dashboard-loader" role="status"><span class="visually-hidden">Loading dashboard</span><div class="loading-heading" aria-hidden="true"></div><div class="loading-panel" aria-hidden="true"><span></span><span></span><span></span></div></div>').replace('/design.css','/analytics.css').replace('<body>','<body class="dashboard-page">')
 app.get(['/dashboard','/dashboard/:id','/dashboard/:id/:section'],(req,res) => {
   res.set('X-Robots-Tag','noindex')
   sendPage(req,res,dashboardShell)
