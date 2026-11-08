@@ -257,6 +257,11 @@ export function createStore(file) {
       const saved = JSON.parse(read.get(guild,kind)?.config ?? '{}')
       if (kind === 'permits') return normalizePermits(saved)
       const config = {...defaults[kind],...saved}
+      if (kind === 'logging') {
+        const {memberRoles,inviteUpdate,webhookUpdate,...channels} = config.channels
+        if (memberRoles && !channels.roleUpdate) channels.roleUpdate = memberRoles
+        config.channels = channels
+      }
       if (kind === 'honeypot') config.actions ??= [config.action]
       if (kind === 'automod') config.pointRules = config.pointRules.slice(0,4)
       return config

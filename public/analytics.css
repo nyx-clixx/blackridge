@@ -75,9 +75,9 @@
 .config-step .fields input:not([type=radio],[type=checkbox],[type=search]) {
   min-height:42px; border-color:#3c414c; border-radius:10px;
 }
-.config-step .duration-field { gap:0; }
-.config-step .duration-field label:first-child input[type=number] { border-radius:10px 0 0 10px; }
-.config-step .duration-field select { border-left:0; border-radius:0 10px 10px 0; }
+.dashboard-page .duration-field { gap:0; }
+.dashboard-page .duration-field label:first-child input[type=number] { height:42px; border-radius:10px 0 0 10px; }
+.dashboard-page .duration-field select { height:42px; min-height:42px; border-left:0; border-radius:0 10px 10px 0; }
 .config-step .raid-preset { margin-bottom:14px; }
 @media(min-width:1150px) {
   .raid-detection .fields:not(.raid-preset) { grid-template-columns:repeat(3,minmax(0,1fr)); }
@@ -89,7 +89,22 @@
   .config-page-heading > div { flex:1; }
 }
 
-.logging-intro { margin:0 0 16px; }
+.logging-events { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr)); gap:12px; margin-top:16px; }
+.logging-event { padding:14px; border:1px solid #353942; border-radius:12px; background:#11141980; }
+.settings-feedback:empty { display:none; }
+.backup-preview header { position:sticky; top:0; z-index:1; background:#1a1c20; }
+.backup-preview header h3, .backup-preview-group h4 { display:flex; align-items:center; gap:10px; }
+.backup-preview-body { display:grid; gap:14px; padding:20px; }
+.backup-preview-body p { margin:0; }
+.backup-preview-group { padding:14px; border:1px solid #353942; background:#15171b; border-radius:12px; }
+.backup-preview-group h4 { margin:0 0 10px; }
+.backup-preview-group h4 .icon-tile { width:32px; height:32px; }
+.backup-preview-group h4 .badge { margin-left:auto; }
+.backup-preview-group dl { margin:0; }
+.backup-preview-group dl > div { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 12px; padding:8px 0; border-top:1px solid #ffffff12; }
+.backup-preview-group dt { overflow-wrap:anywhere; }
+.backup-preview-group dd { margin:0; color:var(--muted); }
+.backup-preview-note { font-size:.875rem; }
 .lockdown-channels {
   display:grid; grid-template-columns:auto minmax(0,370px); align-items:center; gap:12px;
   margin-top:20px;

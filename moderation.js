@@ -1,4 +1,3 @@
-import { activityDestination } from './activity-logging.js'
 import { randomUUID } from 'node:crypto'
 import { ApplicationCommandType, AuditLogEvent, ChannelType, Events, MessageFlags, PermissionFlagsBits as P, SlashCommandBuilder } from 'discord.js'
 import { commandNames, matchesPermit } from './store.js'
@@ -40,7 +39,8 @@ const commands = commandNames.map(name => {
 const reportCommand = 'Report to Moderators'
 const commandSync = new Map()
 export function syncModerationCommands(guild,db,forceDisabled = false,{reportsOnly = false} = {}) {
-  const previous = commandSync.get(guild.id) ?? Promise.resolve()
+  const key = (guild.client?.user?.id ?? '') + ':' + guild.id
+  const previous = commandSync.get(key) ?? Promise.resolve()
   const operation = previous.catch(() => {}).then(async () => {
     const enabled = !forceDisabled && db.config(guild.id,'moderation').enabled
     if (enabled && !reportsOnly) for (const command of commands) await guild.commands.create(command)
@@ -54,8 +54,8 @@ export function syncModerationCommands(guild,db,forceDisabled = false,{reportsOn
     for (const command of registered.values()) {
       if (command.type === ApplicationCommandType.ChatInput && obsolete.includes(command.name)) await command.delete()
     }
-  }).finally(() => { if (commandSync.get(guild.id) === operation) commandSync.delete(guild.id) })
-  commandSync.set(guild.id,operation)
+  }).finally(() => { if (commandSync.get(key) === operation) commandSync.delete(key) })
+  commandSync.set(key,operation)
   return operation
 }
 
@@ -135,34 +135,11 @@ export function attachModeration(client,db,lookupGuild) {
   })
   client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => {
     if (!db.config(guild.id,'moderation').enabled || !entry.targetId || !entry.executorId) return
-    const data = {userId:entry.targetId,actor:entry.executorId,reason:entry.reason,at:entry.createdTimestamp}
-    if (entry.action === AuditLogEvent.MemberRoleUpdate) {
-      if (activityDestination(db,guild.id,'memberRoles')) return
-      const changes = (entry.changes ?? []).flatMap(change => {
-        if (!['$add','$remove'].includes(change.key) || !Array.isArray(change.new)) return []
-        const roles = change.new.map(role=>mention(role.id,'role')).join(', ')
-        return roles ? [mention(entry.targetId)+(change.key === '$add' ? ' was granted ' : ' lost ')+roles+'.'] : []
-      })
-      if (changes.length) {
-        const {options} = memberAction('warn',data)
-        void sendModuleLog(guild,db,'moderation',{title:'Member Roles Updated',body:changes.join('\n'),options:{...options,icon:'user'}})
-      }
-      return
-    }
     if (entry.executorId === client.user.id) return
-    if (entry.action === AuditLogEvent.MemberUpdate) {
-      const change = entry.changes?.find(change=>change.key === 'communication_disabled_until')
-      if (!change) return
-      const until = Date.parse(change.new)
-      if (Number.isFinite(until)) void sendModuleLog(guild,db,'moderation',memberAction('timeout',{...data,until}))
-      else if (change.old && change.new == null) void sendModuleLog(guild,db,'moderation',memberAction('untimeout',data))
-      return
-    }
     const action = entry.action === AuditLogEvent.MemberKick ? 'kick' : entry.action === AuditLogEvent.MemberBanAdd ? 'ban' : null
     if (!action) return
     try {
       db.recordModeration(guild.id,entry.targetId,action,entry.reason ?? 'No reason supplied',entry.createdTimestamp,entry.id)
-      void sendModuleLog(guild,db,'moderation',memberAction(action,data))
     }
     catch (error) { console.error('Could not record Discord moderation history:',error.code ?? error.name) }
   })
@@ -232,7 +209,7 @@ export function attachModeration(client,db,lookupGuild) {
         db.event(guild.id,'moderation',detail)
         const result = {title:'Messages Purged',body:'Deleted **'+deleted.size+'** of '+amount+' requested messages in '+mention(channel.id,'channel')+'.',
           options:{icon:'trash',fields:[['Moderator',mention(actor.id)],['Limit','Messages older than 14 days are skipped.']]}}
-        if (!deleted.size || !activityDestination(db,guild.id,'messageDelete')) void sendModuleLog(guild,db,'moderation',result)
+        void sendModuleLog(guild,db,'moderation',result)
         return await interaction.editReply(actionCard(result))
       }
       if (name === 'info') {

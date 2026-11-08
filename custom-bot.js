@@ -104,21 +104,29 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
       const guild = client.guilds.cache.get(id)
       if (!guild?.available || client.guilds.cache.size !== 1) throw error('Install the custom bot in this server only, then try again.')
       if (!guild.members.me?.permissions.has(requiredPermissions)) throw error('Grant the custom bot the same server permissions as Blackridge, then try again.')
-      await client.user.fetch(true).catch(() => {})
       const current = clients.get(id)
-      const profile = stored?.profile ?? {status:'online',activityType:'none',activity:''}
+      const profile = (stored ?? currentRecord)?.profile ?? {status:'online',activityType:'none',activity:''}
       const sharedGuild = shared().guilds.cache.get(id)
       stop = mountBot(client,db,guildId => guildId === id && active(id)?.client === client)
-      await syncModerationCommands(guild,db)
-      if (current && current.client.user.id !== client.user.id) {
-        const oldGuild = current.client.guilds.cache.get(id)
-        if (oldGuild?.available) await syncModerationCommands(oldGuild,db,true).catch(() => {})
-      }
       presence(client,profile)
       db.saveRecovery(id,keyName,{owner,secret:stored?.secret ?? seal(id,token),profile,intentsChecked})
-      clients.set(id,{owner,client,stop,sharedEnabled:false})
-      if (current) { current.stop(); await current.client.destroy() }
-      await syncModerationCommands(sharedGuild,db,true).catch(() => console.error('Shared command cleanup failed'))
+      const item = {owner,client,stop,sharedEnabled:true,syncing:true}
+      clients.set(id,item)
+      void client.user.fetch(true).catch(() => {})
+      if (current) {
+        current.stop()
+        const oldGuild = current.client.guilds.cache.get(id)
+        const cleanup = oldGuild?.available && current.client.user.id !== client.user.id
+          ? syncModerationCommands(oldGuild,db,true) : Promise.resolve()
+        void cleanup.catch(() => {}).finally(() => current.client.destroy()).catch(() => {})
+      }
+      // The dashboard is ready once the gateway and policy checks pass. Discord
+      // can queue command writes independently of the gateway connection.
+      void syncModerationCommands(guild,db).then(async () => {
+        if (clients.get(id) !== item || !active(id) || !sharedGuild?.available) return
+        await syncModerationCommands(sharedGuild,db,true)
+        if (clients.get(id) === item) item.sharedEnabled = false
+      }).catch(() => console.error('Custom Bot command refresh failed')).finally(() => { item.syncing = false })
     } catch (failure) {
       stop?.()
       await client.destroy()
@@ -134,12 +142,16 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
       if (busy.has(id)) continue
       if (!eligible(id,item.owner) || (item.client.isReady() && item.client.guilds.cache.size !== 1))
         await exclusive(id,() => disconnect(id)).catch(() => {})
-      else if (item.sharedEnabled === Boolean(active(id))) {
-        await exclusive(id,async () => {
-          const fallback = !active(id)
+      else if (!item.syncing && item.sharedEnabled === Boolean(active(id))) {
+        item.syncing = true
+        const fallback = !active(id)
+        const refresh = async () => {
+          if (!fallback) await syncModerationCommands(item.client.guilds.cache.get(id),db)
+          if (clients.get(id) !== item || fallback === Boolean(active(id))) return
           await syncModerationCommands(shared().guilds.cache.get(id),db,!fallback)
           item.sharedEnabled = fallback
-        }).catch(() => console.error('Could not refresh fallback commands'))
+        }
+        void refresh().catch(() => console.error('Could not refresh fallback commands')).finally(() => { item.syncing = false })
       }
     }
     for (const {guild:id} of db.recoveries(keyName)) {
@@ -157,9 +169,10 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
     async remove(id) { db.clearRecovery(id,keyName); await disconnect(id) },
     state(id,owner) {
       const record = db.recovery(id,keyName)
-      const user = active(id)?.client.user
+      const client = active(id)?.client
+      const user = client?.user
       return {configured:Boolean(record?.owner === owner),connected:Boolean(user),username:user?.username ?? '',
-        avatar:user?.displayAvatarURL(),banner:user?.bannerURL(),bio:user ? active(id)?.client.application?.description ?? '' : '',profile:record?.owner === owner ? record.profile : null}
+        avatar:user?.displayAvatarURL(),banner:user?.bannerURL(),bio:client?.application?.description ?? '',profile:record?.owner === owner ? record.profile : null}
     },
     async profile(id,profile) {
       const client = active(id)?.client

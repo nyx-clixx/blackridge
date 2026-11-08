@@ -1,5 +1,4 @@
 import { attachActivityLogging } from './activity-logging.js'
-import { isTextDestination } from './text-channel.js'
 import { AuditLogEvent as A, Client, Events, GatewayIntentBits as I, Partials, PermissionFlagsBits as P } from 'discord.js'
 import { attachModeration, temporaryBan } from './moderation.js'
 import { attachVerification } from './verification.js'
@@ -7,7 +6,7 @@ import { mountAnalytics } from './analytics.js'
 import { createHash } from 'node:crypto'
 import { hasQuarantineOverwrite, sendModuleLog, setQuarantineOverwrite } from './recovery.js'
 import { matchesPermit, premiumFilters, premiumGuards } from './store.js'
-import { actionCard, logCard, memberAction } from './messages.js'
+import { actionCard, memberAction } from './messages.js'
 import { onDomainList, startDomainFeeds } from './domain-feeds.js'
 
 function activeAutomodActions(rule) {
@@ -140,12 +139,8 @@ export function attachProtection(client, db) {
   }
   const alert = (guild,kind,cfg,detail) => {
     if (!cfg.alertChannel) return
-    void run(guild,kind,async () => {
-      const roles = [...new Set(cfg.alertRoles)].filter(id => id !== guild.id && guild.roles.cache.has(id))
-      const channel = await guild.channels.fetch(cfg.alertChannel)
-      if (!isTextDestination(channel) || channel.guildId !== guild.id) throw new Error('Invalid alert channel')
-      await channel.send(logCard(kind,detail,roles))
-    })
+    const roles = [...new Set(cfg.alertRoles)].filter(id => id !== guild.id && guild.roles.cache.has(id))
+    sendModuleLog(guild,db,kind,detail,roles,cfg.alertChannel)
   }
   const enforce = async (member,kind,cfg) => {
     const reason = kind === 'honeypot' ? 'Posted in the Blackridge Honeypot channel' : 'Blackridge ' + kind + ' threshold reached'

@@ -1,3 +1,4 @@
+import { enqueueDiscordLog } from './discord-logs.js'
 import { isTextDestination } from './text-channel.js'
 import { ActionRowBuilder, CheckboxBuilder, LabelBuilder, ButtonBuilder, ButtonStyle, Events, MessageFlags, ModalBuilder, PermissionFlagsBits as P, TextInputBuilder, TextInputStyle } from 'discord.js'
 import { matchesPermit } from './store.js'
@@ -28,11 +29,9 @@ export async function privateAppealChannel(guild,id) {
   return channel
 }
 
-async function logAppeal(guild,db,title,body,userId) {
-  try {
-    const channel = await privateAppealChannel(guild,db.config(guild.id,'appeals').alertChannel)
-    if (channel) await channel.send(messageCard(title,body,{icon:'inbox',userId}))
-  } catch { console.error('Discord appeal log delivery failed') }
+function logAppeal(guild,db,title,body,userId) {
+  const channel = db.config(guild.id,'appeals').alertChannel
+  enqueueDiscordLog(guild,channel,messageCard(title,body,{icon:'inbox',userId}),privateAppealChannel)
 }
 function reviewCard(row) {
   const questions = JSON.parse(row.questions)

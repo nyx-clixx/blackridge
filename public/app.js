@@ -91,8 +91,7 @@ function autosave(form,errorOutput,write) {
       while (dirty && form.isConnected && form.checkValidity()) {
         dirty = false
         try {
-          await write()
-          errorOutput.textContent = ''
+          errorOutput.textContent = await write() ?? ''
         } catch (error) {
           errorOutput.textContent = error.message
         }
@@ -105,7 +104,7 @@ function autosave(form,errorOutput,write) {
   }
   const changed = event => {
     if (event.target !== form && !event.target.name) return
-    if (event.type === 'input' && !event.target.matches('textarea,input:not([type=radio]):not([type=checkbox]):not([data-commit-on-change])')) return
+    if (event.type === 'input' && !event.target.matches('textarea:not([data-commit-on-change]),input:not([type=radio]):not([type=checkbox]):not([type=file]):not([data-commit-on-change])')) return
     dirty = true
     pendingSettings.add(flush)
     clearTimeout(timer)
@@ -293,36 +292,31 @@ function reportSettings(config,owner,choices) {
   return '<form id="report-settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') +
     '><section class="card settings-section"><h3>Member Reports</h3><p>Members can use Apps → Report to Moderators or react with the emoji you choose. Reports include a link to the message and go to a private review channel.</p>' +
     '<div class="fields"><div class="discord-field"><span>Private Review Channel</span>' + discordSelect('channel',channels,[config.channel]) +
-    '</div><label>Report Emoji (optional)<input name="emoji" maxlength="100" placeholder="🚩 or custom emoji ID" value="' + esc(config.emoji) + '"></label></div>' +
-    '</section></fieldset>' +
-    (owner ? '<button class="button primary stack" type="submit">Save Report Settings</button>' : '') +
-    '<p role="status" id="report-result"></p></form>'
+    '</div><label>Report Emoji (optional)<input name="emoji" data-commit-on-change maxlength="100" placeholder="🚩 or custom emoji ID" value="' + esc(config.emoji) + '"></label></div>' +
+    '<p role="status" class="settings-feedback" id="report-result"></p></section></fieldset></form>'
 }
 function wireReports(path,config) {
   const form = document.querySelector('#report-settings')
   const toggle = document.querySelector('[form=report-settings]')
-  const button = form.querySelector('button[type=submit]')
-  if (!button || !toggle) return
-  toggle.addEventListener('change',() => {
-    if (!form.reportValidity()) { toggle.checked = config.enabled; return }
-    form.requestSubmit(button)
-  })
-  form.onsubmit = async event => {
-    event.preventDefault()
-    if (button.disabled) return
-    const data = new FormData(form)
-    const result = form.querySelector('#report-result')
-    const payload = {enabled:toggle.checked,channel:data.get('channel') ?? '',emoji:data.get('emoji') ?? ''}
-    button.disabled = toggle.disabled = true
+  if (!toggle || toggle.disabled) return
+  wireModuleAutosave(form,toggle,config,'#report-result',path + '/reports',data => ({
+    channel:data.get('channel') ?? '',emoji:data.get('emoji') ?? ''
+  }))
+}
+function wireModuleAutosave(form,toggle,config,result,url,values) {
+  const submit = () => form.dispatchEvent(new Event('change'))
+  toggle.addEventListener('change',submit)
+  autosave(form,form.querySelector(result),async () => {
+    const payload = {...values(new FormData(form)),enabled:toggle.checked}
     try {
-      const saved = await request(path + '/reports',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      const saved = await request(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true})
       Object.assign(config,payload)
-      result.textContent = saved.warning ?? ''
+      return saved.warning
     } catch (error) {
-      toggle.checked = config.enabled
-      result.textContent = error.message
-    } finally { button.disabled = toggle.disabled = false }
-  }
+      if (toggle.checked === payload.enabled) toggle.checked = config.enabled
+      throw error
+    }
+  })
 }
 function honeyPotForm(config,owner,choices) {
   const channels = choices.channels.filter(channel => channel.type === 0 && channel.sendable)
@@ -331,59 +325,34 @@ function honeyPotForm(config,owner,choices) {
   const actions = config.actions ?? [config.action]
   const checkbox = (value,label) => '<label class="toggle"><input type="checkbox" name="actions" value="' + value + '"' +
     (actions.includes(value) ? ' checked' : '') + '> ' + label + '</label>'
-  const link = config.enabled && config.panelId ? ' <a href="https://discord.com/channels/' + esc(config.guildId) + '/' + esc(config.channel) + '/' + esc(config.panelId) + '">View Bait Warning</a>' : ''
-  return '<form id="honeypot-settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') + '><section class="card settings-section"><h3>Bait Channel</h3>' +
+  return '<form id="honeypot-settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') + '><section class="card settings-section"><h3>Bait Channel</h3><p id="honeypot-result" class="settings-feedback" role="status"></p>' +
     '<p>Use a dedicated text channel. Blackridge posts a Do Not Post warning before activating the trap. Server owners, members with Manage Messages, bots, and webhooks are exempt.</p>' +
     '<div class="fields">' + field('channel','Bait Channel',channels) + '<label>Additional Punishment<select name="consequence">' +
     options(responses,actions.find(action => Object.hasOwn(responses,action)) ?? 'none') + '</select></label>' +
     durationField('timeoutMinutes','Timeout Duration',config.timeoutMinutes,1,1440,'minutes') + '</div>' +
     '<div class="fields stack">' + checkbox('delete','Delete Message') + checkbox('warn','Warn Member') + '</div></section>' +
     '<section class="card settings-section"><h3>Discord Logging</h3><div class="fields">' + field('alertChannel','Logging Channel (optional)',choices.channels.filter(channel => channel.sendable)) +
-    '</div></section></fieldset>' + (owner ? '<button class="button primary stack" type="submit">Save Honeypot</button>' : '') +
-    '<p id="honeypot-result" role="status">' + link + '</p></form>'
+    '</div></section></fieldset></form>'
 }
-function wireHoneyPot(path,id,config) {
+function wireHoneyPot(path,config) {
   const form = document.querySelector('#honeypot-settings')
-  const result = form.querySelector('#honeypot-result')
   const toggle = document.querySelector('[form=honeypot-settings]')
-  const save = form.querySelector('button[type=submit]')
+  const timeout = form.elements.timeoutMinutes
   const refresh = () => {
-    const input = form.elements.timeoutMinutes
-    input.closest('[data-duration]').hidden = input.disabled = form.elements.consequence.value !== 'timeout'
+    timeout.closest('[data-duration]').hidden = timeout.disabled = form.elements.consequence.value !== 'timeout'
   }
   form.elements.consequence.addEventListener('change',refresh)
   refresh()
-  if (!save || !toggle) return
-  toggle.addEventListener('change',() => {
-    if (!form.reportValidity()) { toggle.checked = config.enabled; return }
-    form.requestSubmit(save)
-  })
-  form.onsubmit = async event => {
-    event.preventDefault()
-    if (save.disabled) return
-    const fields = new FormData(form)
-    const timeout = form.elements.timeoutMinutes
+  if (!toggle || toggle.disabled) return
+  wireModuleAutosave(form,toggle,config,'#honeypot-result',path + '/honeypot',fields => {
     const actions = fields.getAll('actions')
-    if (fields.get('consequence') !== 'none') actions.push(fields.get('consequence'))
-    const payload = {enabled:toggle.checked,channel:fields.get('channel') ?? '',actions,action:actions[0] ?? 'delete',
+    const consequence = fields.get('consequence')
+    if (consequence !== 'none') actions.push(consequence)
+    return {channel:fields.get('channel') ?? '',actions,action:actions[0] ?? 'delete',
       alertChannel:fields.get('alertChannel') ?? '',timeoutMinutes:timeout.disabled ? config.timeoutMinutes : readDuration(timeout)}
-    save.disabled = toggle.disabled = true
-    try {
-      const saved = await request(path + '/honeypot',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-      Object.assign(config,payload,{panelId:saved.panelId})
-      result.textContent = saved.warning ?? ''
-      if (saved.panelId) {
-        const link = document.createElement('a')
-        link.href = 'https://discord.com/channels/' + id + '/' + payload.channel + '/' + saved.panelId
-        link.textContent = 'View Bait Warning'
-        result.append(' ',link)
-      }
-    } catch (error) {
-      toggle.checked = config.enabled
-      result.textContent = error.message
-    } finally { save.disabled = toggle.disabled = false }
-  }
+  })
 }
+
 function configHeading(number,title,description,symbol,badge) {
   return '<div class="config-step-heading"><span class="icon-tile">' + icon(symbol) + '</span><div><h3>' +
     number + '. ' + title + '</h3><p>' + description + '</p></div><span class="config-badge">' + badge + '</span></div>'
@@ -527,6 +496,14 @@ const automodActions = {
   timeout:['Time Out Member','Temporarily prevent the member from communicating.','timer']
 }
 const automodIcons = {
+  image:'<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m3 17 5-4 4 3 4-5 5 5"/>',
+  sticker:'<path d="M20 13V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7zM13 20v-5a2 2 0 0 1 2-2h5M8 9h.01M14 9h.01"/>',
+  caps:'<path d="m3 18 6-12 6 12M5.5 13h7m5-4h4m-2 0v9"/>',
+  file:'<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/>',
+  ruler:'<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 7v4m4-4v3m4-3v4m4-4v3"/>',
+  ghost:'<path d="M5 19V10a7 7 0 0 1 14 0v9l-3-2-4 2-4-2zM9 10h.01m6 0h.01"/>',
+  invite:'<path d="M10 20H5V4h10v4m3 3v8m-4-4h8M9 12h.01"/>',
+  filter:'<path d="M3 5h18l-7 8v5l-4 2v-7z"/>',
   trash:'<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/>',
   warning:'<circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/>',
   timer:'<circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/>',
@@ -540,7 +517,7 @@ function automodIcon(key) {
 }
 function automodControls(config,paid) {
   const fieldMap = {badWords:['badWords','Blocked Phrases'],nsfw:['nsfwDomains','Additional NSFW Domains'],malicious:['maliciousDomains','Additional Malicious Domains']}
-  const icons = {badWords:'warning',duplicate:'repeat',invites:'links',links:'links',emoji:'emoji',mentions:'mentions',spam:'timer',newlines:'logs',headers:'moderation',multiUser:'raid',scam:'warning',nsfw:'links',malicious:'links',ghost:'mentions'}
+  const icons = {badWords:'warning',duplicate:'repeat',invites:'invite',links:'links',emoji:'emoji',mentions:'mentions',spam:'timer',newlines:'logs',headers:'moderation',multiUser:'raid',scam:'warning',nsfw:'filter',malicious:'shield',ghost:'ghost',images:'image',stickers:'sticker',caps:'caps',files:'file',length:'ruler'}
   const titles = {duplicate:'Repeat Messages',emoji:'Mass Emojis',spam:'Anti-Spam'}
   const limits = {emoji:'Emojis per message',duplicate:'Repeats per member',multiUser:'Members repeating the message',mentions:'Mentions per message',caps:'Percentage of uppercase letters',length:'Characters per message',newlines:'Line breaks per message'}
   const order = ['badWords','duplicate','invites','links','emoji','mentions','spam','newlines','headers',...Object.keys(filters).filter(key => !['badWords','duplicate','invites','links','emoji','mentions','newlines','headers'].includes(key))]
@@ -830,10 +807,10 @@ async function customBotPanel(path) {
     panel.innerHTML = '<form class="card stack" id="bot-connection"><h3>Connect Your Discord Bot</h3><p>Enable Presence Intent, Server Members Intent, and Message Content Intent on the Bot page of the Discord Developer Portal. Check the token below to unlock the install link. Install your bot in this server only and keep Blackridge installed for dashboard access. <a href="/documentation#custom-bot-setup">Setup Guide</a></p><p class="badge">' +
       (state.connected ? 'Connected' : state.configured ? 'Reconnecting' : 'Disconnected') + '</p><div class="fields"><label>Discord Bot Token<input type="password" name="token" required autocomplete="off" spellcheck="false" maxlength="162"></label></div><div class="actions"><button type="button" class="button" id="check-bot">Check Intents</button><a class="button" id="install-bot" target="_blank" rel="noopener noreferrer" hidden>Add to Discord</a><button class="button primary" id="connect-bot" disabled>Connect Bot</button>' +
       (state.configured ? '<button type="button" class="button" id="disconnect-bot">Disconnect Bot</button>' : '') + '</div></form>' +
-      (state.connected ? '<section class="card stack custom-profile"><form id="bot-profile"><h3>Profile</h3><div class="fields"><label>Bot Username<input name="username" required minlength="2" maxlength="32" value="' + esc(state.username) + '"></label>' +
+      (state.connected ? '<section class="card stack custom-profile"><form id="bot-profile"><h3>Profile</h3><div class="fields"><label>Bot Username<input name="username" data-commit-on-change required minlength="2" maxlength="32" value="' + esc(state.username) + '"></label>' +
         '<label>Status<select name="status">' + options({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'},profile.status ?? 'online') + '</select></label>' +
         '<label>Activity Type<select name="activityType">' + options({none:'Disabled',playing:'Playing',listening:'Listening',watching:'Watching',competing:'Competing'},profile.activityType ?? 'none') + '</select></label>' +
-        '<label>Activity Text<input name="activity" maxlength="100" value="' + esc(profile.activity ?? '') + '"></label><label>Bio<textarea name="bio" maxlength="400" rows="4">' + esc(state.bio) + '</textarea></label></div><div class="fields stack"><label>Change Avatar<input type="file" name="avatar" accept="image/png,image/jpeg,image/webp"></label><label>Change Banner<input type="file" name="banner" accept="image/png,image/jpeg,image/webp"></label></div><p>PNG, JPEG, or WebP up to 3 MB. Verification panels posted by Blackridge should be republished after switching bots.</p><button class="button primary">Save Profile</button></form>' +
+        '<label>Activity Text<input name="activity" maxlength="100" value="' + esc(profile.activity ?? '') + '"></label><label>Bio<textarea name="bio" data-commit-on-change maxlength="400" rows="4">' + esc(state.bio) + '</textarea></label></div><div class="fields stack"><label>Change Avatar<input type="file" name="avatar" accept="image/png,image/jpeg,image/webp"></label><label>Change Banner<input type="file" name="banner" accept="image/png,image/jpeg,image/webp"></label></div><p>PNG, JPEG, or WebP up to 3 MB. Verification panels posted by Blackridge should be republished after switching bots.</p></form>' +
         '<aside class="custom-preview"><div class="custom-banner">' + (state.banner ? '<img alt="" src="' + esc(state.banner) + '">' : '') + '</div><div class="custom-preview-body"><div class="custom-preview-avatar"><img alt="" src="' + esc(state.avatar || '/blackridge-icon.png') + '"><span class="presence-dot presence-' + esc(profile.status ?? 'online') + '"></span></div><h3><span data-profile-name>' + esc(state.username) + '</span> <small class="app-badge">APP</small></h3><p data-profile-status>' + ({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'}[profile.status] ?? 'Online') + '</p><div class="custom-preview-bio"><strong>Bio</strong><p data-profile-bio>' + esc(state.bio || 'No bio set.') + '</p></div></div></aside></section>' : '') +
       '<p id="custom-status" role="status"></p>'
     const action = async (button,run,message) => {
@@ -886,7 +863,7 @@ async function customBotPanel(path) {
       try {
         const next = await request(url,json('POST',{token:tokenField.value}))
         render(next)
-        panel.querySelector('#custom-status').textContent = 'Custom Bot connected.'
+        if (next.connected) panel.querySelector('#custom-status').textContent = 'Custom Bot connected.'
       } catch (error) { status.textContent = error.message }
       finally { tokenField.disabled = checkButton.disabled = connect.disabled = false }
     }
@@ -903,22 +880,46 @@ async function customBotPanel(path) {
       panel.querySelector('.presence-dot').className = 'presence-dot presence-' + status.value
       panel.querySelector('[data-profile-bio]').textContent = bio.value || 'No bio set.'
     })
-    if (form) form.onsubmit = event => {
-      event.preventDefault()
-      const fields = new FormData(form)
-      void action(event.submitter,async () => {
+    if (form) {
+      const profileFields = ['username','status','activityType','activity','bio']
+      let savedProfile = JSON.stringify(Object.fromEntries(profileFields.map(key => [key,form.elements[key].value])))
+      autosave(form,status,async () => {
+        const fields = new FormData(form)
+        const body = Object.fromEntries(profileFields.map(key => [key,fields.get(key)]))
+        if (body.activityType !== 'none' && !body.activity.trim()) return
         const images = ['avatar','banner'].flatMap(field => {
-          const file = fields.get(field)
-          if (!file.size) return []
+          const file = form.elements[field].files[0]
+          if (!file) return []
           if (file.size > 3*1024*1024 || !['image/png','image/jpeg','image/webp'].includes(file.type))
             throw new Error('Choose a PNG, JPEG, or WebP image up to 3 MB.')
           return [[field,file]]
         })
-        const body = Object.fromEntries(['username','status','activityType','activity','bio'].map(key => [key,fields.get(key)]))
-        let next = await request(url+'/profile',json('PUT',body))
-        for (const [field,file] of images) next = await request(url+'/image/'+field,{method:'PUT',headers:{'Content-Type':file.type},body:file})
-        return next
-      },'Profile updated.')
+        const serialized = JSON.stringify(body)
+        if (serialized !== savedProfile) {
+          await request(url+'/profile',json('PUT',body))
+          savedProfile = serialized
+        }
+        for (const [field,file] of images) {
+          const next = await request(url+'/image/'+field,{method:'PUT',headers:{'Content-Type':file.type},body:file})
+          if (form.elements[field].files[0] === file) form.elements[field].value = ''
+          const container = panel.querySelector(field === 'avatar' ? '.custom-preview-avatar' : '.custom-banner')
+          const image = container.querySelector('img') ?? container.appendChild(document.createElement('img'))
+          image.alt = ''
+          image.src = next[field] || '/blackridge-icon.png'
+        }
+      })
+    }
+    if (state.configured && !state.connected) {
+      const refresh = async () => {
+        if (!connection.isConnected) return
+        try {
+          const next = await request(url)
+          if (!connection.isConnected) return
+          if (next.connected && !tokenField.value && !tokenField.disabled) { render(next); return }
+        } catch { /* Keep the setup form available during a transient outage. */ }
+        setTimeout(refresh,3000)
+      }
+      setTimeout(refresh,3000)
     }
   }
   try { render(await request(url)) }
@@ -1033,11 +1034,10 @@ function wireDiscordSelectors(form,choices) {
 function loggingForm(config,owner,channels) {
   const destinations = channels.filter(channel => channel.sendable)
   const groups = Object.entries(loggingGroups).map(([group,events]) =>
-    '<section class="card settings-section"><h3>' + group + '</h3><div class="fields">' +
-    Object.entries(events).map(([key,label]) => '<div class="discord-field"><span>' + label + '</span>' +
+    '<section class="card settings-section"><h3>' + group + '</h3><div class="logging-events">' +
+    Object.entries(events).map(([key,label]) => '<div class="discord-field logging-event"><span>' + label + '</span>' +
       discordSelect(key,destinations,[config.channels[key]]) + '</div>').join('') + '</div></section>').join('')
-  return '<form id="settings"><p class="logging-intro">Choose where each Discord event is logged. Select None to skip an event. Use private staff channels for activity logs.</p>' +
-    '<fieldset class="settings-panels"' + (owner ? '' : ' disabled') + '>' + groups +
+  return '<form id="settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') + '>' + groups +
     '</fieldset><p id="notice" role="status"></p></form>'
 }
 
@@ -1090,12 +1090,20 @@ async function recoveryPanel(section,path,data,prepared) {
       const dialog = document.createElement('dialog')
       dialog.className = 'nuke-dialog backup-preview'
       const settingsLabels = {name:'Server Name',verificationLevel:'Verification Level',defaultMessageNotifications:'Default Notifications',explicitContentFilter:'Explicit Content Filter'}
-      const list = entries => entries.length ? '<ul>' + entries.join('') + '</ul>' : '<p>None recorded.</p>'
-      dialog.innerHTML = '<header><h3>Backup Preview</h3><form method="dialog"><button class="button small" aria-label="Close backup preview">Close</button></form></header><div class="nuke-dialog-fields"><p>Blackridge restores supported settings and eligible objects. Discord permissions and role hierarchy can limit restoration.</p><h4>Server Settings</h4>' +
-        list(Object.entries(snapshot.settings).map(([key,value]) => '<li>' + esc(settingsLabels[key] ?? key) + ' · ' + esc(value) + '</li>')) +
-        '<h4>Roles</h4>' + list(snapshot.roles.filter(role => !role.managed && role.id !== path.split('/').at(-1)).map(role => '<li>' + esc(role.name) + ' · Permission flags <code>' + esc(role.permissions) + '</code></li>')) +
-        '<h4>Channels and Categories</h4>' + list(snapshot.channels.map(channel => '<li>' + esc(channel.name) + ' · ' + ({0:'Text',2:'Voice',4:'Category',5:'Announcement',13:'Stage',15:'Forum',16:'Media'}[channel.type] ?? 'Channel') + ' · ' + channel.overwrites.filter(item => item.type === 0).length + ' role overwrites</li>')) +
-        '<p>Messages, role memberships, member overwrites, and ordering require manual recovery.</p></div>'
+      const group = (title,symbol,rows) => '<section class="backup-preview-group"><h4><span class="icon-tile">' + icon(symbol) + '</span>' +
+        title + '<span class="badge">' + rows.length + '</span></h4>' + (rows.length ? '<dl>' + rows.map(([label,value]) =>
+          '<div><dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd></div>').join('') + '</dl>' : '<p>None recorded.</p>') + '</section>'
+      const guildId = path.split('/').at(-1)
+      const roles = snapshot.roles.filter(role => !role.managed && role.id !== guildId)
+      const channelTypes = {0:'Text',2:'Voice',4:'Category',5:'Announcement',13:'Stage',15:'Forum',16:'Media'}
+      const settingsValues = {verificationLevel:['None','Low','Medium','High','Highest'],
+        defaultMessageNotifications:['All Messages','Only Mentions'],explicitContentFilter:['Disabled','Members Without Roles','All Members']}
+      dialog.setAttribute('aria-labelledby','backup-preview-title')
+      dialog.innerHTML = '<header><h3 id="backup-preview-title">' + icon('backup') + ' Backup Preview</h3><form method="dialog"><button class="button small" aria-label="Close backup preview">Close</button></form></header><div class="backup-preview-body"><p>Review the settings and objects eligible for restoration. Discord permissions and role hierarchy can limit recovery.</p>' +
+        group('Server Settings','configure',Object.entries(snapshot.settings).map(([key,value]) => [settingsLabels[key] ?? key,settingsValues[key]?.[value] ?? value])) +
+        group('Roles','permits',roles.map(role => [role.name,'Permission flags: ' + role.permissions])) +
+        group('Channels and Categories','server',snapshot.channels.map(channel => [channel.name,(channelTypes[channel.type] ?? 'Channel') + ' · ' + channel.overwrites.filter(item => item.type === 0).length + ' role overwrites'])) +
+        '<p class="backup-preview-note">Messages, role memberships, member overwrites, and ordering require manual recovery.</p></div>'
       dialog.addEventListener('close',() => dialog.remove(),{once:true})
       document.body.append(dialog)
       dialog.showModal()
@@ -1258,10 +1266,10 @@ async function dashboard() {
     }).join('')
     const overview = securityScore(data.security) + analyticsPanel() + '<section class="module-section"><div class="module-grid">' + modules + '</div></section>'
     document.body.classList.add('has-workspace')
-    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('honeypot') + navigation('verification') + navigation('checkpoint') + navigation('automod') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('logging') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('reports') + navigation('backup') + '</nav><div class="dash-pane"><div class="dash-main' + (modulePage ? ' module-page' : '') + '">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'logging' ? loggingForm(data.config.logging,data.owner,choices.channels) : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm({...data.config.honeypot,guildId:id},data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
+    shell('<div class="dash-layout"><nav class="sidebar" aria-label="Server navigation"><a class="server-switch" title="Switch server" href="' + base + '">' + (data.icon ? '<img class="switch-avatar" src="https://cdn.discordapp.com/icons/' + encodeURIComponent(id) + '/' + encodeURIComponent(data.icon) + '.png?size=64" alt="">' : icon('server')) + '<span>' + esc(data.name) + '</span></a>' + navigation('overview') + (data.owner ? navigation('premium') + navigation('custom') : '') + navigation('logs') + '<span class="nav-label">Protection</span>' + navigation('raid') + navigation('nuke') + navigation('lockdown') + navigation('honeypot') + navigation('verification') + navigation('checkpoint') + navigation('automod') + '<span class="nav-label">Administration</span>' + (data.owner ? navigation('permits') : '') + navigation('logging') + navigation('moderation') + (data.appealsManager ? navigation('appeals') : '') + navigation('reports') + navigation('backup') + '</nav><div class="dash-pane"><div class="dash-main' + (modulePage ? ' module-page' : '') + '">' + heading + (section === 'overview' ? overview : section === 'premium' ? serverBilling(data.plan,billing) : section === 'custom' ? (customAllowed ? '<div id="custom-bot-panel"></div>' : planLock('Custom Bot','The server owner can connect a bot with the Custom Bot plan.',serverPath + '/premium')) : backupLocked ? planLock('Server Backups','Create, schedule, and restore backups with Premium or Custom Bot.',serverPath + '/premium') : section === 'logs' ? activity : section === 'logging' ? loggingForm(data.config.logging,data.owner,choices.channels) : section === 'appeals' ? '<div id="appeals-panel"></div>' : section === 'permits' ? permitsForm(data.config.permits,choices.roles) : ['lockdown','backup'].includes(section) ? '<div id="recovery"></div>' : section === 'moderation' ? '<section class="card"><h3>Slash Commands</h3><p>' + commandNames.map(name => '/' + name).join(' · ') + '</p><h3 class="stack">Recent Cases</h3>' + logList(events.filter(event => event.kind === 'moderation').slice(0,5),true) + '</section><div id="recovery"></div>' : section === 'reports' ? reportSettings(data.config.reports,data.owner,choices) : section === 'honeypot' ? honeyPotForm(data.config.honeypot,data.owner,choices) : section === 'verification' ? verificationForm(data.config.verification,data.owner,choices) : form(section,data.config[section],data.owner)) + '<p id="refresh" role="status"></p></div></div></div>')
     if (section === 'overview') wireAnalytics(document.querySelector('.server-analytics'),path,request)
     if (section === 'reports') wireReports(path,data.config.reports)
-    if (section === 'honeypot') wireHoneyPot(path,id,data.config.honeypot)
+    if (section === 'honeypot') wireHoneyPot(path,data.config.honeypot)
     if (section === 'premium') wireBilling(path,id)
     if (section === 'appeals') appealsPanel(path,data.config.appeals,choices?.channels ?? [])
     if (section === 'custom' && customAllowed) void customBotPanel(path)

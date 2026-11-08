@@ -1,5 +1,5 @@
 import { AuditLogEvent as A, Events } from 'discord.js'
-import { isTextDestination } from './text-channel.js'
+import { enqueueDiscordLog } from './discord-logs.js'
 import { mention, messageCard } from './messages.js'
 
 const auditRoutes = new Map([
@@ -14,46 +14,46 @@ const auditRoutes = new Map([
   [A.RoleDelete,['roleDelete','Role Deleted','Role']],
   [A.MemberRoleUpdate,['memberRoles','Member Roles Updated','Member']],
   [A.InviteCreate,['inviteCreate','Invite Created']],
-  [A.InviteUpdate,['inviteUpdate','Invite Updated']],
   [A.InviteDelete,['inviteDelete','Invite Deleted']],
-  [A.GuildUpdate,['serverUpdate','Server Settings Updated']],
   [A.WebhookCreate,['webhookCreate','Webhook Created','Webhook']],
-  [A.WebhookUpdate,['webhookUpdate','Webhook Updated','Webhook']],
-  [A.WebhookDelete,['webhookDelete','Webhook Deleted','Webhook']]
+  [A.WebhookDelete,['webhookDelete','Webhook Deleted','Webhook']],
+  [A.EmojiCreate,['emojiCreate','Emoji Created','Emoji']],
+  [A.EmojiUpdate,['emojiUpdate','Emoji Updated','Emoji']],
+  [A.EmojiDelete,['emojiDelete','Emoji Deleted','Emoji']],
+  [A.StickerCreate,['stickerCreate','Sticker Created','Sticker']],
+  [A.StickerUpdate,['stickerUpdate','Sticker Updated','Sticker']],
+  [A.StickerDelete,['stickerDelete','Sticker Deleted','Sticker']],
+  [A.SoundboardSoundCreate,['soundboardSoundCreate','Soundboard Sound Created','Soundboard Sound']],
+  [A.SoundboardSoundUpdate,['soundboardSoundUpdate','Soundboard Sound Updated','Soundboard Sound']],
+  [A.SoundboardSoundDelete,['soundboardSoundDelete','Soundboard Sound Deleted','Soundboard Sound']]
 ])
 
 export function activityDestination(db,guildId,event) {
   const config = db.config(guildId,'logging')
-  return config.enabled ? config.channels[event] : undefined
+  return config.enabled ? config.channels[event === 'memberRoles' ? 'roleUpdate' : event] : undefined
 }
 
-export function attachActivityLogging(client,db) {
-  const pendingMessages = new Map()
-  async function send(guild,event,title,fields,at) {
+export function attachActivityLogging(client,db,enqueue = enqueueDiscordLog) {
+  function send(guild,event,title,fields,at) {
     if (!guild) return
     const id = activityDestination(db,guild.id,event)
-    if (!id) return
-    const messageEvent = event === 'messageEdit' || event === 'messageDelete'
-    const pending = pendingMessages.get(guild.id) ?? 0
-    // Bound the queue when a member rapidly edits or deletes messages.
-    if (messageEvent && pending >= 20) return
-    if (messageEvent) pendingMessages.set(guild.id,pending + 1)
-    try {
-      const channel = guild.channels.cache.get(id) ?? await guild.channels.fetch(id)
-      if (isTextDestination(channel) && channel.guildId === guild.id)
-        await channel.send(messageCard(title,'',{fields,at}))
-    } catch (error) {
-      console.error('Discord activity log delivery failed:',event,error.code ?? error.name)
-    } finally {
-      if (messageEvent) {
-        const remaining = pendingMessages.get(guild.id) - 1
-        if (remaining) pendingMessages.set(guild.id,remaining)
-        else pendingMessages.delete(guild.id)
-      }
-    }
+    if (id) enqueue(guild,id,messageCard(title,'',{fields,at}))
   }
 
   client.on(Events.GuildAuditLogEntryCreate,(entry,guild) => {
+    if (entry.action === A.GuildUpdate) {
+      if (entry.executorId === client.user?.id) return
+      const keys = (entry.changes ?? []).map(change => change.key)
+      const fields = [['Changed By',entry.executorId ? mention(entry.executorId) : null]]
+      const serverEvents = [
+        ['serverLogo','Server Logo Updated',keys.includes('icon_hash')],
+        ['serverName','Server Name Updated',keys.includes('name')],
+        ['serverUpdate','Server Settings Updated',!keys.length || keys.some(key => !['icon_hash','name'].includes(key))]
+      ]
+      for (const [event,title,changed] of serverEvents)
+        if (changed) send(guild,event,title,fields,entry.createdTimestamp)
+      return
+    }
     const route = auditRoutes.get(entry.action)
     if (!route || (route[0] !== 'memberRoles' && entry.executorId === client.user?.id)) return
     const [event,title,target] = route

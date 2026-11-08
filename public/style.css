@@ -101,7 +101,7 @@ fieldset{border:0;padding:0;margin:14px 0 0;min-width:0}
 .policy-group{border-top:1px solid var(--line);padding-top:13px;margin-top:16px}
 .policy-group:last-of-type{margin-bottom:14px}
 .account-menu{position:relative;z-index:5}
-.account-menu summary{list-style:none}
+.account-menu summary{list-style:none;border-radius:999px}
 .account-menu summary::-webkit-details-marker{display:none}
 .account-menu summary>span:nth-child(2){max-width:145px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .account-menu img,.initial{width:24px;height:24px;border-radius:50%}

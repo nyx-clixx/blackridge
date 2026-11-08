@@ -1,4 +1,4 @@
-import { isTextDestination } from './text-channel.js'
+import { enqueueDiscordLog } from './discord-logs.js'
 import { ChannelType as C, PermissionFlagsBits as P, Routes } from 'discord.js'
 import { z } from 'zod'
 import { messageCard, logCard, mention, safeText } from './messages.js'
@@ -27,14 +27,10 @@ const incidentPath = guild => '/guilds/' + guild.id + '/incident-actions'
 const guildRaw = guild => guild.client.rest.get(Routes.guild(guild.id))
 const timestamp = value => value ? new Date(value).toISOString() : null
 
-export async function sendModuleLog(guild,db,kind,detail) {
+export function sendModuleLog(guild,db,kind,detail,roles = [],destination) {
   if (kind === 'backup') return
-  const id = db.config(guild.id,kind).alertChannel
-  if (!id) return
-  try {
-    const channel = await guild.channels.fetch(id)
-    if (isTextDestination(channel) && channel.guildId === guild.id) await channel.send(logCard(kind,detail))
-  } catch { console.error('Discord module log delivery failed:',kind) }
+  const id = destination ?? db.config(guild.id,kind).alertChannel
+  if (id) enqueueDiscordLog(guild,id,logCard(kind,detail,roles))
 }
 
 export function recoveryTools(db,bot) {
@@ -44,13 +40,14 @@ export function recoveryTools(db,bot) {
     busy.add(guild.id)
     try { return await operation() } finally { busy.delete(guild.id) }
   }
-  const record = (guild,kind,actor,detail) => {
+  const record = (guild,kind,actor,detail,summary) => {
     const line = detail + ' · initiated by ' + actor
     db.event(guild.id,kind,line)
-    const title = {'Lockdown started':'Lockdown Started','Lockdown lifted':'Lockdown Lifted',
+    if (kind === 'lockdown' && summary === undefined && !detail.startsWith('Deleted ')) return
+    const title = {'Lockdown applied':'Lockdown Started','Lockdown lifted':'Lockdown Lifted',
       'Lockdown recovery incomplete':'Lockdown Recovery Incomplete','Quarantine role configured':'Quarantine Role Configured'}[detail]
     void sendModuleLog(guild,db,kind,{title:title ?? (kind === 'lockdown' ? 'Lockdown Update' : 'Recovery Update'),
-      body:safeText(detail),options:{icon:detail === 'Lockdown lifted' ? 'unlocked' : kind === 'lockdown' ? 'locked' : 'gear',
+      body:safeText(summary ?? detail),options:{icon:detail === 'Lockdown lifted' ? 'unlocked' : kind === 'lockdown' ? 'locked' : 'gear',
         fields:[['Initiated By',/^\d{17,20}$/.test(actor) ? mention(actor) : safeText(actor)]]}})
   }
   const scope = async guild => {
@@ -146,6 +143,7 @@ export function recoveryTools(db,bot) {
       }
       db.saveRecovery(guild.id,'lockdown',journal)
     }
+    record(guild,'lockdown',actor,'Lockdown applied',journal.steps.length + ' changes recorded for recovery.' + (journal.notices.length ? ' Review ' + journal.notices.length + ' notices in the dashboard.' : ''))
     return journal.notices
   }
   async function lift(guild,actor) {
@@ -190,7 +188,8 @@ export function recoveryTools(db,bot) {
       }
     }
     if (!journal.steps.length) db.clearRecovery(guild.id,'lockdown')
-    record(guild,'lockdown',actor,failures.length ? 'Lockdown recovery incomplete' : 'Lockdown lifted')
+    const result = failures.length ? 'Lockdown recovery incomplete' : 'Lockdown lifted'
+    record(guild,'lockdown',actor,result,failures.length ? failures.length + ' changes still need recovery.' : 'Lockdown changes have been processed.')
     return failures
   }
   async function backup(guild,actor) {
