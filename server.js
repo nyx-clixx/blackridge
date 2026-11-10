@@ -586,7 +586,7 @@ const premiumShell = renderMain('<h1 class="premium-heading">Blackridge Premium<
 app.get('/support',(req,res) => res.redirect(supportInvite))
 app.get('/premium',(req,res) => sendPage(req,res,premiumShell))
 app.get('/status',(req,res) => sendPage(req,res,renderMain(
-  '<section class="status-page"><p class="docs-eyebrow">Live Service Health</p><h1>Status</h1><p>Check Blackridge’s connection to Discord and current service statistics.</p>' +
+  '<section class="status-page"><h1>Status</h1><p>Check Blackridge’s connection to Discord and current service statistics.</p>' +
   '<div id="service-status" aria-live="polite"><p class="stack">Checking service status…</p></div></section>'
 )))
 for (const [path,body] of Object.entries(resources)) {

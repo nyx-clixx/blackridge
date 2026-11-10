@@ -37,20 +37,25 @@ const commands = commandNames.map(name => {
   return builder.addStringOption(option => option.setName('reason').setDescription('Reason for the action').setMaxLength(250))
 })
 const reportCommand = 'Report to Moderators'
+const reportSlash = new SlashCommandBuilder().setName('report').setDescription('Report a message to server moderators')
+  .addStringOption(option => option.setName('message-link').setDescription('Use Copy Message Link in Discord').setRequired(true).setMaxLength(150))
 const commandSync = new Map()
 export function syncModerationCommands(guild,db,forceDisabled = false,{reportsOnly = false} = {}) {
   const key = (guild.client?.user?.id ?? '') + ':' + guild.id
   const previous = commandSync.get(key) ?? Promise.resolve()
   const operation = previous.catch(() => {}).then(async () => {
     const enabled = !forceDisabled && db.config(guild.id,'moderation').enabled
-    if (enabled && !reportsOnly) for (const command of commands) await guild.commands.create(command)
     const obsolete = enabled ? ['lock','unlock'] : [...commandNames,'lock','unlock']
     const reportsEnabled = !forceDisabled && db.config(guild.id,'reports').enabled
     const registered = await guild.commands.fetch()
-    const report = [...registered.values()].find(command => command.type === ApplicationCommandType.Message && command.name === reportCommand)
-    if (reportsEnabled && !report) await guild.commands.create({name:reportCommand,type:ApplicationCommandType.Message})
-    if (!reportsEnabled && report) await report.delete()
+    for (const definition of [{name:reportCommand,type:ApplicationCommandType.Message},reportSlash.toJSON()]) {
+      const type = definition.type ?? ApplicationCommandType.ChatInput
+      const command = [...registered.values()].find(item => item.type === type && item.name === definition.name)
+      if (reportsEnabled && !command) await guild.commands.create(definition)
+      if (!reportsEnabled && command) await command.delete()
+    }
     if (reportsOnly) return
+    if (enabled) for (const command of commands) await guild.commands.create(command)
     for (const command of registered.values()) {
       if (command.type === ApplicationCommandType.ChatInput && obsolete.includes(command.name)) await command.delete()
     }
@@ -126,10 +131,28 @@ export function attachModeration(client,db,lookupGuild) {
     } catch { /* The source message may have been deleted. */ }
   })
   client.on(Events.InteractionCreate,async interaction => {
-    if (!interaction.isMessageContextMenuCommand?.() || !interaction.inCachedGuild() || interaction.commandName !== reportCommand) return
+    const context = interaction.isMessageContextMenuCommand?.() && interaction.commandName === reportCommand
+    const slash = interaction.isChatInputCommand?.() && interaction.commandName === 'report'
+    if ((!context && !slash) || !interaction.inCachedGuild()) return
     try {
       await interaction.deferReply({flags:MessageFlags.Ephemeral})
-      const result = await reportMessage(interaction.targetMessage,interaction.user,'Message Menu')
+      let message = interaction.targetMessage
+      let result = 'Use a message link from a channel you can read in this server.'
+      if (!db.config(interaction.guildId,'reports').enabled) {
+        result = 'The Report System is disabled.'
+      } else {
+        if (slash) {
+          const link = interaction.options.getString('message-link',true).trim()
+          const ids = /^https:\/\/(?:www\.|canary\.|ptb\.)?discord\.com\/channels\/(\d{17,20})\/(\d{17,20})\/(\d{17,20})$/.exec(link)
+          if (ids?.[1] === interaction.guildId) {
+            const channel = await interaction.guild.channels.fetch(ids[2]).catch(() => null)
+            if (channel?.guildId === interaction.guildId && channel.permissionsFor(interaction.member)?.has(P.ViewChannel | P.ReadMessageHistory)) {
+              message = await channel.messages?.fetch(ids[3]).catch(() => null)
+            }
+          }
+        }
+        if (message?.guildId === interaction.guildId) result = await reportMessage(message,interaction.user,slash ? 'Slash Command' : 'Message Menu')
+      }
       await interaction.editReply(messageCard('Report Message',result,{icon:'warning'}))
     } catch (error) { console.error('Message report failed:',error.code ?? error.name) }
   })

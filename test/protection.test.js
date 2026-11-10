@@ -619,3 +619,26 @@ test('verification cannot bypass an active quarantine after the configured role 
     roles:{cache:new Map([['old-role',{}]])}}
   assert.match(await grantVerification(db,member,{enabled:true}),/quarantined/)
 })
+
+test('report commands register only while the Report System is enabled', async () => {
+  const commands = new Map()
+  let enabled = false
+  const guild = {id:'guild',commands:{
+    fetch:async () => commands,
+    create:async command => {
+      const key = command.name
+      commands.set(key,{...command,type:command.type ?? 1,delete:async () => commands.delete(key)})
+    }
+  }}
+  const db = {config:(_,kind) => ({enabled:kind === 'reports' && enabled})}
+  const sync = () => syncModerationCommands(guild,db,false,{reportsOnly:true})
+  await sync()
+  assert.equal(commands.size,0)
+  enabled = true
+  await sync()
+  assert.equal(commands.get('Report to Moderators').type,3)
+  assert.equal(commands.get('report').options[0].name,'message-link')
+  enabled = false
+  await sync()
+  assert.equal(commands.size,0)
+})

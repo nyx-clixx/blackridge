@@ -76,8 +76,13 @@ test('Discord logs batch Components V2, reuse the owned webhook, and fall back w
   const channelId = '10000000000000001'
   const client = {user:{id:'10000000000000009'}}
   const sent = [], fallback = []
-  let lookup = 0, denied = false
+  let lookup = 0, branding = 0, denied = false
   const hook = {name:'Blackridge Logs',type:WebhookType.Incoming,owner:client.user,channelId,token:'test',
+    edit:async ({avatar}) => {
+      assert.ok(Buffer.isBuffer(avatar))
+      branding++
+      return hook
+    },
     send:async payload => {
       if (denied) throw Object.assign(new Error('Unknown Webhook'),{code:10015})
       sent.push(payload)
@@ -100,6 +105,7 @@ test('Discord logs batch Components V2, reuse the owned webhook, and fall back w
   await flush()
   assert.equal(sent.length,2)
   assert.equal(lookup,1)
+  assert.equal(branding,1)
   denied = true
   enqueue(guild,channelId,card)
   await flush()

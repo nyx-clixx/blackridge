@@ -86,7 +86,10 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
   }
   async function connect(id,owner,token,stored) {
     const currentRecord = db.recovery(id,keyName)
-    if (!stored && active(id) && currentRecord?.owner === owner && open(id,currentRecord.secret) === token) return
+    if (!stored && active(id) && currentRecord?.owner === owner) {
+      try { if (open(id,currentRecord.secret) === token) return }
+      catch { /* A fresh token can replace an unreadable stored credential. */ }
+    }
     const {missingIntents} = await check(id,owner,token)
     // Keep legacy installations working with their original gateway options.
     if ((!stored || stored.intentsChecked) && missingIntents.length)
@@ -157,7 +160,7 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
     for (const {guild:id} of db.recoveries(keyName)) {
       if (clients.has(id) || busy.has(id) || (retry.get(id) ?? 0) > Date.now()) continue
       const record = db.recovery(id,keyName)
-      if (!eligible(id,record.owner)) continue
+      if (!record || !eligible(id,record.owner)) continue
       retry.set(id,Date.now()+300000)
       await exclusive(id,() => connect(id,record.owner,open(id,record.secret),record)).catch(() => console.error('Custom bot reconnect failed'))
     }

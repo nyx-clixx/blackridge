@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { isTextDestination } from './text-channel.js'
 import { standardLogEmoji } from './messages.js'
 import { ComponentType as Type, PermissionFlagsBits as P, WebhookType } from 'discord.js'
@@ -28,6 +29,7 @@ function compactCards(queue) {
     {type:Type.TextDisplay,content:rows.map(row => '• ' + row).join('\n')}]}]}
 }
 
+const webhookAvatar = readFileSync(new URL('./public/blackridge-icon.png',import.meta.url))
 const webhookName = 'Blackridge Logs'
 const permanentWebhookErrors = new Set([10015,50001,50013,50027])
 
@@ -50,9 +52,14 @@ export function createLogDispatcher(delay = 1500) {
     try {
       if (!state.webhook && Date.now() >= state.retryAt && channel.fetchWebhooks && channel.createWebhook) {
         const hooks = await channel.fetchWebhooks()
-        state.webhook = hooks.find(hook => hook.name === webhookName && hook.type === WebhookType.Incoming &&
+        const existing = hooks.find(hook => hook.name === webhookName && hook.type === WebhookType.Incoming &&
           hook.owner?.id === guild.client.user.id && hook.channelId === id && hook.token) ??
-          await channel.createWebhook({name:webhookName,reason:'Blackridge Discord log delivery'})
+          null
+        state.webhook = existing ?? await channel.createWebhook({name:webhookName,avatar:webhookAvatar,reason:'Blackridge Discord log delivery'})
+        if (existing && !existing.avatar && existing.edit && Date.now() >= state.avatarRetryAt) {
+          state.avatarRetryAt = Date.now() + 60000
+          try { state.webhook = await existing.edit({avatar:webhookAvatar}) } catch { /* Branding must not interrupt delivery. */ }
+        }
       }
       if (state.webhook?.token) {
         await state.webhook.send({...forSender(state.webhook.applicationId),withComponents:true})
@@ -78,7 +85,7 @@ export function createLogDispatcher(delay = 1500) {
         if (!idle) return
         destinations.delete(idle[0])
       }
-      destinations.set(key,state = {queue:[],busy:false,retryAt:0,dropped:0,resolveChannel})
+      destinations.set(key,state = {queue:[],busy:false,retryAt:0,avatarRetryAt:0,dropped:0,resolveChannel})
     }
     if (state.queue.length >= 100) { state.dropped++; return }
     state.queue.push(card)

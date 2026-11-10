@@ -150,3 +150,9 @@ body > footer { min-height:86px; }
 .premium-cta { text-align:center; margin-top:20px; }
 
 .radar-art svg{width:min(100%,360px);height:120px}.radar-art{background:radial-gradient(ellipse at center,#18335724,transparent 70%)}
+
+.feature-art { background:radial-gradient(ellipse at center,#243248 0%,var(--surface-recessed) 67%); position:relative; isolation:isolate; }
+.feature-art:not(.radar-art)::before { content:""; position:absolute; inset:0; z-index:-1; opacity:.24; background-image:linear-gradient(#6381a944 1px,transparent 1px),linear-gradient(90deg,#6381a944 1px,transparent 1px); background-size:18px 18px; mask-image:radial-gradient(ellipse,#000 18%,transparent 70%); }
+.feature-art .art-pass,.feature-art .art-list span,.feature-art.raid-art span,.terminal-art code { border:1px solid #607da74a; box-shadow:0 6px 18px #080e1a55,inset 0 1px #aecfff16; }
+.permit-art { background:radial-gradient(ellipse at 52% 55%,#203a44,var(--surface-recessed) 66%); }
+.lock-art { background:radial-gradient(ellipse at 50% 52%,#283344,var(--surface-recessed) 67%); }

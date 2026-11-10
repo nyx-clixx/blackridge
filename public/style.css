@@ -505,3 +505,9 @@ body.has-workspace .sidebar{overflow:auto}
 @media(prefers-reduced-motion:reduce){.pricing .plan-custom::before{animation:none;--plan-orbit:135deg}.docs-guide,.docs-nav a{transition:none}}
 
 .honeypot-actions{display:flex;flex-wrap:wrap;gap:22px;margin-top:8px}.fields .honeypot-actions label.toggle{display:flex;align-items:center;gap:9px}.picker-emoji{width:22px;height:22px;object-fit:contain;vertical-align:middle}
+
+.docs-nav-group { display:grid; gap:3px; }
+.docs-nav-group + .docs-nav-group { margin-top:16px; }
+.docs-nav-group p { margin:0 10px 4px; font-weight:650; }
+.docs-nav-group a { display:flex; align-items:center; gap:10px; }
+.docs-nav-group .icon { width:17px; height:17px; display:block; }

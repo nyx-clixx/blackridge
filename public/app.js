@@ -297,7 +297,7 @@ function reportSettings(config,owner,choices) {
   ]
   if (config.emoji && !emojis.some(emoji => emoji.id === config.emoji)) emojis.push({id:config.emoji,name:config.emoji})
   return '<form id="report-settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') +
-    '><section class="card settings-section"><h3>Member Reports</h3><p>Members can use Apps → Report to Moderators or react with the emoji you choose. Reports include a link to the message and go to a private review channel.</p>' +
+    '><section class="card settings-section"><h3>Member Reports</h3><p>Members can use /report with a message link, choose Apps → Report to Moderators, or react with the configured emoji. Reports include a link to the message and go to a private review channel.</p>' +
     '<div class="fields"><div class="discord-field"><span>Private Review Channel</span>' + discordSelect('channel',channels,[config.channel]) +
     '</div><div class="discord-field"><span>Report Emoji</span>' + discordSelect('emoji',emojis,[config.emoji]) + '</div></div>' +
     '<p role="status" class="settings-feedback" id="report-result"></p></section></fieldset></form>'
@@ -653,7 +653,7 @@ function protectionControls(form, section, config, paid) {
 const alerts = [['alertChannel','Discord Logging Channel'],['alertRoles','Roles to Notify']]
 const timedResponses = [['tempBanMinutes','Temporary ban duration',1,1440,'minutes'],['quarantineMinutes','Quarantine duration',1,1440,'minutes']]
 const settingFields = {
-  nuke: [['threshold','Default Actions Per Actor',2,30],['window','Detection window',5,120,'seconds'],['trusted','Trusted Discord user IDs (comma-separated)'],...alerts,...timedResponses],
+  nuke: [['threshold','Fallback Actions Per Actor',2,30],['window','Fallback Detection Window',5,120,'seconds'],['trusted','Trusted Discord user IDs (comma-separated)'],...alerts,...timedResponses],
   raid: [['threshold','Joins to trigger',3,100],['window','Detection window',5,120,'seconds'],['duration','Protection duration',15,600,'seconds'],['age','Maximum account age (0 for all)',0,365,'days'],['timeoutMinutes','Timeout duration',1,1440,'minutes'],...alerts,...timedResponses],
   checkpoint: [['age','Young account threshold',1,365,'days'],['agePoints','Points for a young account',0,5],['avatarPoints','Points for a default avatar',0,5],['rejoinPoints','Points for 3 joins in an hour',0,5],['similarPoints','Points for a burst of similar accounts',0,5],['inviteNamePoints','Points for invite links in display names',0,5],['threshold','Minimum score to log and alert',1,25],...timedResponses,...alerts],
   automod: [['threshold','Messages per member',3,30],['window','Detection window',2,60,'seconds'],['timeoutMinutes','Timeout duration',1,1440,'minutes'],...alerts,['spamPoints','Points per spam violation',0,100]]
@@ -959,7 +959,7 @@ function form(kind, config, owner) {
       flowStep(3,'Notify Your Team','Send detections to a Discord channel and optionally ping roles.','logs','Notifications',fields(alertFields),'discord-alerts') +
       '</fieldset><p role="status" id="notice"></p></form>'
   }
-  return '<form id="settings"><fieldset class="settings-panels"' + disabled + '>' + (kind === 'automod' ? '' : '<section class="card settings-section"><h3>' + sections[kind] + ' Policy' + '</h3><p>' + (owner ? (kind === 'nuke' ? 'The default threshold applies to monitored actions without a per-action limit. Individual rules can override it.' : 'Set detection thresholds and how Blackridge responds.') : 'Only the server owner can change this policy.') + '</p><div class="fields">' + fields(baseFields) + response + '</div></section>') + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord Alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '</fieldset><p role="status" id="notice"></p></form>'
+  return '<form id="settings"><fieldset class="settings-panels"' + disabled + '>' + (kind === 'automod' ? '' : '<section class="card settings-section"><h3>' + sections[kind] + ' Policy' + '</h3><p>' + (owner ? (kind === 'nuke' ? 'The fallback counts monitored actions by the same actor when they have no individual rate rule. Configure sets the limits for that protection instead. Use Default Response inherits the response only.' : 'Set detection thresholds and how Blackridge responds.') : 'Only the server owner can change this policy.') + '</p><div class="fields">' + fields(baseFields) + response + '</div></section>') + (alertFields.length ? '<section class="card settings-section discord-alerts"><h3>Discord Alerts</h3><div class="fields">' + fields(alertFields) + '</div></section>' : '') + '</fieldset><p role="status" id="notice"></p></form>'
 }
 function wireResponseDurations(form,section) {
   const refresh = () => {

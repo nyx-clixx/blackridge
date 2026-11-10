@@ -26,7 +26,9 @@ export function stripeBilling(db,base,env = process.env,makeStripe = (key,option
     const item = sub.items.data[0]
     const plan = sub.items.data.length === 1 && item.quantity === 1
       ? Object.keys(prices).find(key => prices[key] === item.price.id) : null
-    const paidUntil = plan && sub.status === 'active' && sub.latest_invoice?.status === 'paid' ? item.current_period_end * 1000 : 0
+    const periodEnd = item?.current_period_end
+    const paidUntil = plan && sub.status === 'active' && sub.latest_invoice?.status === 'paid' &&
+      Number.isSafeInteger(periodEnd) && periodEnd > 0 ? periodEnd * 1000 : 0
     db.sync(id,plan ? sub.status : ['canceled','incomplete_expired'].includes(sub.status) ? sub.status : 'unrecognized',
       plan ?? '',paidUntil,(sub.cancel_at ?? (sub.cancel_at_period_end ? item?.current_period_end : 0) ?? 0) * 1000)
   }
