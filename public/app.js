@@ -1,3 +1,4 @@
+import { wireStatus } from './status.js'
 import { loggingGroups } from './logging-events.js'
 import { analyticsPanel, wireAnalytics } from './analytics.js'
 import { planName, premiumPlans } from './plans.js'
@@ -290,10 +291,15 @@ document.addEventListener('change',event => {
 },true)
 function reportSettings(config,owner,choices) {
   const channels = choices.channels.filter(channel => channel.sendable)
+  const emojis = [
+    ...['🚩','⚠️','🔔','🛡️','❗','📢'].map(value => ({id:value,name:value})),
+    ...(choices.emojis ?? []).map(emoji => ({id:emoji.id,name:':' + emoji.name + ':',emoji:true}))
+  ]
+  if (config.emoji && !emojis.some(emoji => emoji.id === config.emoji)) emojis.push({id:config.emoji,name:config.emoji})
   return '<form id="report-settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') +
     '><section class="card settings-section"><h3>Member Reports</h3><p>Members can use Apps → Report to Moderators or react with the emoji you choose. Reports include a link to the message and go to a private review channel.</p>' +
     '<div class="fields"><div class="discord-field"><span>Private Review Channel</span>' + discordSelect('channel',channels,[config.channel]) +
-    '</div><label>Report Emoji (optional)<input name="emoji" data-commit-on-change maxlength="100" placeholder="🚩 or custom emoji ID" value="' + esc(config.emoji) + '"></label></div>' +
+    '</div><div class="discord-field"><span>Report Emoji</span>' + discordSelect('emoji',emojis,[config.emoji]) + '</div></div>' +
     '<p role="status" class="settings-feedback" id="report-result"></p></section></fieldset></form>'
 }
 function wireReports(path,config) {
@@ -326,14 +332,16 @@ function honeyPotForm(config,owner,choices) {
   const actions = config.actions ?? [config.action]
   const checkbox = (value,label) => '<label class="toggle"><input type="checkbox" name="actions" value="' + value + '"' +
     (actions.includes(value) ? ' checked' : '') + '> ' + label + '</label>'
-  return '<form id="honeypot-settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') + '><section class="card settings-section"><h3>Bait Channel</h3><p id="honeypot-result" class="settings-feedback" role="status"></p>' +
-    '<p>Use a dedicated text channel. Blackridge posts a Do Not Post warning before activating the trap. Server owners, members with Manage Messages, bots, and webhooks are exempt.</p>' +
-    '<div class="fields">' + field('channel','Bait Channel',channels) + '<label>Additional Punishment<select name="consequence">' +
-    options(responses,actions.find(action => Object.hasOwn(responses,action)) ?? 'none') + '</select></label>' +
-    durationField('timeoutMinutes','Timeout Duration',config.timeoutMinutes,1,1440,'minutes') + '</div>' +
-    '<div class="fields stack">' + checkbox('delete','Delete Message') + checkbox('warn','Warn Member') + '</div></section>' +
-    '<section class="card settings-section"><h3>Discord Logging</h3><div class="fields">' + field('alertChannel','Logging Channel (optional)',choices.channels.filter(channel => channel.sendable)) +
-    '</div></section></fieldset></form>'
+  return '<form id="honeypot-settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') + '>' +
+    flowStep(1,'Choose a Bait Channel','Use a dedicated text channel. Blackridge publishes a Do Not Post warning before activating the trap.','honeypot','Channel',
+      field('channel','Bait Channel',channels)) +
+    flowStep(2,'Choose the Response','Combine message deletion and a warning with one additional punishment. Owners, bots, webhooks, and members with Manage Messages are exempt.','moderation','Response',
+      '<label>Additional Punishment<select name="consequence">' + options(responses,actions.find(action => Object.hasOwn(responses,action)) ?? 'none') + '</select></label>' +
+      durationField('timeoutMinutes','Timeout Duration',config.timeoutMinutes,1,1440,'minutes') +
+      '<div class="flow-subfields honeypot-actions">' + checkbox('delete','Delete Message') + checkbox('warn','Warn Member') + '</div>') +
+    flowStep(3,'Notify Your Team','Optionally send Honeypot detections to a separate staff channel.','logging','Notifications',
+      field('alertChannel','Logging Channel',choices.channels.filter(channel => channel.sendable))) +
+    '<p id="honeypot-result" class="settings-feedback" role="status"></p></fieldset></form>'
 }
 function wireHoneyPot(path,config) {
   const form = document.querySelector('#honeypot-settings')
@@ -566,10 +574,14 @@ function wireAutomodRules(form) {
     card.addEventListener('change',event => {
       const editing = event.target.name === key + '-response'
       if (!editing && event.target !== enabled) return
-      if (event.target === enabled && enabled.checked && !responses().length) {
-        // A ghost mention is detected after the message is deleted.
-        const fallback = key === 'ghost' ? 'warn' : 'delete'
-        card.querySelector('.automod-action input[value="' + fallback + '"]').checked = true
+      if (event.target === enabled && enabled.checked) {
+        const points = card.querySelector('[name="' + (key === 'spam' ? 'spamPoints' : key + '-points') + '"]')
+        if (points && Number(points.value) === 0) points.value = '1'
+        if (!responses().length) {
+          // A ghost mention is detected after the message is deleted.
+          const fallback = key === 'ghost' ? 'warn' : 'delete'
+          card.querySelector('.automod-action input[value="' + fallback + '"]').checked = true
+        }
       }
       const selected = responses()
       if (!selected.length) enabled.checked = false
@@ -987,7 +999,7 @@ function discordSelect(name,items,values,multiple = false) {
   const label = multiple ? (selected.size ? selected.size + ' selected' : 'Select options') : choices.find(item => selected.has(item.id))?.name ?? 'None'
   return '<details class="discord-select" data-multiple="' + multiple + '"><summary><span>' + esc(label) + '</span><span aria-hidden="true">⌄</span></summary><div class="discord-options"><input class="discord-search" type="search" aria-label="Search options" placeholder="Search…" autocomplete="off"><div class="discord-results">' + choices.map(item => {
     const checked = selected.has(item.id) || (!multiple && !selected.size && !item.id)
-    return '<label class="discord-option"><input type="' + (multiple ? 'checkbox' : 'radio') + '" name="' + name + '" value="' + esc(item.id) + '"' + (checked ? ' checked' : '') + '><span>' + esc(item.name) + '</span></label>'
+    return '<label class="discord-option"><input type="' + (multiple ? 'checkbox' : 'radio') + '" name="' + name + '" value="' + esc(item.id) + '"' + (checked ? ' checked' : '') + '><span>' + (item.emoji && /^\d{17,20}$/.test(item.id) ? '<img class="picker-emoji" alt="" loading="lazy" src="https://cdn.discordapp.com/emojis/' + item.id + '.png?size=32"> ' : '') + esc(item.name) + '</span></label>'
   }).join('') + '</div></div></details>'
 }
 function replaceDiscordInput(input,markup) {
@@ -1209,7 +1221,7 @@ async function dashboard() {
         '<p class="signin-legal">By continuing, you agree to the <a href="/terms">Terms of Service</a> and <a href="/privacy">Privacy Policy</a>.</p>' +
         (me.configured ? '' : '<p class="muted">Discord sign-in is awaiting application setup.</p>') +
         (location.search ? '<p class="error">Sign-in could not be completed. Please try again.</p>' : '') +
-        '</div><p class="signin-help">Need help? <a href="/support">Join the support server</a>.</p></div>' +
+        '</div></div>' +
         '<div class="signin-brand"><a class="brand" href="/"><img src="/blackridge-logo.png" width="52" height="52" alt="">Blackridge</a></div></section>')
       return
     }
@@ -1400,6 +1412,22 @@ async function dashboard() {
       setTimeout(refresh, 15000)
     }
   } catch (error) { shell('<h2>Dashboard unavailable</h2><p class="error" role="alert">' + esc(error.message) + '</p><a class="button" href="/dashboard">Back to dashboard</a>') }
+}
+wireStatus(request)
+if (location.pathname === '/documentation') {
+  const articles = [...document.querySelectorAll('.docs-article')]
+  const selectArticle = () => {
+    const id = location.hash.slice(1)
+    const active = articles.find(article => article.id === id) ?? articles[0]
+    for (const article of articles) article.hidden = article !== active
+    for (const link of document.querySelectorAll('.docs-nav a')) {
+      if (link.hash === '#' + active.id) link.setAttribute('aria-current','page')
+      else link.removeAttribute('aria-current')
+    }
+    document.querySelector('.docs-toc').innerHTML = '<strong>On This Page</strong><a href="#' + active.id + '">' + active.querySelector('h1').textContent + '</a><a href="/support">Support Server</a>'
+  }
+  selectArticle()
+  window.addEventListener('hashchange',selectArticle)
 }
 if (account.tagName === 'DETAILS') void accountMenu(null)
 if (location.pathname.startsWith(base)) dashboard()

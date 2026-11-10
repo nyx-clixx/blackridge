@@ -148,3 +148,5 @@ body > footer { min-height:86px; }
 .terminal-art > div { display:flex; flex-wrap:wrap; justify-content:center; gap:7px; padding:10px; }
 .terminal-art code { padding:4px 8px; color:#b6d7ff; border:1px solid #ffffff18; border-radius:6px; background:#1d2632; }
 .premium-cta { text-align:center; margin-top:20px; }
+
+.radar-art svg{width:min(100%,360px);height:120px}.radar-art{background:radial-gradient(ellipse at center,#18335724,transparent 70%)}

@@ -96,6 +96,7 @@ export function attachProtection(client, db) {
   const joins = new Map()
   const messages = new Map()
   const repeats = new Map()
+  const recentMessages = new Map()
   const automodDeletes = new Map()
   const checkpointJoins = new Map()
   const recentAccounts = new Map()
@@ -119,6 +120,7 @@ export function attachProtection(client, db) {
     for (const [key,cached] of onboarding) if (cached.until <= now) onboarding.delete(key)
     for (const active of [raids,seen]) for (const [key,until] of active) if (until <= now) active.delete(key)
     for (const [id,at] of automodDeletes) if (at <= now-60000) automodDeletes.delete(id)
+    for (const [key,hits] of recentMessages) if (hits.at(-1).at <= now-60000) recentMessages.delete(key)
     for (const [key,hits] of repeats) if (hits.at(-1).at <= now-60000) repeats.delete(key)
     for (const [key,hits] of checkpointJoins) if (hits.at(-1) <= now-3600000) checkpointJoins.delete(key)
     for (const [key,hits] of recentAccounts) if (hits.at(-1).at <= now-60000) recentAccounts.delete(key)
@@ -245,6 +247,10 @@ export function attachProtection(client, db) {
       if (bypass(guild,'automod',message.author.id,message.member)) return
       const key = guild.id + ':' + message.author.id
       const now = Date.now()
+      const recentKey = key + ':' + message.channelId
+      const recent = (recentMessages.get(recentKey) ?? []).filter(hit => hit.at > now-cfg.window*1000)
+      recent.push({message,at:now})
+      recentMessages.set(recentKey,recent.slice(-5))
       const plan = db.guildPlan(guild.id)
       const rules = Object.entries(cfg.filters ?? {}).filter(([name,rule]) =>
         name !== 'ghost' && activeAutomodActions(rule).length && (plan !== 'free' || !premiumFilters.includes(name)))
@@ -259,11 +265,27 @@ export function attachProtection(client, db) {
       log(guild,'automod','Matched ' + matches.map(([name]) => name).join(', ') + ' · member ' + message.author.id)
       const actions = new Set(matches.flatMap(([,rule]) => activeAutomodActions(rule)))
       if (actions.has('delete')) {
-        if (message.deletable) {
-          automodDeletes.set(message.id,now)
-          try { await message.delete() }
-          catch (error) { log(guild,'automod','Message deletion failed (' + (error.code || error.name) + ')') }
-        } else log(guild,'automod','Message deletion blocked by Discord permissions')
+        const burst = matches.some(([name,rule]) => ['spam','duplicate'].includes(name) && activeAutomodActions(rule).includes('delete'))
+        const targets = burst ? recent.slice(-5) : [recent.at(-1)]
+        for (const hit of targets) {
+          const target = hit.message
+          if (hit.deleted || automodDeletes.has(target.id)) continue
+          if (!target.deletable) {
+            log(guild,'automod','Message deletion blocked by Discord permissions')
+            continue
+          }
+          // Reserve IDs before awaiting Discord so concurrent detections cannot delete twice.
+          hit.deleted = true
+          automodDeletes.set(target.id,now)
+          try { await target.delete() }
+          catch (error) {
+            if (error.code !== 10008) {
+              hit.deleted = false
+              automodDeletes.delete(target.id)
+              log(guild,'automod','Message deletion failed (' + (error.code || error.name) + ')')
+            }
+          }
+        }
       }
       if (actions.has('warn')) await enforce(message.member,'automod',{...cfg,action:'warn'})
       const points = matches.reduce((total,[,rule]) => total + (rule.points ?? 0),0)
@@ -578,7 +600,7 @@ export function attachProtection(client, db) {
 }
 
 export function createBotClient({messageContent = process.env.ENABLE_MESSAGE_CONTENT === 'true'} = {}) {
-  const intents = [I.Guilds,I.GuildModeration,I.GuildMembers,I.GuildMessages,I.GuildMessageReactions]
+  const intents = [I.Guilds,I.GuildModeration,I.GuildMembers,I.GuildMessages,I.GuildMessageReactions,I.GuildExpressions]
   if (messageContent) intents.push(I.MessageContent)
   return new Client({intents,partials:[Partials.Channel,Partials.Message,Partials.Reaction,Partials.GuildMember]})
 }

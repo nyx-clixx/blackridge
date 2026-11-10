@@ -1,5 +1,6 @@
 import { isTextDestination } from './text-channel.js'
 import { resources } from './public/resources.js'
+import { documentationLayout } from './public/documentation.js'
 import { premiumPlans } from './public/plans.js'
 import { stripeBilling } from './billing.js'
 import { billingError } from './billing-store.js'
@@ -94,6 +95,17 @@ async function discord(path,options = {}) {
   return response.json()
 }
 
+app.get('/api/status',(req,res) => {
+  const connected = Boolean(bot?.isReady())
+  const guilds = bot?.guilds.cache
+  res.json({
+    checkedAt:Date.now(),connected,dashboard:true,
+    servers:connected ? guilds.size : null,
+    members:connected ? [...guilds.values()].reduce((total,guild) => total + (guild.memberCount || 0),0) : null,
+    latency:connected && Number.isFinite(bot.ws.ping) && bot.ws.ping >= 0 ? Math.round(bot.ws.ping) : null,
+    uptime:Math.floor(process.uptime())
+  })
+})
 app.get('/healthz',(req,res) => res.json({ok:true,botConnected:Boolean(bot && bot.isReady()),oauthConfigured:configured,billingConfigured:billing.enabled}))
 app.get('/auth/login',(req,res) => {
   if (!configured) return res.redirect('/dashboard')
@@ -417,7 +429,8 @@ app.get('/api/guilds/:id/options',async (req,res) => {
   res.json({
     channels:channels.filter(channel => channel?.permissionOverwrites && channel.type !== ChannelType.GuildCategory && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name,sendable:isTextDestination(channel),type:channel.type})),
     renameChannels:channels.filter(channel => channel?.permissionOverwrites && !channel.isThread()).map(channel => ({id:channel.id,name:channel.name})),
-    roles:roles.filter(role => role.id !== guild.id).map(role => ({id:role.id,name:role.name}))
+    roles:roles.filter(role => role.id !== guild.id).map(role => ({id:role.id,name:role.name})),
+    emojis:[...guild.emojis.cache.values()].filter(emoji => emoji.available !== false).map(emoji => ({id:emoji.id,name:emoji.name}))
   })
 })
 app.get('/api/guilds/:id/recovery/backup/:backup',(req,res) => {
@@ -522,14 +535,15 @@ const publicDir = fileURLToPath(new URL('./public/',import.meta.url))
 const homeShell = readFileSync(new URL('./public/index.html',import.meta.url),'utf8')
 const htmlEscape = value => String(value ?? '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[character])
 const publicPages = {
-  '/': ['Blackridge | Discord Security Bot','Protect your Discord server with Blackridge. Set up anti-raid, anti-nuke, auto moderation, and member verification from one dashboard.'],
+  '/': ['Blackridge - Discord Security Bot','Protect your Discord server with Blackridge. Set up anti-raid, anti-nuke, auto moderation, and member verification from one dashboard.'],
+  '/status': ['Blackridge Status','Live Blackridge gateway connectivity, latency, and service statistics.'],
   '/premium': ['Blackridge Premium & Custom Bot','Compare Blackridge plans for advanced Discord moderation, anti-nuke protection, server backups, and custom bot branding.'],
   '/documentation': ['Blackridge Documentation | Discord Bot Setup','Learn to install Blackridge and configure Discord raid protection, anti-nuke rules, verification, moderation, and backups.'],
   '/terms': ['Terms of Service | Blackridge','Read the terms for using Blackridge’s Discord security and moderation features.'],
   '/privacy': ['Privacy Policy | Blackridge','Learn how Blackridge handles Discord account, moderation, and server configuration data.']
 }
 function pageMetadata(path) {
-  if (!Object.hasOwn(publicPages,path)) return '<title>Blackridge Dashboard</title><meta name="robots" content="noindex">'
+  if (!Object.hasOwn(publicPages,path)) return '<title>Blackridge - Discord Security Bot</title><meta name="robots" content="noindex">'
   const [title,description] = publicPages[path]
   const url = base + path
   const image = base + '/blackridge-icon.png'
@@ -538,7 +552,7 @@ function pageMetadata(path) {
     {'@type':'Organization','name':'Blackridge','url':base + '/','logo':image}
   ]}
   return [
-    '<title>' + htmlEscape(title) + '</title>',
+    '<title>Blackridge - Discord Security Bot</title>',
     '<meta name="description" content="' + htmlEscape(description) + '">',
     '<link rel="canonical" href="' + htmlEscape(url) + '">',
     ...Object.entries({'og:type':'website','og:site_name':'Blackridge','og:title':title,'og:description':description,'og:url':url,'og:image':image,
@@ -571,8 +585,12 @@ const premiumShell = renderMain('<h1 class="premium-heading">Blackridge Premium<
   '<p class="stack premium-cta"><a class="button" href="/dashboard">Open Dashboard</a></p>')
 app.get('/support',(req,res) => res.redirect(supportInvite))
 app.get('/premium',(req,res) => sendPage(req,res,premiumShell))
+app.get('/status',(req,res) => sendPage(req,res,renderMain(
+  '<section class="status-page"><p class="docs-eyebrow">Live Service Health</p><h1>Status</h1><p>Check Blackridge’s connection to Discord and current service statistics.</p>' +
+  '<div id="service-status" aria-live="polite"><p class="stack">Checking service status…</p></div></section>'
+)))
 for (const [path,body] of Object.entries(resources)) {
-  const page = renderMain('<div class="resource-page">' + body + '</div>')
+  const page = renderMain(path === '/documentation' ? documentationLayout(body) : '<div class="resource-page">' + body + '</div>')
   app.get(path,(req,res) => sendPage(req,res,page))
 }
 const dashboardShell = renderMain('<div class="dashboard-loader" role="status"><span class="visually-hidden">Loading dashboard</span><div class="loading-heading" aria-hidden="true"></div><div class="loading-panel" aria-hidden="true"><span></span><span></span><span></span></div></div>').replace('/design.css','/analytics.css').replace('<body>','<body class="dashboard-page">')
