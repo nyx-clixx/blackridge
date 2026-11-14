@@ -22,7 +22,7 @@ test('custom bot exposes its profile even while command and avatar requests are 
     commands:{fetch:() => pending}}
   client.guilds = {cache:new Collection([[id,guild]])}
   client.user = {id:'234567890123456789',username:'Fixture',fetch:() => pending,setPresence:() => {},
-    displayAvatarURL:() => null,bannerURL:() => null}
+    displayAvatarURL:options => { assert.equal(options.size,256); return 'https://example.com/avatar.png' },bannerURL:options => { assert.equal(options.size,2048); return 'https://example.com/banner.png' }}
   client.login = async () => { client.emit(Events.ClientReady,client) }
   client.isReady = () => true
   client.destroy = async () => {}
@@ -37,9 +37,13 @@ test('custom bot exposes its profile even while command and avatar requests are 
   guild.available = true
   assert.equal(service.state(id,owner).connected,true)
   assert.equal(service.state(id,owner).username,'Fixture')
+  assert.equal(service.state(id,owner).banner,'https://example.com/banner.png')
   const encrypted = Buffer.from(db.recovery(id,'customBot').secret,'base64url')
   const decipher = createDecipheriv('aes-256-gcm',Buffer.alloc(32),encrypted.subarray(0,12))
   decipher.setAAD(Buffer.from(id))
   decipher.setAuthTag(encrypted.subarray(12,28))
   assert.equal(Buffer.concat([decipher.update(encrypted.subarray(28)),decipher.final()]).toString(),'fixture-token')
+  await service.remove(id)
+  assert.equal(service.active(id),null)
+  assert.equal(service.state(id,owner).configured,false)
 })

@@ -63,11 +63,11 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
     clients.delete(id)
     if (item) {
       const guild = item.client.guilds.cache.get(id)
-      if (guild?.available) await syncModerationCommands(guild,db,true).catch(() => {})
       item.stop()
       await item.client.destroy()
+      if (guild?.available) void syncModerationCommands(guild,db,true).catch(() => {})
     }
-    await restoreShared(id)
+    void restoreShared(id)
   }
   async function check(id,owner,token) {
     if (!key || !eligible(id,owner)) throw error('Custom Bot is unavailable for this server.')
@@ -182,7 +182,7 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
       const client = active(id)?.client
       const user = client?.user
       return {configured:Boolean(record?.owner === owner),connected:Boolean(user),username:user?.username ?? '',
-        avatar:user?.displayAvatarURL(),banner:user?.bannerURL(),bio:client?.application?.description ?? '',profile:record?.owner === owner ? record.profile : null}
+        avatar:user?.displayAvatarURL({size:256}),banner:user?.bannerURL({size:2048}),bio:client?.application?.description ?? '',profile:record?.owner === owner ? record.profile : null}
     },
     async profile(id,profile) {
       const client = active(id)?.client

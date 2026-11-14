@@ -9,7 +9,7 @@ export function premiumPlans(plans = [],billing = {}) {
     const purchase = billing.enabled && billing.purchasable ? '<button class="button plan-purchase" type="button" data-checkout="' + plan + '">Subscribe</button>' : ''
     const upgrade = billing.enabled && plan === 'custom' && billing.subscription?.plan === 'premium' && billing.subscription.status === 'active' && !billing.subscription.review
       ? '<button class="button plan-purchase" type="button" data-portal="upgrade">Upgrade to Custom Bot</button>' : ''
-    return '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + crown + '</span><h3>Blackridge ' + planName(plan) + '</h3><strong>' + price + '<small> / month</small></strong><ul>' +
+    return '<article class="card plan plan-' + theme + '"><span class="icon-tile">' + crown + '</span><h3>Blackridge ' + planName(plan) + '</h3><strong class="plan-price"><span>' + price + '</span><small>/ month</small></strong><ul>' +
       items.map(item => '<li>' + item + '</li>').join('') + '</ul>' + purchase + upgrade +
       (plans.includes(plan) ? '<span class="badge">Your Current Active Plan</span>' : '') + '</article>'
   }).join('') + '</div>'
