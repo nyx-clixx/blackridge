@@ -539,3 +539,5 @@ body.has-workspace .sidebar{overflow:auto}
 .picker-chevron::before{content:"";position:absolute;width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;left:4px;top:3px;transform:rotate(45deg)}
 @supports (appearance:base-select){.dashboard-page select::picker-icon{content:"";width:16px;height:16px;align-self:center;background:currentColor;clip-path:polygon(20% 35%,50% 65%,80% 35%,87% 42%,50% 79%,13% 42%);transform-origin:center;transition:rotate .18s ease}.dashboard-page select:open::picker-icon{rotate:180deg}}
 @media(prefers-reduced-motion:reduce){.discord-select summary .picker-chevron,.dashboard-page select::picker-icon{transition:none}}
+
+.custom-preview-activity:not([hidden]) + .custom-preview-bio{margin-top:16px}
