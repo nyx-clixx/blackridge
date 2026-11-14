@@ -53,6 +53,8 @@ const iconPaths = {
   logging:'<rect x="5" y="5" width="14" height="16" rx="2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M8 14h2l1.5-3 2 5 1.5-2H17"/>',
   logs:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+  roles:'<path d="m3 3 8 0 10 10-8 8L3 11z"/><circle cx="7" cy="7" r="1"/>',
+  channels:'<path d="M9 3 7 21M17 3l-2 18M3 9h18M2 15h18"/>',
   access:'<circle cx="8" cy="8" r="5"/><path d="m12 12 9 9m-3-3 3-3m-6 0 3-3M7 7h.01"/>',
   billing:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h3"/>',
   analytics:'<path d="M4 3v17h17M8 15l4-5 4 3 5-7"/>',
@@ -296,15 +298,16 @@ document.addEventListener('change',event => {
 },true)
 function reportSettings(config,owner,choices) {
   const channels = choices.channels.filter(channel => channel.sendable)
+  const selectedEmoji = config.emoji?.match(/^<a?:[^:]+:(\d{17,20})>$/)?.[1] ?? config.emoji
   const emojis = [
     ...['🚩','⚠️','🔔','🛡️','❗','📢'].map(value => ({id:value,name:value})),
     ...(choices.emojis ?? []).map(emoji => ({id:emoji.id,name:':' + emoji.name + ':',emoji:true}))
   ]
-  if (config.emoji && !emojis.some(emoji => emoji.id === config.emoji)) emojis.push({id:config.emoji,name:config.emoji})
+  if (selectedEmoji && !emojis.some(emoji => emoji.id === selectedEmoji)) emojis.push({id:selectedEmoji,name:selectedEmoji,emoji:/^\d{17,20}$/.test(selectedEmoji)})
   return '<form id="report-settings"><fieldset class="settings-panels"' + (owner ? '' : ' disabled') +
     '><section class="card settings-section"><h3>Member Reports</h3><p>Members can use /report with a message link, choose Apps → Report to Moderators, or react with the configured emoji. Reports include a link to the message and go to a private review channel.</p>' +
     '<div class="fields"><div class="discord-field"><span>Private Review Channel</span>' + discordSelect('channel',channels,[config.channel]) +
-    '</div><div class="discord-field"><span>Report Emoji</span>' + discordSelect('emoji',emojis,[config.emoji]) + '</div></div>' +
+    '</div><div class="discord-field"><span>Report Emoji</span>' + discordSelect('emoji',emojis,[selectedEmoji]) + '</div></div>' +
     '<p role="status" class="settings-feedback" id="report-result"></p></section></fieldset></form>'
 }
 function wireReports(path,config) {
@@ -1005,10 +1008,11 @@ function discordSelect(name,items,values,multiple = false) {
   const available = new Set(items.map(item => item.id))
   const missing = [...selected].filter(id => !available.has(id)).map(id => ({id,name:'Deleted or unavailable (' + id + ')'}))
   const choices = [...(multiple ? [] : [{id:'',name:'None'}]),...items,...missing]
+  const itemLabel = item => item.emoji && /^\d{17,20}$/.test(item.id) ? '<img class="picker-emoji" alt="' + esc(item.name) + '" title="' + esc(item.name) + '" src="https://cdn.discordapp.com/emojis/' + item.id + '.png?size=32">' : esc(item.name)
   const label = multiple ? (selected.size ? selected.size + ' selected' : 'Select options') : choices.find(item => selected.has(item.id))?.name ?? 'None'
-  return '<details class="discord-select" data-multiple="' + multiple + '"><summary><span>' + esc(label) + '</span><span aria-hidden="true">⌄</span></summary><div class="discord-options"><input class="discord-search" type="search" aria-label="Search options" placeholder="Search…" autocomplete="off"><div class="discord-results">' + choices.map(item => {
+  return '<details class="discord-select" data-multiple="' + multiple + '"><summary><span>' + (multiple ? esc(label) : itemLabel(choices.find(item => selected.has(item.id)) ?? {name:'None'})) + '</span><span class="picker-chevron" aria-hidden="true"></span></summary><div class="discord-options"><input class="discord-search" type="search" aria-label="Search options" placeholder="Search…" autocomplete="off"><div class="discord-results">' + choices.map(item => {
     const checked = selected.has(item.id) || (!multiple && !selected.size && !item.id)
-    return '<label class="discord-option"><input type="' + (multiple ? 'checkbox' : 'radio') + '" name="' + name + '" value="' + esc(item.id) + '"' + (checked ? ' checked' : '') + '><span>' + (item.emoji && /^\d{17,20}$/.test(item.id) ? '<img class="picker-emoji" alt="" loading="lazy" src="https://cdn.discordapp.com/emojis/' + item.id + '.png?size=32"> ' : '') + esc(item.name) + '</span></label>'
+    return '<label class="discord-option" data-search="' + esc(item.name) + '"><input type="' + (multiple ? 'checkbox' : 'radio') + '" name="' + name + '" value="' + esc(item.id) + '"' + (checked ? ' checked' : '') + '><span>' + itemLabel(item) + '</span></label>'
   }).join('') + '</div></div></details>'
 }
 function replaceDiscordInput(input,markup) {
@@ -1019,7 +1023,7 @@ document.addEventListener('input',event => {
   if (!event.target.matches('.discord-search')) return
   const query = event.target.value.trim().toLowerCase()
   for (const item of event.target.closest('.discord-options').querySelectorAll('.discord-option')) {
-    item.hidden = !item.textContent.toLowerCase().includes(query) && !item.querySelector('input').value.includes(query)
+    item.hidden = !(item.dataset.search ?? item.textContent).toLowerCase().includes(query) && !item.querySelector('input').value.includes(query)
   }
 })
 document.addEventListener('change',event => {
@@ -1027,9 +1031,10 @@ document.addEventListener('change',event => {
   if (!picker || !event.target.matches('.discord-option input')) return
   const checked = picker.querySelectorAll('.discord-option input:checked')
   const multiple = picker.dataset.multiple === 'true'
-  picker.querySelector('summary span').textContent = multiple
-    ? (checked.length ? checked.length + ' selected' : 'Select options')
-    : checked[0]?.nextElementSibling.textContent ?? 'None'
+  const label = picker.querySelector('summary span')
+  if (multiple) label.textContent = checked.length ? checked.length + ' selected' : 'Select options'
+  else if (checked[0]) label.replaceChildren(...[...checked[0].nextElementSibling.childNodes].map(node => node.cloneNode(true)))
+  else label.textContent = 'None'
   if (!multiple) {
     picker.open = false
     picker.querySelector('summary').focus()
@@ -1096,7 +1101,7 @@ async function recoveryPanel(section,path,data,prepared) {
   }
   if (section === 'backup') {
     const history = (state.backups ?? []).map(item => '<option value="' + item.id + '">' + esc(new Date(item.at).toLocaleString()) + '</option>').join('')
-    controls = '<section class="card stack backup-controls"><form data-operation="backup"><h3>Manual Backup</h3><p>Save server settings, roles, channels and overwrites. The latest three backups are retained.</p><button class="button">Create Backup</button></form><form data-operation="schedule"><h3>Automatic Backups</h3><div class="fields"><label>Frequency<select name="hours">' + options({0:'Disabled',6:'Every 6 hours',12:'Every 12 hours',24:'Daily',168:'Weekly'},String(state.schedule?.hours ?? 0)) + '</select></label></div></form></section>' +
+    controls = '<section class="card stack backup-controls"><form data-operation="backup"><h3>Manual Backup</h3><p>Save server settings, roles, channels and overwrites. The latest three backups are retained.</p><button class="button">Create Backup</button></form><form data-operation="schedule"><h3>Automatic Backups</h3><div class="fields"><label>Frequency<select name="hours">' + [[24,'Daily'],[168,'Weekly'],[6,'Every 6 hours'],[12,'Every 12 hours'],[0,'Disabled']].map(([value,label]) => '<option value="' + value + '"' + (value === Number(state.schedule?.hours ?? 0) ? ' selected' : '') + '>' + label + '</option>').join('') + '</select></label></div></form></section>' +
       (history ? '<form class="card stack" data-operation="restore"><h3>Backup Manager</h3><p>Restore supported settings and recreate eligible deleted roles and channels. Messages, role memberships, member overwrites, and ordering require manual recovery.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label></div><div class="actions"><button class="button" type="button" data-backup-preview>View Backup</button><button class="button primary">Restore Backup</button></div></form>' : '<section class="card stack"><h3>Backup Manager</h3><p>No backups yet.</p></section>')
   }
   const logging = '<form class="card stack" data-operation="logging"><h3>' + (section === 'moderation' ? 'Moderation Action Logs' : 'Discord Logging') + '</h3><div class="fields"><div class="discord-field"><span>Logging Channel</span>' + channel + '</div></div></form>'
@@ -1123,8 +1128,8 @@ async function recoveryPanel(section,path,data,prepared) {
       dialog.setAttribute('aria-labelledby','backup-preview-title')
       dialog.innerHTML = '<header><h3 id="backup-preview-title">' + icon('backup') + ' Backup Preview</h3><form method="dialog"><button class="button small" aria-label="Close backup preview">Close</button></form></header><div class="backup-preview-body"><p>Review the settings and objects eligible for restoration. Discord permissions and role hierarchy can limit recovery.</p>' +
         group('Server Settings','configure',Object.entries(snapshot.settings).map(([key,value]) => [settingsLabels[key] ?? key,settingsValues[key]?.[value] ?? value])) +
-        group('Roles','permits',roles.map(role => [role.name,'Permission flags: ' + role.permissions])) +
-        group('Channels and Categories','server',snapshot.channels.map(channel => [channel.name,(channelTypes[channel.type] ?? 'Channel') + ' · ' + channel.overwrites.filter(item => item.type === 0).length + ' role overwrites'])) +
+        group('Roles','roles',roles.map(role => [role.name,'Permission flags: ' + role.permissions])) +
+        group('Channels and Categories','channels',snapshot.channels.map(channel => [channel.name,(channelTypes[channel.type] ?? 'Channel') + ' · ' + channel.overwrites.filter(item => item.type === 0).length + ' role overwrites'])) +
         '<p class="backup-preview-note">Messages, role memberships, member overwrites, and ordering require manual recovery.</p></div>'
       dialog.addEventListener('close',() => dialog.remove(),{once:true})
       document.body.append(dialog)
