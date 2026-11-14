@@ -820,6 +820,7 @@ function planLock(title,description,href) {
 async function customBotPanel(path) {
   const panel = document.querySelector('#custom-bot-panel')
   const url = path + '/custom-bot'
+  const activityLabels = {playing:'Playing',listening:'Listening to',watching:'Watching',competing:'Competing in'}
   function render(state) {
     const profile = state.profile ?? {}
     panel.innerHTML = '<form class="card stack" id="bot-connection"><h3>Connect Your Discord Bot</h3><p>Enable Presence Intent, Server Members Intent, and Message Content Intent on the Bot page of the Discord Developer Portal. Check the token below to unlock the install link. Install your bot in this server only and keep Blackridge installed for dashboard access. <a href="/documentation#custom-bot-setup">Setup Guide</a></p><p class="badge">' +
@@ -829,7 +830,7 @@ async function customBotPanel(path) {
         '<label>Status<select name="status">' + options({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'},profile.status ?? 'online') + '</select></label>' +
         '<label>Activity Type<select name="activityType">' + options({none:'Disabled',playing:'Playing',listening:'Listening',watching:'Watching',competing:'Competing'},profile.activityType ?? 'none') + '</select></label>' +
         '<label>Activity Text<input name="activity" maxlength="100" value="' + esc(profile.activity ?? '') + '"></label><label>Bio<textarea name="bio" data-commit-on-change maxlength="400" rows="4">' + esc(state.bio) + '</textarea></label></div><div class="fields stack"><label>Change Avatar<input type="file" name="avatar" accept="image/png,image/jpeg,image/webp"></label><label>Change Banner<input type="file" name="banner" accept="image/png,image/jpeg,image/webp"></label></div><p>PNG, JPEG, or WebP up to 3 MB. Verification panels posted by Blackridge should be republished after switching bots.</p></form>' +
-        '<aside class="custom-preview"><div class="custom-banner">' + (state.banner ? '<img alt="" src="' + esc(state.banner) + '">' : '') + '</div><div class="custom-preview-body"><div class="custom-preview-avatar"><img alt="" src="' + esc(state.avatar || '/blackridge-icon.png') + '"><span class="presence-dot presence-' + esc(profile.status ?? 'online') + '" role="img" aria-label="' + esc({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'}[profile.status ?? 'online']) + '"></span></div><h3><span data-profile-name>' + esc(state.username) + '</span> <small class="app-badge">APP</small></h3><div class="custom-preview-bio"><strong>Bio</strong><p data-profile-bio>' + esc(state.bio || 'No bio set.') + '</p></div></div></aside></section>' : '') +
+        '<aside class="custom-preview"><div class="custom-banner">' + (state.banner ? '<img alt="" src="' + esc(state.banner) + '">' : '') + '</div><div class="custom-preview-body"><div class="custom-preview-avatar"><img alt="" src="' + esc(state.avatar || '/blackridge-icon.png') + '"><span class="presence-dot presence-' + esc(profile.status ?? 'online') + '" role="img" aria-label="' + esc({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'}[profile.status ?? 'online']) + '"></span></div><h3><span data-profile-name>' + esc(state.username) + '</span> <small class="app-badge">APP</small></h3><div class="custom-preview-bio"><strong>Bio</strong><p data-profile-bio>' + esc(state.bio || 'No bio set.') + '</p></div><div class="custom-preview-activity"' + (activityLabels[profile.activityType] && profile.activity?.trim() ? '' : ' hidden') + '><small data-profile-activity-type>' + esc(activityLabels[profile.activityType] ?? '') + '</small><strong data-profile-activity>' + esc(profile.activity ?? '') + '</strong></div></div></aside></section>' : '') +
       '<p id="custom-status" role="status"></p>'
     const action = async (button,run,message) => {
       const status = panel.querySelector('#custom-status')
@@ -892,11 +893,14 @@ async function customBotPanel(path) {
     }
     const form = panel.querySelector('#bot-profile')
     form?.addEventListener('input',() => {
-      const {username,status,bio} = form.elements
+      const {username,status,bio,activityType,activity} = form.elements
       panel.querySelector('[data-profile-name]').textContent = username.value || state.username
       panel.querySelector('.presence-dot').className = 'presence-dot presence-' + status.value
       panel.querySelector('.presence-dot').setAttribute('aria-label',{online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'}[status.value])
       panel.querySelector('[data-profile-bio]').textContent = bio.value || 'No bio set.'
+      panel.querySelector('.custom-preview-activity').hidden = !activityLabels[activityType.value] || !activity.value.trim()
+      panel.querySelector('[data-profile-activity-type]').textContent = activityLabels[activityType.value] ?? ''
+      panel.querySelector('[data-profile-activity]').textContent = activity.value
     })
     if (form) {
       const profileFields = ['username','status','activityType','activity','bio']

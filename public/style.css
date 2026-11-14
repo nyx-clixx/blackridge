@@ -530,3 +530,7 @@ body.has-workspace .sidebar{overflow:auto}
 .presence-idle::after,.presence-invisible::after,.presence-dnd::after{background:#232428}
 
 .custom-preview-avatar img{background:#232428}
+
+.custom-preview-activity{margin-top:16px;padding:12px;border-radius:10px;background:#ffffff08;overflow-wrap:anywhere}
+.custom-preview-activity small{display:block;font-size:12px;font-weight:600;margin-bottom:8px}
+.custom-preview-activity strong{display:block;font-size:14px;white-space:pre-wrap}
