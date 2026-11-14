@@ -168,6 +168,13 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
   timer.unref()
   return {
     active,exclusive,check,
+    health() {
+      const configured = db.recoveries(keyName).filter(({guild}) => {
+        const record = db.recovery(guild,keyName)
+        return record && eligible(guild,record.owner)
+      })
+      return Boolean(key && shared()?.isReady() && configured.every(({guild}) => active(guild)))
+    },
     connect:(id,owner,token) => connect(id,owner,token),
     async remove(id) { db.clearRecovery(id,keyName); await disconnect(id) },
     state(id,owner) {

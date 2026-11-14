@@ -53,6 +53,11 @@ const iconPaths = {
   logging:'<rect x="5" y="5" width="14" height="16" rx="2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M8 14h2l1.5-3 2 5 1.5-2H17"/>',
   logs:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+  access:'<circle cx="8" cy="8" r="5"/><path d="m12 12 9 9m-3-3 3-3m-6 0 3-3M7 7h.01"/>',
+  billing:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h3"/>',
+  analytics:'<path d="M4 3v17h17M8 15l4-5 4 3 5-7"/>',
+  rename:'<path d="m14 4 6 6M4 20l5-1L21 7a2 2 0 0 0-4-4L5 15z"/>',
+  invite:'<path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2M3 3l18 18"/>',
   arrow:'<path d="M5 12h14m-6-6 6 6-6 6"/>'
 }
 const icon = key => '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (iconPaths[key] ?? iconPaths.nuke) + '</svg>'
@@ -1424,7 +1429,6 @@ if (location.pathname === '/documentation') {
       if (link.hash === '#' + active.id) link.setAttribute('aria-current','page')
       else link.removeAttribute('aria-current')
     }
-    document.querySelector('.docs-toc').innerHTML = '<strong>On This Page</strong><a href="#' + active.id + '">' + active.querySelector('h1').textContent + '</a><a href="/support">Support Server</a>'
   }
   selectArticle()
   window.addEventListener('hashchange',selectArticle)

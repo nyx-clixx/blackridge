@@ -6,12 +6,12 @@ export function documentationLayout(html) {
   sections.unshift({id:'introduction',title:'Introduction',body:
     '<p>Blackridge brings Discord server protection and moderation into one dashboard. Choose the modules your community needs, configure each response, and review activity in your staff channels.</p>' +
     '<h3 id="guides">Guides</h3><div class="docs-guides">' +
-    [['getting-started','Set Up Blackridge','Invite the bot, arrange roles, and configure your first protection.'],['protection-modules','Security Setup','Configure Anti-Nuke, Anti-Raid, Checkpoint, and Auto Moderation.'],['moderation-and-recovery','Permissions and Recovery','Delegate command access and prepare server recovery.'],['custom-bot-setup','Custom Bot Setup','Connect your own Discord application.']].map(([id,title,description]) =>
-      '<a class="docs-guide" href="#' + id + '"><span aria-hidden="true">◇</span><h3>' + title + '</h3><p>' + description + '</p></a>').join('') + '</div>'})
+    [['getting-started','server','Set Up Blackridge','Invite the bot, arrange roles, and configure your first protection.'],['protection-modules','shield','Security Setup','Configure Anti-Nuke, Anti-Raid, Checkpoint, and Auto Moderation.'],['moderation-and-recovery','access','Permissions and Recovery','Delegate command access and prepare server recovery.'],['custom-bot-setup','custom','Custom Bot Setup','Connect your own Discord application.']].map(([id,icon,title,description]) =>
+      '<a class="docs-guide" href="#' + id + '"><span data-icon="' + icon + '" aria-hidden="true"></span><h3>' + title + '</h3><p>' + description + '</p></a>').join('') + '</div>'})
   const groups = [
-    ['Overview',[['introduction','overview'],['getting-started','server'],['plans-and-custom-bot','premium'],['manage-a-subscription','premium'],['custom-bot-setup','custom'],['server-analytics','overview']]],
-    ['Protection',[['anti-raid','raid'],['anti-nuke','nuke'],['rename-and-deletion-protection','nuke'],['lockdown','lockdown'],['delete-all-invites','lockdown'],['honeypot','honeypot'],['verification','verification'],['checkpoint','checkpoint'],['auto-moderation','automod']]],
-    ['Administration',[['permits','permits'],['logging','logging'],['moderation-commands','moderation'],['ban-appeals','appeals'],['report-system','reports'],['server-backups','backup']]]
+    ['Overview',[['introduction','overview'],['getting-started','server'],['plans-and-custom-bot','premium'],['manage-a-subscription','billing'],['custom-bot-setup','custom'],['server-analytics','analytics']]],
+    ['Protection',[['anti-raid','raid'],['anti-nuke','nuke'],['rename-and-deletion-protection','rename'],['lockdown','lockdown'],['delete-all-invites','invite'],['honeypot','honeypot'],['verification','verification'],['checkpoint','checkpoint'],['auto-moderation','automod']]],
+    ['Administration',[['permits','access'],['logging','logging'],['moderation-commands','moderation'],['ban-appeals','appeals'],['report-system','reports'],['server-backups','backup']]]
   ]
   const split = (id,ids) => {
     const parent = sections.find(section => section.id === id)
@@ -32,5 +32,5 @@ export function documentationLayout(html) {
     navigation +
     '</nav><article class="docs-content">' + sections.map(section =>
       '<section class="docs-article" id="' + section.id + '"><p class="docs-eyebrow">Documentation</p><h1>' + section.title + '</h1>' + section.body + '</section>').join('') +
-    '</article><aside class="docs-toc"><strong>On This Page</strong><a href="#introduction">Introduction</a><a href="#getting-started">Bot Setup</a><a href="/support">Support Server</a></aside></div>'
+    '</article></div>'
 }

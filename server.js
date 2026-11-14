@@ -99,7 +99,7 @@ app.get('/api/status',(req,res) => {
   const connected = Boolean(bot?.isReady())
   const guilds = bot?.guilds.cache
   res.json({
-    checkedAt:Date.now(),connected,dashboard:true,
+    checkedAt:Date.now(),connected,dashboard:true,customBotsAvailable:custom.health(),
     servers:connected ? guilds.size : null,
     members:connected ? [...guilds.values()].reduce((total,guild) => total + (guild.memberCount || 0),0) : null,
     latency:connected && Number.isFinite(bot.ws.ping) && bot.ws.ping >= 0 ? Math.round(bot.ws.ping) : null,

@@ -26,11 +26,15 @@ test('custom bot exposes its profile even while command and avatar requests are 
   client.login = async () => { client.emit(Events.ClientReady,client) }
   client.isReady = () => true
   client.destroy = async () => {}
-  const shared = {guilds:{cache:new Collection([[id,guild]])}}
+  const shared = {isReady:() => true,guilds:{cache:new Collection([[id,guild]])}}
   const service = customBots(db,() => shared,Buffer.alloc(32),() => client)
   t.after(() => service.close())
   await service.connect(id,owner,'fixture-token')
   assert.equal(service.active(id),guild)
+  assert.equal(service.health(),true)
+  guild.available = false
+  assert.equal(service.health(),false)
+  guild.available = true
   assert.equal(service.state(id,owner).connected,true)
   assert.equal(service.state(id,owner).username,'Fixture')
   const encrypted = Buffer.from(db.recovery(id,'customBot').secret,'base64url')
