@@ -8,7 +8,7 @@ function compactCards(queue) {
   const first = queue.shift()
   const container = first.components[0]
   const [heading,separator] = container.components
-  const compatible = card => card?.components.length === 1 && !card.allowedMentions.roles.length &&
+  const compatible = card => !card?.files?.length && card?.components.length === 1 && !card.allowedMentions.roles.length &&
     card.components[0].components[0]?.content === heading.content &&
     card.components[0].components[1]?.type === Type.Separator &&
     card.components[0].components.slice(2).every(component => component.type === Type.TextDisplay)
@@ -43,7 +43,8 @@ export function createLogDispatcher(delay = 1500) {
     const permissions = channel.permissionsFor?.(guild.members.me)
     if (permissions && !permissions.has(P.ViewChannel | P.SendMessages)) return
     const payload = {flags:items[0].flags,components:items.flatMap(item => item.components),
-      allowedMentions:{parse:[],roles:[...new Set(items.flatMap(item => item.allowedMentions.roles))]}}
+      allowedMentions:{parse:[],roles:[...new Set(items.flatMap(item => item.allowedMentions.roles))]},
+      ...(items[0].files?.length ? {files:items[0].files} : {})}
     const mainAppId = process.env.DISCORD_CLIENT_ID
     const forSender = sender => sender && sender === mainAppId ? payload :
       {...payload,components:standardLogEmoji(payload.components)}
@@ -96,7 +97,7 @@ export function createLogDispatcher(delay = 1500) {
       const batch = [compactCards(state.queue)]
       let size = cardWeight(batch[0])
       let components = batch[0].components[0].components.length + 1
-      while (state.queue.length && batch.length < 5) {
+      while (state.queue.length && batch.length < 5 && !batch[0].files?.length && !state.queue[0].files?.length) {
         const next = state.queue[0]
         const count = next.components[0].components.length + 1
         const length = cardWeight(next)

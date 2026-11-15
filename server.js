@@ -606,7 +606,7 @@ app.use((error,req,res,next) => {
   if (res.headersSent) return next(error)
   const status = error.status || 500
   if (status === 500) console.error('Request failed:',error.name)
-  res.status(status).json({error:[400,401,403,404,409,503].includes(status) ? error.message : 'Could not complete the request.'})
+  res.status(status).json({error:[400,401,403,404,409,429,503].includes(status) ? error.message : 'Could not complete the request.'})
 })
 const server = app.listen(port,'0.0.0.0',() => console.log('Blackridge listening on port ' + port))
 function stop() {

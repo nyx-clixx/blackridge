@@ -604,6 +604,11 @@ export function createBotClient({messageContent = process.env.ENABLE_MESSAGE_CON
   if (messageContent) intents.push(I.MessageContent)
   return new Client({intents,partials:[Partials.Channel,Partials.Message,Partials.Reaction,Partials.GuildMember]})
 }
+export function invokeBotEvent(handler,args,event) {
+  const failed = error => console.error('Discord event handler failed:',event,error?.code ?? error?.name ?? 'Unknown error')
+  try { Promise.resolve(handler(...args)).catch(failed) }
+  catch (error) { failed(error) }
+}
 export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {
   const view = new Proxy(client,{
     get(target,property) {
@@ -614,7 +619,7 @@ export function mountBot(client,db,ownsGuild,allowInactiveReviews=false) {
           : event === Events.MessageBulkDelete ? args[1]?.guild?.id
           : [Events.GuildCreate,Events.GuildAvailable].includes(event) ? first?.id : event === Events.MessageReactionAdd ? first?.message.guildId : first?.guildId ?? first?.guild?.id
         const oldReview = allowInactiveReviews && event === Events.InteractionCreate && first?.customId?.startsWith('blackridge-review:')
-        if (!id || ownsGuild(id) || oldReview) handler(...args)
+        if (!id || ownsGuild(id) || oldReview) invokeBotEvent(handler,args,event)
       })
       const value = Reflect.get(target,property,target)
       return typeof value === 'function' ? value.bind(target) : value
