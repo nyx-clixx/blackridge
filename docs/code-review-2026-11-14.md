@@ -8,9 +8,11 @@ Reviewed the HTTP authentication/authorization and policy routes, bot dispatch a
 - Mounted Discord event handlers now catch both synchronous exceptions and rejected asynchronous handlers. Diagnostics exclude the error message to avoid exposing tokens or user content. Existing server ownership filtering remains in place.
 - HTTP 429 errors now return their actionable message, including manual backup cooldown instructions, instead of a generic failure. Exercised with the actual middleware in an isolated HTTP harness.
 
+- Empty bot-token configuration now produces a disconnected status response instead of HTTP 500. Public endpoint behavior is exercised against a real child server with no Discord credentials.
+
 ## Checks
 
-- 51 committed automated regression and integration tests pass, including the new attachment and handler-failure tests.
+- 52 committed automated regression and integration tests pass, including the new attachment and handler-failure tests.
 - JavaScript syntax checks pass for all 34 source/test files present at the initial scan; the added test file is also executed by the suite.
 - npm security advisory bulk lookup returned no advisories for the 84 installed package names discovered through the dependency graph. This is a point-in-time check, not a guarantee that dependencies contain no vulnerabilities.
 - Git whitespace checks pass. There is no configured lint or build script; the application runs JavaScript directly.

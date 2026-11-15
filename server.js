@@ -28,9 +28,9 @@ const app = express()
 const db = createStore(process.env.DB_PATH || './data/blackridge.sqlite')
 const billing = stripeBilling(db.billing,base)
 let custom
-const bot = botToken && startBot(botToken,db,id => !custom?.active(id))
+const bot = botToken ? startBot(botToken,db,id => !custom?.active(id)) : null
 custom = customBots(db,() => bot,configured ? scryptSync(clientSecret,'blackridge custom bot credentials v1',32) : null)
-const activeGuild = id => custom.active(id) ?? bot.guilds.cache.get(id)
+const activeGuild = id => custom.active(id) ?? bot?.guilds.cache.get(id)
 const recovery = recoveryTools(db,bot && {guilds:{cache:{get:activeGuild}},isReady:() => bot.isReady()})
 const states = new Map()
 const guildLists = new Map()
@@ -608,7 +608,7 @@ app.use((error,req,res,next) => {
   if (status === 500) console.error('Request failed:',error.name)
   res.status(status).json({error:[400,401,403,404,409,429,503].includes(status) ? error.message : 'Could not complete the request.'})
 })
-const server = app.listen(port,'0.0.0.0',() => console.log('Blackridge listening on port ' + port))
+const server = app.listen(port,'0.0.0.0',() => console.log('Blackridge listening on port ' + server.address().port))
 function stop() {
   server.close(() => { db.close(); process.exit(0) })
   custom.close()
