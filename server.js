@@ -448,7 +448,7 @@ app.get('/api/guilds/:id/recovery',(req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can access recovery.'})
   const id = req.guild.id
   const premium = db.guildPlan(id) !== 'free'
-  res.json({lockdown:db.recovery(id,'lockdown')?.at ?? null,backups:premium ? db.backups(id) : [],schedule:premium ? db.recovery(id,'backupSchedule') : null,quarantineRole:db.recovery(id,'quarantineRole')?.role ?? '',quarantineSetup:db.recovery(id,'quarantineSetup')?.role ?? ''})
+  res.json({manualBackupNextAt:db.recovery(id,'manualBackupCooldown')?.next ?? 0,lockdown:db.recovery(id,'lockdown')?.at ?? null,backups:premium ? db.backups(id) : [],schedule:premium ? db.recovery(id,'backupSchedule') : null,quarantineRole:db.recovery(id,'quarantineRole')?.role ?? '',quarantineSetup:db.recovery(id,'quarantineSetup')?.role ?? ''})
 })
 app.post('/api/guilds/:id/recovery/:operation',async (req,res) => {
   if (!req.guild.owner) return res.status(403).json({error:'Only the server owner can run recovery operations.'})

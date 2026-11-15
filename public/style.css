@@ -552,3 +552,8 @@ body.has-workspace .sidebar{overflow:auto}
 .custom-management .bot-disconnect{background:#54272e;color:#ffd0d5;border-color:#994553}
 .custom-management .bot-restart{background:#50431e;color:#ffe7a1;border-color:#8d7634}
 .custom-management button:not(:disabled):hover{filter:brightness(1.2)}
+
+.backup-role-color{display:inline-block;flex-shrink:0;width:10px;height:10px;border-radius:50%;margin-right:9px}
+.backup-preview-group dd:empty{display:none}
+.backup-preview-group dt{display:flex;align-items:center}
+.backup-saved-at{font-size:13px;color:var(--muted)}

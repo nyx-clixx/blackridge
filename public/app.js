@@ -1,3 +1,4 @@
+import { orderedBackupRoles, orderedBackupChannels } from './backup-preview.js'
 import { wireStatus } from './status.js'
 import { loggingGroups } from './logging-events.js'
 import { analyticsPanel, wireAnalytics } from './analytics.js'
@@ -1114,12 +1115,22 @@ async function recoveryPanel(section,path,data,prepared) {
   if (section === 'backup') {
     const history = (state.backups ?? []).map(item => '<option value="' + item.id + '">' + esc(new Date(item.at).toLocaleString()) + '</option>').join('')
     controls = '<section class="card stack backup-controls"><form data-operation="backup"><h3>Manual Backup</h3><p>Save server settings, roles, channels and overwrites. The latest three backups are retained.</p><button class="button">Create Backup</button></form><form data-operation="schedule"><h3>Automatic Backups</h3><div class="fields"><label>Frequency<select name="hours">' + [[24,'Daily'],[168,'Weekly'],[6,'Every 6 hours'],[12,'Every 12 hours'],[0,'Disabled']].map(([value,label]) => '<option value="' + value + '"' + (value === Number(state.schedule?.hours ?? 0) ? ' selected' : '') + '>' + label + '</option>').join('') + '</select></label></div></form></section>' +
-      (history ? '<form class="card stack" data-operation="restore"><h3>Backup Manager</h3><p>Restore supported settings and recreate eligible deleted roles and channels. Messages, role memberships, member overwrites, and ordering require manual recovery.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label></div><div class="actions"><button class="button" type="button" data-backup-preview>View Backup</button><button class="button primary">Restore Backup</button></div></form>' : '<section class="card stack"><h3>Backup Manager</h3><p>No backups yet.</p></section>')
+      (history ? '<form class="card stack" data-operation="restore"><h3>Backup Manager</h3><p>Restore supported settings and recreate eligible deleted roles and channels.</p><div class="fields"><label>Backup<select name="id">' + history + '</select></label></div><div class="actions"><button class="button" type="button" data-backup-preview>View Backup</button><button class="button primary">Restore Backup</button></div></form>' : '<section class="card stack"><h3>Backup Manager</h3><p>No backups yet.</p></section>')
   }
   const logging = '<form class="card stack" data-operation="logging"><h3>' + (section === 'moderation' ? 'Moderation Action Logs' : 'Discord Logging') + '</h3><div class="fields"><div class="discord-field"><span>Logging Channel</span>' + channel + '</div></div></form>'
   const deleteInvites = section === 'lockdown' ? '<form class="card stack" data-operation="delete-invites"><h3>Invite Cleanup</h3><p>Enable the Lockdown module to revoke standard server invites. Lifting Lockdown cannot restore these links.</p><button class="button lockdown-submit"' + (data.config.lockdown.enabled ? '' : ' disabled') + '>Delete All Invites</button></form>' : ''
   panel.innerHTML = controls + deleteInvites + (section === 'backup' ? '' : logging) + '<p class="stack" role="status"></p>'
   const status = panel.querySelector('[role="status"]')
+  let manualBackupNextAt = state.manualBackupNextAt ?? 0
+  const manualButton = panel.querySelector('[data-operation="backup"] button')
+  const updateBackupCooldown = () => {
+    if (!manualButton?.isConnected) return
+    const seconds = Math.max(0,Math.ceil((manualBackupNextAt-Date.now())/1000))
+    manualButton.disabled = seconds > 0
+    manualButton.textContent = seconds ? 'Create Backup · ' + Math.floor(seconds/60) + ':' + String(seconds%60).padStart(2,'0') : 'Create Backup'
+    if (seconds) setTimeout(updateBackupCooldown,1000)
+  }
+  updateBackupCooldown()
   const preview = panel.querySelector('[data-backup-preview]')
   if (preview) preview.onclick = async () => {
     preview.disabled = true
@@ -1130,19 +1141,20 @@ async function recoveryPanel(section,path,data,prepared) {
       dialog.className = 'nuke-dialog backup-preview'
       const settingsLabels = {name:'Server Name',verificationLevel:'Verification Level',defaultMessageNotifications:'Default Notifications',explicitContentFilter:'Explicit Content Filter'}
       const group = (title,symbol,rows) => '<section class="backup-preview-group"><h4><span class="icon-tile">' + icon(symbol) + '</span>' +
-        title + '<span class="badge">' + rows.length + '</span></h4>' + (rows.length ? '<dl>' + rows.map(([label,value]) =>
-          '<div><dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd></div>').join('') + '</dl>' : '<p>None recorded.</p>') + '</section>'
+        title + '<span class="badge">' + rows.length + '</span></h4>' + (rows.length ? '<dl>' + rows.map(([label,value,color]) =>
+          '<div><dt>' + (Number.isInteger(color) && color > 0 && color <= 0xffffff ? '<span class="backup-role-color" style="background:#' + color.toString(16).padStart(6,'0') + '"></span>' : '') + esc(label) + '</dt><dd>' + esc(value) + '</dd></div>').join('') + '</dl>' : '<p>None recorded.</p>') + '</section>'
       const guildId = path.split('/').at(-1)
-      const roles = snapshot.roles.filter(role => !role.managed && role.id !== guildId)
+      const roles = orderedBackupRoles(snapshot.roles,guildId)
       const channelTypes = {0:'Text',2:'Voice',4:'Category',5:'Announcement',13:'Stage',15:'Forum',16:'Media'}
       const settingsValues = {verificationLevel:['None','Low','Medium','High','Highest'],
         defaultMessageNotifications:['All Messages','Only Mentions'],explicitContentFilter:['Disabled','Members Without Roles','All Members']}
       dialog.setAttribute('aria-labelledby','backup-preview-title')
-      dialog.innerHTML = '<header><h3 id="backup-preview-title">' + icon('backup') + ' Backup Preview</h3><form method="dialog"><button class="button small" aria-label="Close backup preview">Close</button></form></header><div class="backup-preview-body"><p>Review the settings and objects eligible for restoration. Discord permissions and role hierarchy can limit recovery.</p>' +
+      const savedAt = state.backups.find(backup => String(backup.id) === String(id))?.at
+      dialog.innerHTML = '<header><h3 id="backup-preview-title">' + icon('backup') + ' Backup Preview</h3><form method="dialog"><button class="button small" aria-label="Close backup preview">Close</button></form></header><div class="backup-preview-body"><p>Review the settings and objects eligible for restoration. Discord permissions and role hierarchy can limit recovery.</p>' + (savedAt ? '<p class="backup-saved-at">Created ' + esc(new Date(savedAt).toLocaleString()) + '</p>' : '') +
         group('Server Settings','configure',Object.entries(snapshot.settings).map(([key,value]) => [settingsLabels[key] ?? key,settingsValues[key]?.[value] ?? value])) +
-        group('Roles','roles',roles.map(role => [role.name,'Permission flags: ' + role.permissions])) +
-        group('Channels and Categories','channels',snapshot.channels.map(channel => [channel.name,(channelTypes[channel.type] ?? 'Channel') + ' · ' + channel.overwrites.filter(item => item.type === 0).length + ' role overwrites'])) +
-        '<p class="backup-preview-note">Messages, role memberships, member overwrites, and ordering require manual recovery.</p></div>'
+        group('Roles','roles',roles.map(role => [role.name,'',role.color])) +
+        group('Channels and Categories','channels',orderedBackupChannels(snapshot.channels).map(channel => [(channel.depth ? '↳ ' : '') + channel.name,channelTypes[channel.type] ?? 'Channel'])) +
+        '</div>'
       dialog.addEventListener('close',() => dialog.remove(),{once:true})
       document.body.append(dialog)
       dialog.showModal()
@@ -1187,6 +1199,11 @@ async function recoveryPanel(section,path,data,prepared) {
       payload.confirm = 'RESTORE BACKUP'
     }
     const button = form.querySelector('button')
+    if (operation === 'backup') {
+      if (manualBackupNextAt > Date.now()) return
+      manualBackupNextAt = Date.now() + 300000
+      updateBackupCooldown()
+    }
     button.disabled = true
     try {
       await Promise.all([...pendingSettings].map(flush => flush()))
@@ -1196,7 +1213,7 @@ async function recoveryPanel(section,path,data,prepared) {
       await recoveryPanel(section,path,data)
       panel.querySelector('[role="status"]').textContent = result.notices?.join(' ') || ''
     } catch (error) { status.textContent = error.message }
-    finally { button.disabled = false }
+    finally { if (operation === 'backup') updateBackupCooldown(); else button.disabled = false }
     }
   }
 }

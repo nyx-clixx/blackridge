@@ -192,7 +192,13 @@ export function recoveryTools(db,bot) {
     record(guild,'lockdown',actor,result,failures.length ? failures.length + ' changes still need recovery.' : 'Lockdown changes have been processed.')
     return failures
   }
-  async function backup(guild,actor) {
+  async function backup(guild,actor,{manual = true} = {}) {
+    if (manual) {
+      const now = Date.now()
+      const next = db.recovery(guild.id,'manualBackupCooldown')?.next ?? 0
+      if (next > now) throw Object.assign(new Error('Wait ' + Math.ceil((next-now)/1000) + ' seconds before creating another manual backup.'),{status:429})
+      db.saveRecovery(guild.id,'manualBackupCooldown',{next:now + 300000})
+    }
     const {channels,roles} = await scope(guild)
     const raw = await guildRaw(guild)
     db.saveBackup(guild.id,{
@@ -296,7 +302,7 @@ export function recoveryTools(db,bot) {
       if (!guild?.available || db.guildPlan(id) === 'free' || !db.config(id,'backup').enabled || schedule.next > Date.now() || busy.has(id)) continue
       try {
         await run(guild,async () => {
-          await backup(guild,'automatic schedule')
+          await backup(guild,'automatic schedule',{manual:false})
           db.saveRecovery(id,'backupSchedule',{...schedule,next:Date.now()+schedule.hours*3600000})
         })
       } catch { console.error('Scheduled backup failed') }
