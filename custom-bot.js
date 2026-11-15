@@ -176,6 +176,13 @@ export function customBots(db,shared,key,makeClient = createBotClient) {
       return Boolean(key && shared()?.isReady() && configured.every(({guild}) => active(guild)))
     },
     connect:(id,owner,token) => connect(id,owner,token),
+    async restart(id,owner) {
+      const record = db.recovery(id,keyName)
+      if (!record || record.owner !== owner || !eligible(id,owner)) throw error('Connect your custom bot first.')
+      const token = open(id,record.secret)
+      await disconnect(id)
+      await connect(id,owner,token,record)
+    },
     async remove(id) { db.clearRecovery(id,keyName); await disconnect(id) },
     state(id,owner) {
       const record = db.recovery(id,keyName)

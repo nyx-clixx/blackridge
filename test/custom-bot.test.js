@@ -23,9 +23,10 @@ test('custom bot exposes its profile even while command and avatar requests are 
   client.guilds = {cache:new Collection([[id,guild]])}
   client.user = {id:'234567890123456789',username:'Fixture',fetch:() => pending,setPresence:() => {},
     displayAvatarURL:options => { assert.equal(options.size,256); return 'https://example.com/avatar.png' },bannerURL:options => { assert.equal(options.size,2048); return 'https://example.com/banner.png' }}
-  client.login = async () => { client.emit(Events.ClientReady,client) }
+  let logins = 0, destroys = 0
+  client.login = async () => { logins++; client.emit(Events.ClientReady,client) }
   client.isReady = () => true
-  client.destroy = async () => {}
+  client.destroy = async () => { destroys++ }
   const shared = {isReady:() => true,guilds:{cache:new Collection([[id,guild]])}}
   const service = customBots(db,() => shared,Buffer.alloc(32),() => client)
   t.after(() => service.close())
@@ -43,6 +44,14 @@ test('custom bot exposes its profile even while command and avatar requests are 
   decipher.setAAD(Buffer.from(id))
   decipher.setAuthTag(encrypted.subarray(12,28))
   assert.equal(Buffer.concat([decipher.update(encrypted.subarray(28)),decipher.final()]).toString(),'fixture-token')
+  const record = db.recovery(id,'customBot')
+  db.saveRecovery(id,'customBot',{...record,profile:{status:'idle',activityType:'listening',activity:'Music'}})
+  await assert.rejects(service.restart(id,'other-owner'),/Connect your custom bot first/)
+  await service.restart(id,owner)
+  assert.equal(logins,2)
+  assert.equal(destroys,1)
+  assert.equal(service.state(id,owner).connected,true)
+  assert.equal(service.state(id,owner).profile.activity,'Music')
   await service.remove(id)
   assert.equal(service.active(id),null)
   assert.equal(service.state(id,owner).configured,false)

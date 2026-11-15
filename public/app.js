@@ -88,6 +88,7 @@ function autosave(form,errorOutput,write) {
   let timer
   let dirty = false
   let active
+  let lastWrite = 0
   const flush = () => {
     clearTimeout(timer)
     if (active) return active
@@ -98,7 +99,14 @@ function autosave(form,errorOutput,write) {
     }
     active = (async () => {
       while (dirty && form.isConnected && form.checkValidity()) {
+        const remaining = Math.max(0,10000 - (Date.now() - lastWrite))
+        if (remaining) {
+          errorOutput.textContent = 'Changes queued. Saving after the 10-second cooldown…'
+          await new Promise(resolve => setTimeout(resolve,remaining))
+          if (!form.isConnected || !form.checkValidity()) break
+        }
         dirty = false
+        lastWrite = Date.now()
         try {
           errorOutput.textContent = await write() ?? ''
         } catch (error) {
@@ -827,20 +835,22 @@ async function customBotPanel(path) {
   function render(state) {
     const profile = state.profile ?? {}
     panel.innerHTML = '<form class="card stack" id="bot-connection"><h3>Connect Your Discord Bot</h3><p>Enable Presence Intent, Server Members Intent, and Message Content Intent on the Bot page of the Discord Developer Portal. Check the token below to unlock the install link. Install your bot in this server only and keep Blackridge installed for dashboard access. <a href="/documentation#custom-bot-setup">Setup Guide</a></p><p class="badge">' +
-      (state.connected ? 'Connected' : state.configured ? 'Reconnecting' : 'Disconnected') + '</p><div class="fields"><label>Discord Bot Token<input type="password" name="token" required autocomplete="off" spellcheck="false" maxlength="162"></label></div><div class="actions"><button type="button" class="button" id="check-bot">Check Intents</button><a class="button" id="install-bot" target="_blank" rel="noopener noreferrer" hidden>Add to Discord</a><button class="button primary" id="connect-bot" disabled>Connect Bot</button>' +
-      (state.configured ? '<button type="button" class="button" id="disconnect-bot">Disconnect Bot</button>' : '') + '</div></form>' +
-      (state.connected ? '<section class="card stack custom-profile"><form id="bot-profile"><h3>Profile</h3><div class="fields"><label>Bot Username<input name="username" data-commit-on-change required minlength="2" maxlength="32" value="' + esc(state.username) + '"></label>' +
+      (state.connected ? 'Connected' : state.configured ? 'Reconnecting' : 'Disconnected') + '</p><div class="fields"><label>Discord Bot Token<input type="password" name="token" required autocomplete="off" spellcheck="false" maxlength="162"></label></div><div class="actions"><button type="button" class="button" id="check-bot">Check Intents</button><a class="button" id="install-bot" target="_blank" rel="noopener noreferrer" hidden>Add to Discord</a></div></form>' +
+      '<section class="card stack custom-management"><h3>Manage Your Discord Bot</h3><div class="actions"><button type="submit" form="bot-connection" class="button bot-connect" id="connect-bot" disabled>Connect Bot</button><button type="button" class="button bot-disconnect" id="disconnect-bot"' + (state.configured ? '' : ' disabled') + '>Disconnect Bot</button><button type="button" class="button bot-restart" id="restart-bot"' + (state.configured ? '' : ' disabled') + '>Restart Bot</button></div></section>' +
+      (state.connected ? '<section class="card stack custom-profile"><form id="bot-profile"><h3>Personalize Your Discord Bot</h3><div class="fields"><label>Bot Username<input name="username" data-commit-on-change required minlength="2" maxlength="32" value="' + esc(state.username) + '"></label>' +
         '<label>Status<select name="status">' + options({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'},profile.status ?? 'online') + '</select></label>' +
         '<label>Activity Type<select name="activityType">' + options({none:'Disabled',playing:'Playing',listening:'Listening',watching:'Watching',competing:'Competing'},profile.activityType ?? 'none') + '</select></label>' +
-        '<label>Activity Text<input name="activity" maxlength="100" value="' + esc(profile.activity ?? '') + '"></label><label>Bio<textarea name="bio" data-commit-on-change maxlength="400" rows="4">' + esc(state.bio) + '</textarea></label></div><div class="fields stack"><label>Change Avatar<input type="file" name="avatar" accept="image/png,image/jpeg,image/webp"></label><label>Change Banner<input type="file" name="banner" accept="image/png,image/jpeg,image/webp"></label></div><p>PNG, JPEG, or WebP up to 3 MB. Verification panels posted by Blackridge should be republished after switching bots.</p></form>' +
+        '<label>Activity Text<input name="activity" maxlength="100" value="' + esc(profile.activity ?? '') + '"></label><label class="custom-bio-field">Bio<textarea name="bio" data-commit-on-change maxlength="400" rows="4">' + esc(state.bio) + '</textarea></label></div><div class="fields stack"><label>Change Avatar<input type="file" name="avatar" accept="image/png,image/jpeg,image/webp"></label><label>Change Banner<input type="file" name="banner" accept="image/png,image/jpeg,image/webp"></label></div><p>PNG, JPEG, or WebP up to 3 MB. Verification panels posted by Blackridge should be republished after switching bots.</p></form>' +
         '<aside class="custom-preview"><div class="custom-banner">' + (state.banner ? '<img alt="" src="' + esc(state.banner) + '">' : '') + '</div><div class="custom-preview-body"><div class="custom-preview-avatar"><img alt="" src="' + esc(state.avatar || '/blackridge-icon.png') + '"><span class="presence-dot presence-' + esc(profile.status ?? 'online') + '" role="img" aria-label="' + esc({online:'Online',idle:'Idle',dnd:'Do Not Disturb',invisible:'Invisible'}[profile.status ?? 'online']) + '"></span></div><h3><span data-profile-name>' + esc(state.username) + '</span> <small class="app-badge">APP</small></h3><div class="custom-preview-activity"' + (activityLabels[profile.activityType] && profile.activity?.trim() ? '' : ' hidden') + '><small data-profile-activity-type>' + esc(activityLabels[profile.activityType] ?? '') + '</small><strong data-profile-activity>' + esc(profile.activity ?? '') + '</strong></div><div class="custom-preview-bio"><strong>Bio</strong><p data-profile-bio>' + esc(state.bio || 'No bio set.') + '</p></div></div></aside></section>' : '') +
       '<p id="custom-status" role="status"></p>'
     const action = async (button,run,message) => {
       const status = panel.querySelector('#custom-status')
-      button.disabled = true
-      try { render(await run()); panel.querySelector('#custom-status').textContent = message }
+      const buttons = [...panel.querySelectorAll('.custom-management button')]
+      const disabled = buttons.map(button => button.disabled)
+      buttons.forEach(button => { button.disabled = true })
+      try { await Promise.all([...pendingSettings].map(flush => flush())); render(await run()); panel.querySelector('#custom-status').textContent = message }
       catch (error) { status.textContent = error.message }
-      finally { button.disabled = false }
+      finally { buttons.forEach((button,index) => { button.disabled = disabled[index] }) }
     }
     const json = (method,body) => ({method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     const connection = panel.querySelector('#bot-connection')
@@ -894,6 +904,8 @@ async function customBotPanel(path) {
       if (!confirm('Disconnect this bot and switch back to Blackridge?')) return
       void action(disconnect,async () => { await request(url+'/disconnect',{method:'POST'}); return {} },'Custom Bot disconnected.')
     }
+    const restart = panel.querySelector('#restart-bot')
+    restart.onclick = () => { void action(restart,() => request(url+'/restart',{method:'POST'}),'Custom Bot restarted.') }
     const form = panel.querySelector('#bot-profile')
     form?.addEventListener('input',() => {
       const {username,status,bio,activityType,activity} = form.elements
@@ -1285,7 +1297,7 @@ async function dashboard() {
     const activity = '<section class="card stack"><h3>' + 'Event History' + '</h3><div id="events">' + logList(events) + '</div></section>'
     const serverPath = base + '/' + encodeURIComponent(id)
     const navigation = key => '<a href="' + serverPath + '/' + key + '"' + (key === section ? ' aria-current="page"' : '') + '>' + icon(key) + sections[key] + '</a>'
-    const modules = ['nuke','raid','checkpoint','automod','lockdown','moderation','backup','permits','logging','appeals','verification','honeypot','reports'].map(key => {
+    const modules = ['raid','nuke','lockdown','honeypot','verification','checkpoint','automod','permits','logging','moderation','appeals','reports','backup'].map(key => {
       const restricted = key === 'permits' && !data.owner ? 'Owner only' : key === 'appeals' && !data.appealsManager ? 'Manager access required' : ''
       const enabled = key === 'appeals' ? data.appealsConfigured : data.config[key]?.enabled
       const state = enabled ? '<i class="dot"></i> Enabled' : '<i class="dot disabled-dot"></i> Disabled'

@@ -307,6 +307,10 @@ app.post('/api/guilds/:id/custom-bot',customAccess,customBotToken,async (req,res
   await custom.exclusive(req.guild.id,() => custom.connect(req.guild.id,req.session.user.id,req.botToken))
   res.json(custom.state(req.guild.id,req.session.user.id))
 })
+app.post('/api/guilds/:id/custom-bot/restart',customAccess,async (req,res) => {
+  await custom.exclusive(req.guild.id,() => custom.restart(req.guild.id,req.session.user.id))
+  res.json(custom.state(req.guild.id,req.session.user.id))
+})
 app.post('/api/guilds/:id/custom-bot/disconnect',customAccess,async (req,res) => {
   await custom.exclusive(req.guild.id,() => custom.remove(req.guild.id))
   res.json({ok:true})

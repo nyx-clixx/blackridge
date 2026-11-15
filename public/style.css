@@ -541,3 +541,14 @@ body.has-workspace .sidebar{overflow:auto}
 @media(prefers-reduced-motion:reduce){.discord-select summary .picker-chevron,.dashboard-page select::picker-icon{transition:none}}
 
 .custom-preview-activity:not([hidden]) + .custom-preview-bio{margin-top:16px}
+
+.custom-bio-field{grid-column:1/-1}
+#bot-profile textarea{display:block;width:100%;min-height:120px;resize:vertical;padding:12px 14px;border:1px solid #3c414c;border-radius:10px;background:#111317;color:var(--text);font:inherit;line-height:1.6}
+#bot-profile textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#bot-profile input[type=file]{width:100%;min-width:0;padding:8px;background:#111317;border-radius:10px;font:inherit;color:var(--muted)}
+#bot-profile input[type=file]::file-selector-button{margin-right:12px;padding:8px 12px;border:1px solid #495267;border-radius:7px;background:#263247;color:#e4ecfa;font:inherit;font-weight:600;cursor:pointer}
+#bot-profile input[type=file]::file-selector-button:hover{background:#33435f}
+.custom-management .bot-connect{background:#204c34;color:#bdedce;border-color:#397d52}
+.custom-management .bot-disconnect{background:#54272e;color:#ffd0d5;border-color:#994553}
+.custom-management .bot-restart{background:#50431e;color:#ffe7a1;border-color:#8d7634}
+.custom-management button:not(:disabled):hover{filter:brightness(1.2)}
