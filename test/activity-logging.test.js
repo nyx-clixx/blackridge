@@ -3,12 +3,12 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { AuditLogEvent as A, ChannelType, Collection, Events, WebhookType } from 'discord.js'
 import { attachActivityLogging } from '../activity-logging.js'
-import { messageCard } from '../messages.js'
+import { messageCard, standardLogEmoji } from '../messages.js'
 import { createLogDispatcher } from '../discord-logs.js'
 import { attachModeration } from '../moderation.js'
 import { createStore, policies } from '../store.js'
 
-test('activity logging validates routes, separates moderation, and sends message metadata only',async () => {
+test('activity logging validates routes, separates moderation, and includes deleted content while keeping edit logs metadata only',async () => {
   const db = createStore(':memory:')
   const client = new EventEmitter()
   client.user = {id:'10000000000000009'}
@@ -52,7 +52,7 @@ test('activity logging validates routes, separates moderation, and sends message
     assert.deepEqual(delivered.map(([to])=>to),[roleLog])
     assert.match(delivered[0][1],/Member Roles Updated/)
     assert.match(delivered[0][1],/Message Edited/)
-    assert.doesNotMatch(delivered.map(([,payload])=>payload).join(''),/privateInviteCode|private audit reason|private message/)
+    assert.doesNotMatch(delivered.map(([,payload])=>payload).join(''),/privateInviteCode|private audit reason/)
     delivered.length = 0
     audit(A.GuildUpdate,{changes:[{key:'name'},{key:'icon_hash'},{key:'vanity_url_code',new:'privateInviteCode'}]})
     audit(A.EmojiCreate)
@@ -158,4 +158,14 @@ test('role changes group by member and actor within one window and use a new car
     await finishWindow()
     assert.equal(deliveries.length,2)
   } finally { stop() }
+})
+
+ test('updated log emojis keep readable fallbacks and suppress mentions',() => {
+  const values = {logo:'<:Blackridge_Logo:1568361800309805056>',ex:'<:Ex:1568732173794545824>',green:'<:Green_Dot:1567983204168761344>',orange:'<:Orange_Dot:1567983297806475394>',red:'<:Red_Dot:1567983327389024276>',yellow:'<:Yellow_Dot:1567983239375753359>'}
+  for (const [icon,emoji] of Object.entries(values)) {
+    const card = messageCard('Test','Body',{icon})
+    assert.ok(card.components[0].components[0].content.includes(emoji))
+    assert.ok(!standardLogEmoji(card.components)[0].components[0].content.includes('<:'))
+    assert.deepEqual(card.allowedMentions,{parse:[],roles:[]})
+  }
 })

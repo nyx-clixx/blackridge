@@ -117,11 +117,20 @@ export function attachActivityLogging(client,db,enqueue = enqueueDiscordLog,wind
     send(guild,event,title,{scope:[actor ?? entry.id,title],fields:[actorField],
       lines:[targetId ? target + ' · ' + reference : title],at})
   })
+  const deletedMessageLines = message => {
+    const lines = ['Message ' + message.id + (message.author?.id ? ' · ' + mention(message.author.id) : '')]
+    const content = message.content
+    const text = typeof content === 'string' && content.length ? safeText(content) : null
+    lines.push('**Deleted Message**\n' + (text ? text.slice(0,1800) + (text.length > 1800 ? '\n[Message text truncated]' : '') : message.partial || content == null ? 'Message text unavailable (not cached or not provided by Discord).' : 'No text content.'))
+    const attachments = [...(message.attachments?.values() ?? [])]
+    for (const file of attachments.slice(0,10)) lines.push('**Attachment** ' + safeText(file.name ?? 'Attachment').slice(0,150) + (file.url && /^https:\/\/cdn\.discordapp\.com\//.test(file.url) ? ' · <' + file.url.slice(0,500) + '>' : ''))
+    return lines
+  }
   const messageEvent = (message,event,title) => {
     if (!message.guild || message.author?.bot || message.webhookId) return
     const author = message.author?.id
     send(message.guild,event,title,{scope:[message.channelId],fields:[['Channel',mention(message.channelId,'channel')]],
-      lines:['Message ' + message.id + (author ? ' · ' + mention(author) : '')]})
+      lines:event === 'messageDelete' ? deletedMessageLines(message) : ['Message ' + message.id + (author ? ' · ' + mention(author) : '')]})
   }
   client.on(Events.MessageUpdate,(before,after) => {
     if (after.editedTimestamp != null && before.editedTimestamp !== after.editedTimestamp)
@@ -129,9 +138,10 @@ export function attachActivityLogging(client,db,enqueue = enqueueDiscordLog,wind
   })
   client.on(Events.MessageDelete,message => messageEvent(message,'messageDelete','Message Deleted'))
   client.on(Events.MessageBulkDelete,(messages,channel) => {
-    const count = messages.filter(message => !message.author?.bot && !message.webhookId).size
+    const deleted = messages.filter(message => !message.author?.bot && !message.webhookId)
+    const count = deleted.size
     if (count) send(channel.guild,'messageDelete','Message Deleted',{scope:[channel.id],
-      fields:[['Channel',mention(channel.id,'channel')]],lines:[count + (count === 1 ? ' message deleted in bulk' : ' messages deleted in bulk')]})
+      fields:[['Channel',mention(channel.id,'channel')]],lines:[count + (count === 1 ? ' message deleted in bulk' : ' messages deleted in bulk'),...[...deleted.values()].slice(0,100).flatMap(deletedMessageLines),...(count > 100 ? ['Additional deleted messages: ' + (count - 100)] : [])]})
   })
   return () => {
     for (const group of groups.values()) clearTimeout(group.timer)

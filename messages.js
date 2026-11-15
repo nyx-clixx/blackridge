@@ -1,19 +1,21 @@
 import { ComponentType as Type, MessageFlags, escapeMarkdown } from 'discord.js'
 
 const icons = {
-  bell:'<:Bell:1567545558665666771>',logo:'<:Blackridge_Logo_Transparent:1567655307231109185>',calendar:'<:Calendar:1567663011685081158>',
+  bell:'<:Bell:1567545558665666771>',logo:'<:Blackridge_Logo:1568361800309805056>',calendar:'<:Calendar:1567663011685081158>',
   check:'<:Check_Mark:1567545576797769769>',crown:'<:Crown:1567545590395572315>',warning:'<:Exclamation_Mark:1567545607621447690>',
   gear:'<:Gear:1567545629406928897>',hammer:'<:Hammer:1567545642987954216>',info:'<:Info:1567545745144291479>',
   link:'<:Link:1567655856005447781>',locked:'<:Locked:1567545730200113332>',announcement:'<:Loud_Speaker:1567663050515947700>',
   mail:'<:Mail:1567545714895102052>',inbox:'<:Mail:1567545714895102052>',shield:'<:Shield:1567545686931800185>',
   support:'<:Support:1567545671517741106>',sword:'<:Sword:1567545658951467138>',timer:'<:Timer:1567545831505137706>',
   trash:'<:Trash:1567545807849136299>',unlocked:'<:Unlocked:1567545790233321583>',user:'<:User:1567545768733053089>',
-  wrench:'<:Wrench:1567662985181134938>'
+  wrench:'<:Wrench:1567662985181134938>',ex:'<:Ex:1568732173794545824>',
+  green:'<:Green_Dot:1567983204168761344>',orange:'<:Orange_Dot:1567983297806475394>',
+  red:'<:Red_Dot:1567983327389024276>',yellow:'<:Yellow_Dot:1567983239375753359>'
 }
 const standardIcons = {
   bell:'🔔',logo:'🛡️',calendar:'📅',check:'✅',crown:'👑',warning:'⚠️',gear:'⚙️',hammer:'🔨',
   info:'ℹ️',link:'🔗',locked:'🔒',announcement:'📢',mail:'✉️',inbox:'✉️',shield:'🛡️',
-  support:'❔',sword:'⚔️',timer:'⏱️',trash:'🗑️',unlocked:'🔓',user:'👤',wrench:'🔧'
+  support:'❔',sword:'⚔️',timer:'⏱️',trash:'🗑️',unlocked:'🔓',user:'👤',wrench:'🔧',ex:'❌',green:'🟢',orange:'🟠',red:'🔴',yellow:'🟡'
 }
 const emojiFallback = new Map(Object.entries(icons).map(([key,value]) => [value,standardIcons[key]]))
 
@@ -31,7 +33,7 @@ const validId = id => /^\d{17,20}$/.test(id ?? '')
 export const mention = (id,type='user') => validId(id) ? '<'+({user:'@',role:'@&',channel:'#'})[type]+id+'>' : 'Unknown'
 export const timestamp = (at,style='f') => '<t:'+Math.floor(at/1000)+':'+style+'>'
 export function messageCard(title,body,{tone='info',icon,actions=[],roles=[],files=[],media,ephemeral=false,fields=[],userId,at=Date.now()} = {}) {
-  const symbol = icon ?? ({success:'check',warning:'warning',danger:'warning'})[tone] ?? 'info'
+  const symbol = icon ?? ({success:'check',warning:'warning',danger:'ex'})[tone] ?? 'info'
   const components = [
     {type:Type.TextDisplay,content:'### '+(icons[symbol] ?? icons.info)+' '+title},
     {type:Type.Separator,divider:true,spacing:1}
