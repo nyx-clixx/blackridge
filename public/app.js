@@ -89,7 +89,6 @@ function autosave(form,errorOutput,write) {
   let timer
   let dirty = false
   let active
-  let lastWrite = 0
   const flush = () => {
     clearTimeout(timer)
     if (active) return active
@@ -100,14 +99,7 @@ function autosave(form,errorOutput,write) {
     }
     active = (async () => {
       while (dirty && form.isConnected && form.checkValidity()) {
-        const remaining = Math.max(0,10000 - (Date.now() - lastWrite))
-        if (remaining) {
-          errorOutput.textContent = 'Changes queued. Saving after the 10-second cooldown…'
-          await new Promise(resolve => setTimeout(resolve,remaining))
-          if (!form.isConnected || !form.checkValidity()) break
-        }
         dirty = false
-        lastWrite = Date.now()
         try {
           errorOutput.textContent = await write() ?? ''
         } catch (error) {
