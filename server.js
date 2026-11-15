@@ -501,7 +501,7 @@ app.put('/api/guilds/:id/:kind',async (req,res) => {
   }
   if (kind === 'honeypot') return saveHoneyPot(req,res,parsed.data)
   if (kind === 'reports' && parsed.data.enabled &&
-      !await privateAppealChannel(activeGuild(req.guild.id),parsed.data.channel).catch(() => null))
+      !await privateAppealChannel(activeGuild(req.guild.id),parsed.data.channel,{explain:true}))
     return res.status(400).json({error:'Choose a review channel that denies View Channel to @everyone and lets Blackridge post.'})
   if (kind === 'appeals') {
     for (const channel of new Set([parsed.data.channel,parsed.data.alertChannel].filter(Boolean))) {

@@ -19,13 +19,27 @@ export function canReviewAppeals(guild,member,db) {
   return permits.enabled && member.permissions.has(P.BanMembers) &&
     permits.entries.some(entry => entry.appealsManager && matchesPermit(entry,member.id,guild.id,member.roles.cache))
 }
-export async function privateAppealChannel(guild,id) {
-  if (!id) return null
-  const channel = await guild.channels.fetch(id,{force:true})
-  if (channel?.guildId !== guild.id || !isTextDestination(channel) ||
-      !channel.permissionOverwrites?.cache.get(guild.id)?.deny.has(P.ViewChannel) ||
-      channel.permissionsFor(guild.roles.everyone)?.has(P.ViewChannel) ||
-      !channel.permissionsFor(guild.members.me)?.has(P.ViewChannel | P.SendMessages)) return null
+export async function privateAppealChannel(guild,id,{explain = false} = {}) {
+  const reject = message => { if (explain) throw invalid(message,400); return null }
+  if (!id) return reject('Choose a private review channel.')
+  let channel,member
+  try {
+    // Refresh all inputs to Discord's effective permission calculation. Gateway
+    // caches can lag behind role edits, especially on a newly connected custom bot.
+    const values = await Promise.all([
+      guild.channels.fetch(id,{force:true}),
+      guild.members.fetchMe ? guild.members.fetchMe({force:true}) : guild.members.me,
+      guild.roles.fetch?.()
+    ])
+    ;[channel,member] = values
+  } catch { return reject('Could not check the review channel. Check the active bot’s channel access and try again.') }
+  if (channel?.guildId !== guild.id || !isTextDestination(channel))
+    return reject('Choose a text or announcement channel in this server.')
+  const everyone = channel.permissionsFor(guild.roles.everyone)
+  if (!everyone || everyone.has(P.ViewChannel))
+    return reject('Make the review channel private: deny View Channel to @everyone.')
+  if (!member || !channel.permissionsFor(member)?.has(P.ViewChannel | P.SendMessages))
+    return reject('Allow the active bot to View Channel and Send Messages in this review channel. If Custom Bot is connected, grant access to that bot.')
   return channel
 }
 

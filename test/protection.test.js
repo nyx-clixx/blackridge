@@ -510,7 +510,7 @@ test('Report System delivers the selected reaction to the private review channel
   let privateChannel = true
   const channel = {type:0,guildId:guild.id,isSendable:() => true,isThread:() => false,
     permissionOverwrites:{cache:new Map([[guild.id,{deny:{has:() => privateChannel}}]])},
-    permissionsFor:target => ({has:() => target !== guild.roles.everyone}),send:async card => sent.push(card)}
+    permissionsFor:target => ({has:() => target !== guild.roles.everyone || !privateChannel}),send:async card => sent.push(card)}
   guild.channels = {fetch:async () => channel}
   const config = {enabled:true,channel:channelId,emoji:'🚩'}
   db.save(guild.id,'reports',policies.reports.parse(config),'owner')
